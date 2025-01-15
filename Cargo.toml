@@ -1,0 +1,10 @@
+[workspace]
+members = ["usb-pd"]
+resolver = "2"
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+debug = true
+incremental = false
