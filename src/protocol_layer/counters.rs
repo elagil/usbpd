@@ -1,9 +1,14 @@
+//! Definition of counters, used for retry attempts, and message IDs.
+use defmt::Format;
+
 #[non_exhaustive]
+#[derive(Debug, Format)]
 pub struct CounterError {
     pub kind: CounterErrorKind,
 }
 
 #[non_exhaustive]
+#[derive(Debug, Format)]
 pub enum CounterErrorKind {
     ExceedsMaximumValue,
     Overrun,
@@ -61,7 +66,7 @@ impl Counter {
     }
 
     pub fn increment(&mut self) -> Result<(), CounterError> {
-        self.value = (self.value + 1) % self.max_value;
+        self.value = (self.value + 1) % (self.max_value + 1);
 
         if self.value == 0 {
             Err(CounterError {

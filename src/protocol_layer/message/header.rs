@@ -2,7 +2,7 @@ use byteorder::{ByteOrder, LittleEndian};
 use defmt::Format;
 use proc_bitfield::bitfield;
 
-use crate::counter::Counter;
+use crate::sink::protocol_layer::counters::Counter;
 use crate::{DataRole, PowerRole};
 
 bitfield! {
@@ -19,81 +19,51 @@ bitfield! {
 }
 
 impl Header {
-    pub fn new(
-        message_id: Counter,
-        message_type: MessageType,
+    pub fn new_template(
         port_data_role: DataRole,
         port_power_role: PowerRole,
         spec_revision: SpecificationRevision,
+    ) -> Self {
+        Self(0)
+            .with_port_data_role(port_data_role)
+            .with_port_power_role(port_power_role)
+            .with_spec_revision(spec_revision)
+    }
+
+    pub fn new(
+        template: Self,
+        message_id: Counter,
+        message_type: MessageType,
         num_objects: u8,
         extended: bool,
     ) -> Self {
-        Self(0)
+        template
             .with_message_id(message_id.value())
             .with_message_type_raw(match message_type {
                 MessageType::Control(x) => x as u8,
                 MessageType::Data(x) => x as u8,
             })
-            .with_port_data_role(port_data_role)
-            .with_port_power_role(port_power_role)
-            .with_spec_revision(spec_revision)
             .with_num_objects(num_objects)
             .with_extended(extended)
     }
 
-    pub fn new_control(
-        message_id: Counter,
-        message_type: ControlMessageType,
-        port_data_role: DataRole,
-        port_power_role: PowerRole,
-        spec_revision: SpecificationRevision,
-    ) -> Self {
+    pub fn new_control(template: Self, message_id: Counter, control_message_type: ControlMessageType) -> Self {
         Self::new(
+            template,
             message_id,
-            MessageType::Control(message_type),
-            port_data_role,
-            port_power_role,
-            spec_revision,
+            MessageType::Control(control_message_type),
             0,
             false,
         )
     }
 
-    pub fn new_data(
-        message_id: Counter,
-        message_type: DataMessageType,
-        port_data_role: DataRole,
-        port_power_role: PowerRole,
-        spec_revision: SpecificationRevision,
-        num_objects: u8,
-    ) -> Self {
+    pub fn new_data(template: Self, message_id: Counter, data_message_type: DataMessageType, num_objects: u8) -> Self {
         Self::new(
+            template,
             message_id,
-            MessageType::Data(message_type),
-            port_data_role,
-            port_power_role,
-            spec_revision,
+            MessageType::Data(data_message_type),
             num_objects,
             false,
-        )
-    }
-
-    pub fn new_extended(
-        message_id: Counter,
-        message_type: DataMessageType,
-        port_data_role: DataRole,
-        port_power_role: PowerRole,
-        spec_revision: SpecificationRevision,
-        num_objects: u8,
-    ) -> Self {
-        Self::new(
-            message_id,
-            MessageType::Data(message_type),
-            port_data_role,
-            port_power_role,
-            spec_revision,
-            num_objects,
-            true,
         )
     }
 

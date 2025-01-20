@@ -1,4 +1,0 @@
-[toolchain]
-channel = "nightly"
-profile = "default"
-targets = ["thumbv7m-none-eabi"]

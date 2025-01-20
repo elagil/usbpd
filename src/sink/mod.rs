@@ -1,10 +1,12 @@
+//! Device policy manager.
+pub mod device_policy_manager;
+pub mod policy_engine;
+
 use defmt::Format;
 use heapless::Vec;
 
-use crate::messages::pdo::SourceCapabilities;
-use crate::messages::vdo::{CertStatVDO, ProductVDO, UFPTypeVDO, VDMHeader, VDMIdentityHeader};
-
-pub mod policy;
+use crate::protocol_layer::message::pdo::SourceCapabilities;
+use crate::protocol_layer::message::vdo::{CertStatVDO, ProductVDO, UFPTypeVDO, VDMHeader, VDMIdentityHeader};
 
 /// Sink events
 #[derive(Format)]

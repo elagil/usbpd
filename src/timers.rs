@@ -1,5 +1,4 @@
-use embassy_time::{Duration, Instant};
-
+//! Timers that are used by the protocol layer and policy engine.
 #[allow(dead_code)]
 #[derive(Debug)]
 pub enum TimerTypes {
@@ -92,8 +91,7 @@ impl Timer {
     }
 
     pub fn is_expired(&self) -> bool {
-        self.expires
-            .map_or(false, |expires| expires <= Instant::now())
+        self.expires.map_or(false, |expires| expires <= Instant::now())
     }
 
     pub fn reset(&mut self) {
@@ -106,8 +104,7 @@ impl Timer {
     }
 
     pub fn remaining(&self) -> Option<Duration> {
-        self.expires
-            .map(|expires| expires.duration_since(Instant::now()))
+        self.expires.map(|expires| expires.duration_since(Instant::now()))
     }
 
     pub fn ty(&self) -> &TimerTypes {

@@ -1,8 +1,10 @@
+pub mod header;
 pub mod pdo;
 pub mod vdo;
 
 use byteorder::{ByteOrder, LittleEndian};
 use defmt::{trace, warn, Format};
+use header::{ControlMessageType, DataMessageType, Header, MessageType};
 use heapless::Vec;
 use pdo::{
     AugmentedPowerDataObject, AugmentedPowerDataObjectRaw, Battery, EPRAdjustableVoltageSupply, FixedSupply,
@@ -14,7 +16,6 @@ use self::pdo::{
     AVSRequestDataObject, BatteryRequestDataObject, FixedVariableRequestDataObject, PPSRequestDataObject,
     PowerDataObjectType, RawRequestDataObject, Request,
 };
-use crate::header::{ControlMessageType, DataMessageType, Header, MessageType};
 
 pub trait PdoState {
     fn pdo_at_object_position(&self, position: u8) -> Option<PowerDataObjectType>;
