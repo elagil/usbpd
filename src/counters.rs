@@ -3,13 +3,7 @@ use defmt::Format;
 
 #[non_exhaustive]
 #[derive(Debug, Format)]
-pub struct CounterError {
-    pub kind: CounterErrorKind,
-}
-
-#[non_exhaustive]
-#[derive(Debug, Format)]
-pub enum CounterErrorKind {
+pub enum Error {
     ExceedsMaximumValue,
     Overrun,
 }
@@ -50,11 +44,9 @@ impl Counter {
         }
     }
 
-    pub fn set(&mut self, value: u8) -> Result<(), CounterError> {
+    pub fn set(&mut self, value: u8) -> Result<(), Error> {
         if value >= self.max_value {
-            return Err(CounterError {
-                kind: CounterErrorKind::ExceedsMaximumValue,
-            });
+            return Err(Error::ExceedsMaximumValue);
         }
 
         self.value = value;
@@ -65,13 +57,11 @@ impl Counter {
         self.value
     }
 
-    pub fn increment(&mut self) -> Result<(), CounterError> {
+    pub fn increment(&mut self) -> Result<(), Error> {
         self.value = (self.value + 1) % (self.max_value + 1);
 
         if self.value == 0 {
-            Err(CounterError {
-                kind: CounterErrorKind::Overrun,
-            })
+            Err(Error::Overrun)
         } else {
             Ok(())
         }

@@ -1,11 +1,14 @@
 //! Policy engine for the implementation of a sink.
 use core::marker::PhantomData;
 
-use defmt::{error, trace, Format};
+use defmt::{debug, error, trace, Format};
 
-use crate::protocol_layer::message::header::{Header, SpecificationRevision};
-use crate::protocol_layer::ProtocolLayer;
-use crate::{DataRole, Driver, PowerRole, Timer};
+use crate::protocol_layer::message::header::{
+    ControlMessageType, DataMessageType, Header, MessageType, SpecificationRevision,
+};
+use crate::protocol_layer::{Error as ProtocolError, ProtocolLayer};
+use crate::timers::{Timer, TimerType};
+use crate::{DataRole, Driver, PowerRole};
 
 /// Sink states.
 #[derive(Debug, Clone, Copy, Format)]
@@ -27,30 +30,38 @@ enum State {
 
 #[derive(Debug)]
 pub struct Sink<DRIVER: Driver, TIMER: Timer> {
-    protocol_layer: ProtocolLayer<DRIVER>,
+    protocol_layer: ProtocolLayer<DRIVER, TIMER>,
     state: State,
 
-    timeout: PhantomData<TIMER>,
+    _timer: PhantomData<TIMER>,
 }
 
 #[derive(Debug, Format)]
 enum Error {
     Startup,
     Timeout,
-    Protocol,
+    Protocol(ProtocolError),
+}
+
+impl From<ProtocolError> for Error {
+    fn from(protocol_error: ProtocolError) -> Self {
+        Error::Protocol(protocol_error)
+    }
 }
 
 impl<DRIVER: Driver, TIMER: Timer> Sink<DRIVER, TIMER> {
+    fn new_protocol_layer(driver: DRIVER) -> ProtocolLayer<DRIVER, TIMER> {
+        let header = Header::new_template(DataRole::Ufp, PowerRole::Sink, SpecificationRevision::R3_0);
+        ProtocolLayer::new(driver, header)
+    }
+
     /// Create a new sink policy engine with a given `driver`.
     pub fn new(driver: DRIVER) -> Self {
         Self {
-            protocol_layer: ProtocolLayer::new(
-                driver,
-                Header::new_template(DataRole::Dfp, PowerRole::Sink, SpecificationRevision::R3_0),
-            ),
+            protocol_layer: Self::new_protocol_layer(driver),
             state: State::Startup,
 
-            timeout: Default::default(),
+            _timer: PhantomData,
         }
     }
 
@@ -60,9 +71,10 @@ impl<DRIVER: Driver, TIMER: Timer> Sink<DRIVER, TIMER> {
             let result = self.update_state().await;
 
             match result {
-                Err(Error::Protocol) => {
-                    error!("Protocol error in sink state transition");
-                    self.state = State::HardReset
+                Err(Error::Protocol(error)) => {
+                    error!("Protocol error {} in sink state transition", error);
+                    self.state = State::HardReset;
+                    panic!();
                 }
                 _ => (),
             }
@@ -74,35 +86,20 @@ impl<DRIVER: Driver, TIMER: Timer> Sink<DRIVER, TIMER> {
 
         let new_state = match self.state {
             State::Startup => {
-                // Entry: Reset protocol layer (drop?)
-                //   Resets messageIdCounter and stored MessageId
-                // Transition to Discovery
+                // Reset protocol layer
+                self.protocol_layer.reset();
+
                 State::Discovery
             }
             State::Discovery => {
-                // Ask protocol layer
-                // let vbus_fut = self.driver.wait_for_vbus();
-                // let timeout_fut = TIMER::after_millis(456);
+                self.protocol_layer.wait_for_vbus().await;
 
-                // pin_mut!(vbus_fut);
-                // pin_mut!(timeout_fut);
-
-                // match select(vbus_fut, timeout_fut).await {
-                //     Either::Left((_, _)) => State::WaitForCapabilities,
-                //     Either::Right((_, _)) => return Err(PolicyError::Timeout),
-                // }
-                //
                 State::WaitForCapabilities
             }
             State::WaitForCapabilities => {
-                // let message = self
-                //     .receive(
-                //         MessageType::Data(DataMessageType::SourceCapabilities),
-                //         TIMER::after_millis(250), // SinkWaitCap
-                //     )
-                //     .await?;
+                let message = self.protocol_layer.wait_for_source_capabilities().await?;
 
-                // debug!("Capabilities: {}", message);
+                debug!("Capabilities: {}", message);
 
                 // Transition to EvaluateCapability if
                 // - SPR mode & source_capabilities message, or
@@ -123,14 +120,7 @@ impl<DRIVER: Driver, TIMER: Timer> Sink<DRIVER, TIMER> {
                 State::SelectCapability
             }
             State::SelectCapability => {
-                // FIXME: Handle TX error.
-                // _ = self.request_power(500, 1).await;
-
-                // self.receive(
-                //     MessageType::Control(ControlMessageType::GoodCRC),
-                //     TIMER::after_millis(100),
-                // )
-                // .await?;
+                self.protocol_layer.request_power(50, 1).await?;
 
                 // Entry: Send request, as above
                 // Entry: Initialize and run SenderResponseTimer
@@ -140,6 +130,13 @@ impl<DRIVER: Driver, TIMER: Timer> Sink<DRIVER, TIMER> {
                 //   received
                 // - Ready, if explicit contract and reject/wait message received
                 // - TransitionSink if accept message received
+
+                self.protocol_layer
+                    .wait_for_message(
+                        MessageType::Control(ControlMessageType::Accept),
+                        ProtocolLayer::<DRIVER, TIMER>::get_timer(TimerType::SenderResponse),
+                    )
+                    .await?;
 
                 State::TransitionSink
             }
@@ -151,11 +148,12 @@ impl<DRIVER: Driver, TIMER: Timer> Sink<DRIVER, TIMER> {
                 // - HardReset on protocol error??
                 // - Ready after PS_RDY message received
 
-                // self.receive(
-                //     MessageType::Control(ControlMessageType::PsRdy),
-                //     TIMER::after_millis(100),
-                // )
-                // .await?;
+                self.protocol_layer
+                    .wait_for_message(
+                        MessageType::Control(ControlMessageType::PsRdy),
+                        ProtocolLayer::<DRIVER, TIMER>::get_timer(TimerType::PSTransitionSpr),
+                    )
+                    .await?;
 
                 State::Ready
             }
@@ -170,7 +168,7 @@ impl<DRIVER: Driver, TIMER: Timer> Sink<DRIVER, TIMER> {
                 // - EPRKeepAlive on SinkEPRKeepAliveTimer timeout
                 // - EvalueCapability on SPR mode and source_capabilities message, or EPR mode
                 //   and EPR_source_capabilities message
-                TIMER::after_secs(2).await;
+                TIMER::after_millis(2000).await;
 
                 State::Ready
             }
@@ -230,38 +228,6 @@ impl<DRIVER: Driver, TIMER: Timer> Sink<DRIVER, TIMER> {
 
         Ok(())
     }
-
-    // async fn request_power(&mut self, max_current: u16, index: usize) -> Result<(), DRIVER::TxError> {
-    //     // Create 'request' message
-    //     let mut data = [0; 6];
-
-    //     let header = self.new_data_header(self.tx_message_count, DataMessageType::Request, 1);
-    //     header.to_bytes(&mut data[..2]);
-
-    //     self.set_request_payload_fixed(&mut data[2..], index as u8, max_current);
-
-    //     // Send message
-    //     self.driver.transmit(&data).await
-    // }
-
-    // fn set_request_payload_fixed(&mut self, payload: &mut [u8], obj_pos: u8, mut current: u16) {
-    //     current = (current + 5) / 10;
-
-    //     if current > 0x3ff {
-    //         current = 0x3ff;
-    //     }
-
-    //     let obj_pos = obj_pos + 1;
-    //     assert!(obj_pos > 0b0000 && obj_pos <= 0b1110);
-
-    //     FixedVariableRequestDataObject(0)
-    //         .with_raw_operating_current(current)
-    //         .with_raw_max_operating_current(current)
-    //         .with_object_position(obj_pos)
-    //         .with_no_usb_suspend(true)
-    //         .with_usb_communications_capable(true)
-    //         .to_bytes(payload);
-    // }
 }
 
 pub trait DevicePolicyEngine {}

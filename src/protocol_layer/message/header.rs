@@ -2,7 +2,7 @@ use byteorder::{ByteOrder, LittleEndian};
 use defmt::Format;
 use proc_bitfield::bitfield;
 
-use crate::sink::protocol_layer::counters::Counter;
+use crate::counters::Counter;
 use crate::{DataRole, PowerRole};
 
 bitfield! {
@@ -73,8 +73,9 @@ impl Header {
         Header(LittleEndian::read_u16(buf))
     }
 
-    pub fn to_bytes(&self, buf: &mut [u8]) {
+    pub fn to_bytes(&self, buf: &mut [u8]) -> usize {
         LittleEndian::write_u16(buf, self.0);
+        2
     }
 
     pub fn message_type(&self) -> MessageType {

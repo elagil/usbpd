@@ -14,7 +14,6 @@ use uom::si::{self};
 use super::PdoState;
 
 mod _20millivolts_mod {
-
     unit! {
         system: uom::si;
         quantity: uom::si::electric_potential;
@@ -273,8 +272,9 @@ bitfield! {
 }
 
 impl FixedVariableRequestDataObject {
-    pub fn to_bytes(&self, buf: &mut [u8]) {
+    pub fn to_bytes(&self, buf: &mut [u8]) -> usize {
         LittleEndian::write_u32(buf, self.0);
+        4
     }
 
     pub fn operating_current(&self) -> si::u16::ElectricCurrent {

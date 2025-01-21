@@ -1,7 +1,11 @@
 #![no_std]
-// pub mod timers;
+pub mod counters;
 pub mod protocol_layer;
 pub mod sink;
+pub mod timers;
+
+#[macro_use]
+extern crate uom;
 
 use core::fmt::Debug;
 use core::future::Future;
@@ -36,15 +40,9 @@ pub enum TxError {
 pub trait Driver {
     fn wait_for_vbus(&self) -> impl Future<Output = ()>;
 
-    fn receive(&mut self, buffer: &mut [u8]) -> impl Future<Output = Result<Message, RxError>>;
+    fn receive(&mut self, buffer: &mut [u8]) -> impl Future<Output = Result<usize, RxError>>;
 
     fn transmit(&mut self, data: &[u8]) -> impl Future<Output = Result<(), TxError>>;
-}
-
-pub trait Timer {
-    fn after_secs(seconds: u32) -> impl Future<Output = ()>;
-
-    fn after_millis(milliseconds: u32) -> impl Future<Output = ()>;
 }
 
 #[derive(Clone, Copy, Debug)]

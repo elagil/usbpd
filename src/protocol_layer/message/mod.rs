@@ -28,27 +28,44 @@ impl PdoState for () {
 }
 
 #[derive(Debug, Clone, Format)]
-pub enum MessageContent {
-    Empty,
-    Control(ControlMessageType),
+pub enum Data {
     SourceCapabilities(SourceCapabilities),
     Request(Request),
     VendorDefined((VDMHeader, Vec<u32, 7>)), // TODO: Incomplete
     Unknown,
 }
 
+impl Data {
+    fn to_bytes(&self, payload: &mut [u8]) -> usize {
+        match self {
+            Self::Unknown => 0,
+            Self::SourceCapabilities(_) => unimplemented!(),
+            Self::Request(Request::FixedSupply(data_object)) => data_object.to_bytes(payload),
+            Self::Request(_) => unimplemented!(),
+            Self::VendorDefined(_) => unimplemented!(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Format)]
 pub struct Message {
     pub header: Header,
-    pub content: MessageContent,
+    pub data: Option<Data>,
 }
 
 impl Message {
     pub fn new(header: Header) -> Self {
-        Self {
-            header,
-            content: MessageContent::Empty,
+        Self { header, data: None }
+    }
+
+    pub fn to_bytes(&self, buffer: &mut [u8]) -> usize {
+        let mut size = self.header.to_bytes(buffer);
+
+        if let Some(data) = self.data.as_ref() {
+            size += data.to_bytes(&mut buffer[2..]);
         }
+
+        size
     }
 
     pub fn parse_with_state<P: PdoState>(data: &[u8], state: &P) -> Self {
@@ -56,9 +73,9 @@ impl Message {
         let payload = &data[2..];
 
         match message.header.message_type() {
-            MessageType::Control(c) => message.content = MessageContent::Control(c),
+            MessageType::Control(_) => (),
             MessageType::Data(DataMessageType::SourceCapabilities) => {
-                message.content = MessageContent::SourceCapabilities(SourceCapabilities(
+                message.data = Some(Data::SourceCapabilities(SourceCapabilities(
                     payload
                         .chunks_exact(4)
                         .take(message.header.num_objects())
@@ -83,16 +100,16 @@ impl Message {
                             }
                         })
                         .collect(),
-                ));
+                )));
             }
             MessageType::Data(DataMessageType::Request) => {
                 if payload.len() != 4 {
-                    message.content = MessageContent::Unknown;
+                    message.data = Some(Data::Unknown);
                     return message;
                 }
                 let raw = RawRequestDataObject(LittleEndian::read_u32(payload));
                 if let Some(t) = state.pdo_at_object_position(raw.object_position()) {
-                    message.content = MessageContent::Request(match t {
+                    message.data = Some(Data::Request(match t {
                         PowerDataObjectType::FixedSupply => Request::FixedSupply(FixedVariableRequestDataObject(raw.0)),
                         PowerDataObjectType::Battery => Request::Battery(BatteryRequestDataObject(raw.0)),
                         PowerDataObjectType::VariableSupply => {
@@ -100,16 +117,16 @@ impl Message {
                         }
                         PowerDataObjectType::PPS => Request::PPS(PPSRequestDataObject(raw.0)),
                         PowerDataObjectType::AVS => Request::AVS(AVSRequestDataObject(raw.0)),
-                    });
+                    }));
                 } else {
-                    message.content = MessageContent::Request(Request::Unknown(raw));
+                    message.data = Some(Data::Request(Request::Unknown(raw)));
                 }
             }
             MessageType::Data(DataMessageType::VendorDefined) => {
                 // Keep for now...
                 let len = payload.len();
                 if len < 4 {
-                    message.content = MessageContent::Unknown;
+                    message.data = Some(Data::Unknown);
                     return message;
                 }
                 let num_obj = message.header.num_objects();
@@ -141,11 +158,11 @@ impl Message {
                 //     .map(|i| i[0])
                 //     .collect::<Vec<u8, 8>>();
 
-                message.content = MessageContent::VendorDefined((header, data));
+                message.data = Some(Data::VendorDefined((header, data)));
             }
             MessageType::Data(_) => {
                 warn!("unknown message type");
-                message.content = MessageContent::Unknown;
+                message.data = Some(Data::Unknown);
             }
         };
 
