@@ -1,0 +1,8 @@
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+runner = 'probe-rs run --chip STM32G431CBTx --connect-under-reset --probe 0483:3754:0019002C3133510F35333335'
+
+[build]
+target = "thumbv7em-none-eabihf"
+
+[env]
+DEFMT_LOG = "trace"
