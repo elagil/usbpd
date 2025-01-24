@@ -6,7 +6,7 @@ pub trait Timer {
 use core::future::Future;
 
 #[allow(dead_code)]
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum TimerType {
     BISTContMode,
     ChunkingNotSupported,

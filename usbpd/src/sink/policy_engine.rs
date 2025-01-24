@@ -8,8 +8,8 @@ use crate::protocol_layer::message::header::{
     ControlMessageType, DataMessageType, Header, MessageType, SpecificationRevision,
 };
 use crate::protocol_layer::message::pdo::SourceCapabilities;
-use crate::protocol_layer::message::{Data, Message};
-use crate::protocol_layer::{message, Error as ProtocolError, ProtocolLayer};
+use crate::protocol_layer::message::Data;
+use crate::protocol_layer::{Error as ProtocolError, ProtocolLayer};
 use crate::timers::{Timer, TimerType};
 use crate::{DataRole, Driver, PowerRole};
 
@@ -41,10 +41,12 @@ enum State {
     HardReset,
     TransitionToDefault,
     GiveSinkCap,
-    GetSourceCap,
-    EPRKeepAlive,
+    GetSourceCap, // FIXME: no EPR support
+    EPRKeepAlive, // FIXME: no EPR support
 }
 
+/// Implementation of the sink policy engine.
+/// See spec, [8.3.3.3]
 #[derive(Debug)]
 pub struct Sink<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> {
     device_policy_manager: DPM,
@@ -72,10 +74,6 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
     fn new_protocol_layer(driver: DRIVER) -> ProtocolLayer<DRIVER, TIMER> {
         let header = Header::new_template(DataRole::Ufp, PowerRole::Sink, SpecificationRevision::R3_0);
         ProtocolLayer::new(driver, header)
-    }
-
-    fn get_timer(timer_type: TimerType) -> impl Future<Output = ()> {
-        ProtocolLayer::<DRIVER, TIMER>::get_timer(timer_type)
     }
 
     /// Create a new sink policy engine with a given `driver`.
@@ -133,6 +131,9 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     // Fall back to hard reset, after sending soft reset failed.
                     (State::SendSoftReset, ProtocolError::Timeout | ProtocolError::TxError(_)) => State::HardReset,
 
+                    // See spec, [6.4.1.6]
+                    (State::WaitForCapabilities, ProtocolError::Timeout) => State::HardReset,
+
                     (State::SelectCapability, ProtocolError::Timeout) => State::HardReset,
 
                     // Timeouts increase the retry count within the protocol layer.
@@ -155,6 +156,18 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
         }
     }
 
+    async fn get_source_capabilities(&mut self) -> Result<(), Error> {
+        let message = self.protocol_layer().wait_for_source_capabilities().await?;
+        trace!("Source capabilities: {}", message);
+
+        let Some(Data::SourceCapabilities(capabilities)) = message.data else {
+            unreachable!()
+        };
+        self.source_capabilities = Some(capabilities);
+
+        Ok(())
+    }
+
     async fn update_state(&mut self) -> Result<(), Error> {
         trace!("Handle sink state: {:?}", self.state);
 
@@ -171,14 +184,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 State::WaitForCapabilities
             }
             State::WaitForCapabilities => {
-                // FIXME: Add support for EPR sources?
-                let message = self.protocol_layer().wait_for_source_capabilities().await?;
-                trace!("Capabilities: {}", message);
-
-                let Some(Data::SourceCapabilities(capabilities)) = message.data else {
-                    unreachable!()
-                };
-                self.source_capabilities = Some(capabilities);
+                self.get_source_capabilities().await?;
 
                 State::EvaluateCapabilities
             }
@@ -209,7 +215,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                             MessageType::Control(ControlMessageType::Wait),
                             MessageType::Control(ControlMessageType::Reject),
                         ],
-                        Self::get_timer(TimerType::SenderResponse),
+                        TimerType::SenderResponse,
                     )
                     .await?
                     .header
@@ -237,7 +243,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 self.protocol_layer()
                     .wait_for_any_message(
                         &[MessageType::Control(ControlMessageType::PsRdy)],
-                        Self::get_timer(TimerType::PSTransitionSpr),
+                        TimerType::PSTransitionSpr,
                     )
                     .await?;
 
@@ -262,6 +268,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                         self.source_capabilities = Some(capabilities);
                         State::EvaluateCapabilities
                     }
+                    MessageType::Control(ControlMessageType::GetSinkCap) => State::GiveSinkCap,
                     _ => State::SendNotSupported,
                 }
             }
@@ -282,7 +289,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 self.protocol_layer()
                     .wait_for_any_message(
                         &[MessageType::Control(ControlMessageType::Accept)],
-                        Self::get_timer(TimerType::SenderResponse),
+                        TimerType::SenderResponse,
                     )
                     .await?;
 
@@ -298,10 +305,6 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 State::WaitForCapabilities
             }
             State::HardReset => {
-                // Signal hard reset, increment hard reset counter
-                // In protocol layer?
-                // self.hard_reset_count.increment()?;
-
                 // Other causes of entry:
                 // - SinkWaitCapTimer timeout or PSTransitionTimer timeout, when reset count <
                 //   max
@@ -309,6 +312,8 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 // - EPR mode and EPR_Source_Capabilities message with EPR PDO in pos. 1..7
                 // - source_capabilities message not requested by get_source_caps
                 // Transition to TransitionToDefault
+
+                self.protocol_layer().hard_reset().await?;
 
                 State::TransitionToDefault
             }
@@ -322,20 +327,30 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 State::Startup
             }
             State::GiveSinkCap => {
-                // Entry: Get present sink capabilities
-                // Send capabilities message (based on device policy manager
-                // response):
-                // - If get_sink_cap message received, send sink_capabilities message???
-                // - If EPR_get_sink_kap message received, send EPR_sink_cap message
-                // Transition to Ready after sink capabilities sent (what about
-                // entry/exit?)
+                // FIXME: Send sink capabilities, as provided by device policy manager.
+                // Sending NotSupported is not to spec.
+                // See spec, [6.4.1.6]
+                self.protocol_layer()
+                    .transmit_control_message(ControlMessageType::NotSupported)
+                    .await?;
 
                 State::Ready
             }
             State::GetSourceCap => {
-                // What is this state?
-                // FIXME: wrong state
-                State::SelectCapability
+                // Commonly used for switching between EPR and SPR mode.
+                // FIXME: EPR is not supported.
+
+                self.protocol_layer()
+                    .transmit_control_message(ControlMessageType::GetSourceCap)
+                    .await?;
+
+                self.get_source_capabilities().await?;
+
+                // Return to `Ready` state instead, when
+                // - in EPR mode, and SPR capabilities requested, or
+                // - in SPR mode, and EPR capabilities requested.
+                // In other words, in case of a switch.
+                State::EvaluateCapabilities
             }
             State::EPRKeepAlive => {
                 // Entry: Send EPRKeepAlive Message
@@ -354,5 +369,3 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
         Ok(())
     }
 }
-
-pub trait DevicePolicyEngine {}

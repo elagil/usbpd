@@ -31,9 +31,48 @@ use crate::{Driver, PowerRole, RxError, TxError};
 /// This is the maximum standard message size.
 const MAX_MESSAGE_SIZE: usize = 30;
 
+// FIXME: Internal/externally propagated errors
+
 /// Errors that can occur in the protocol layer.
 #[derive(Debug, Format)]
 pub enum Error {
+    /// Timeouts, e.g. while waiting for GoodCrc.
+    /// FIXME: Must never be propagated outside.
+    Timeout,
+    /// Port partner requested soft reset.
+    SoftReset,
+    /// An unsupported message was received.
+    UnsupportedMessage,
+    /// An unexpected message was received.
+    UnexpectedMessage,
+    /// Message retransmission
+    Retransmission,
+    /// Counter overruns, e.g. for hard-reset.
+    Counter(CounterError),
+    /// Errors during reception.
+    RxError(RxError),
+    /// Errors during transmission.
+    TxError(TxError),
+}
+
+/// Errors that can occur in the protocol layer.
+#[derive(Debug, Format)]
+pub enum ExternalError {
+    /// Port partner requested soft reset.
+    SoftReset,
+    /// Driver reported a hard reset.
+    HardReset,
+    /// An unsupported message was received.
+    UnsupportedMessage,
+    /// An unexpected message was received.
+    UnexpectedMessage,
+    /// Counter overruns, e.g. for hard-reset.
+    Counter(CounterError),
+}
+
+/// Errors that can occur in the protocol layer.
+#[derive(Debug, Format)]
+pub enum InternalError {
     /// Port partner requested soft reset.
     SoftReset,
     /// Timeouts, e.g. while waiting for GoodCrc.
@@ -264,13 +303,11 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         Ok(message)
     }
 
-    /// Wait until a message of a certain type is received, or a timeout occurs.
-    ///
-    /// Any of the provided message types fulfills the requirement.
-    pub async fn wait_for_any_message(
+    /// Wait until a message of one of the chosen types is received, or a timeout occurs.
+    async fn wait_for_any_message_inner(
         &mut self,
         message_types: &[MessageType],
-        timeout_fut: impl Future<Output = ()>,
+        timer_type: TimerType,
     ) -> Result<Message, Error> {
         // GoodCrc message reception is handled separately.
         // See `wait_for_good_crc()` instead.
@@ -331,25 +368,36 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             }
         };
 
-        let result = {
-            pin_mut!(timeout_fut);
-            pin_mut!(receive_fut);
+        let timeout_fut = Self::get_timer(timer_type);
 
-            match select(timeout_fut, receive_fut).await {
-                Either::Left((_, _)) => Err(Error::Timeout),
-                Either::Right((receive_result, _)) => receive_result,
-            }
-        };
+        pin_mut!(timeout_fut);
+        pin_mut!(receive_fut);
 
-        if let Err(Error::Timeout) = result {
-            // May cause a counter overrun (retries exceeded).
-            self.counters.retry.increment()?;
+        match select(timeout_fut, receive_fut).await {
+            Either::Left((_, _)) => Err(Error::Timeout),
+            Either::Right((receive_result, _)) => receive_result,
         }
-
-        result
     }
 
-    pub fn handle_hard_reset(&mut self) -> Result<(), Error> {
+    /// Wait until a message of one of the chosen types is received, or the retry count is exceeded.
+    pub async fn wait_for_any_message(
+        &mut self,
+        message_types: &[MessageType],
+        timer_type: TimerType,
+    ) -> Result<Message, Error> {
+        loop {
+            match self.wait_for_any_message_inner(message_types, timer_type).await {
+                Ok(message) => return Ok(message),
+                Err(Error::Timeout) => {
+                    // May cause a counter overrun (retries exceeded).
+                    self.counters.retry.increment()?
+                }
+                Err(other) => return Err(other.into()),
+            }
+        }
+    }
+
+    pub async fn hard_reset(&mut self) -> Result<(), Error> {
         // See spec, [6.7.1.1]
         self.counters.tx_message.reset();
         self.counters.retry.reset();
@@ -357,6 +405,8 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         self.counters.hard_reset.increment()?;
 
         // FIXME: Perform actual hard reset.
+        self.driver.transmit_hard_reset().await?;
+
         Ok(())
     }
 
@@ -370,7 +420,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     pub async fn wait_for_source_capabilities(&mut self) -> Result<Message, Error> {
         self.wait_for_any_message(
             &[MessageType::Data(message::header::DataMessageType::SourceCapabilities)],
-            Self::get_timer(TimerType::SourceCapability),
+            TimerType::SourceCapability,
         )
         .await
     }

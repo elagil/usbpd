@@ -40,6 +40,8 @@ pub trait Driver {
     fn receive(&mut self, buffer: &mut [u8]) -> impl Future<Output = Result<usize, RxError>>;
 
     fn transmit(&mut self, data: &[u8]) -> impl Future<Output = Result<(), TxError>>;
+
+    fn transmit_hard_reset(&mut self) -> impl Future<Output = Result<(), TxError>>;
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -45,24 +45,29 @@ impl<'d> UcpdSinkDriver<'d> {
 }
 
 impl<'d> SinkDriver for UcpdSinkDriver<'d> {
-    async fn wait_for_vbus(&self) {}
+    async fn wait_for_vbus(&self) {
+        // The sink policy engine is only running when attached. Therefore VBus is present.
+    }
 
     async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, usbpd::RxError> {
-        let length = match self.pd_phy.receive(buffer).await {
-            Err(ucpd::RxError::Crc | ucpd::RxError::Overrun) => return Err(usbpd::RxError::Discarded),
-            Err(ucpd::RxError::HardReset) => return Err(usbpd::RxError::HardReset),
-            Ok(length) => length,
-        };
-
-        Ok(length)
+        self.pd_phy.receive(buffer).await.map_err(|err| match err {
+            ucpd::RxError::Crc | ucpd::RxError::Overrun => usbpd::RxError::Discarded,
+            ucpd::RxError::HardReset => usbpd::RxError::HardReset,
+        })
     }
 
     async fn transmit(&mut self, data: &[u8]) -> Result<(), usbpd::TxError> {
-        match self.pd_phy.transmit(data).await {
-            Ok(()) => Ok(()),
-            Err(ucpd::TxError::Discarded) => Err(usbpd::TxError::Discarded),
-            Err(ucpd::TxError::HardReset) => Err(usbpd::TxError::HardReset),
-        }
+        self.pd_phy.transmit(data).await.map_err(|err| match err {
+            ucpd::TxError::Discarded => usbpd::TxError::Discarded,
+            ucpd::TxError::HardReset => usbpd::TxError::HardReset,
+        })
+    }
+
+    async fn transmit_hard_reset(&mut self) -> Result<(), usbpd::TxError> {
+        self.pd_phy.transmit_hardreset().await.map_err(|err| match err {
+            ucpd::TxError::Discarded => usbpd::TxError::Discarded,
+            ucpd::TxError::HardReset => usbpd::TxError::HardReset,
+        })
     }
 }
 

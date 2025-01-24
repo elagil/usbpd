@@ -8,7 +8,6 @@ license = "GPL-3.0"
 embassy-stm32 = { path = "../../embassy/embassy-stm32", features = [
     "defmt",
     "time-driver-any",
-    "stm32g431cb",
     "memory-x",
     "unstable-pac",
     "exti",
@@ -60,3 +59,9 @@ incremental = false
 lto = true
 opt-level = 'z'          # <-
 overflow-checks = false  # <-
+
+[features]
+default = ["stm32g431cb"]
+
+stm32g431cb = ["embassy-stm32/stm32g431cb"]
+# stm32h563zi = ["embassy-stm32/stm32h563zi"]
