@@ -6,6 +6,7 @@ description = "USB-PD library for `[no_std]`."
 documentation = "https://docs.rs/usbpd"
 repository = "https://github.com/elagil/usbpd"
 homepage = "https://github.com/elagil/usbpd"
+readme = "README.md"
 license = "MIT"
 keywords = ["no_std", "usb-pd", "embedded"]
 

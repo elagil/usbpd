@@ -2,7 +2,7 @@
 edition = "2021"
 name = "usbpd-testing"
 version = "0.1.0"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 
 [dependencies]
 # Change stm32h563zi to your chip name, if necessary.
