@@ -1,6 +1,15 @@
 //! Definitions of message content.
+
+// FIXME: add documentation
+#[allow(missing_docs)]
 pub mod header;
+
+// FIXME: add documentation
+#[allow(missing_docs)]
 pub mod pdo;
+
+// FIXME: add documentation
+#[allow(missing_docs)]
 pub mod vdo;
 
 use byteorder::{ByteOrder, LittleEndian};
@@ -18,7 +27,11 @@ use self::pdo::{
     PowerDataObjectType, PowerSourceRequest, RawRequestDataObject,
 };
 
+/// PDO State.
+///
+/// FIXME: Required?
 pub trait PdoState {
+    /// FIXME: Required?
     fn pdo_at_object_position(&self, position: u8) -> Option<PowerDataObjectType>;
 }
 
@@ -28,37 +41,48 @@ impl PdoState for () {
     }
 }
 
+/// Data that data messages can carry.
 #[derive(Debug, Clone, Format)]
 pub enum Data {
+    /// Source capability data.
     SourceCapabilities(SourceCapabilities),
-    Request(PowerSourceRequest),
+    /// Request for a power level from the source.
+    PowerSourceRequest(PowerSourceRequest),
+    /// Vendor defined.
     VendorDefined((VDMHeader, Vec<u32, 7>)), // TODO: Incomplete
+    /// Unknown data type.
     Unknown,
 }
 
 impl Data {
+    // Serialize message data to a slice, returning the number of written bytes.
     fn to_bytes(&self, payload: &mut [u8]) -> usize {
         match self {
             Self::Unknown => 0,
             Self::SourceCapabilities(_) => unimplemented!(),
-            Self::Request(PowerSourceRequest::FixedSupply(data_object)) => data_object.to_bytes(payload),
-            Self::Request(_) => unimplemented!(),
+            Self::PowerSourceRequest(PowerSourceRequest::FixedSupply(data_object)) => data_object.to_bytes(payload),
+            Self::PowerSourceRequest(_) => unimplemented!(),
             Self::VendorDefined(_) => unimplemented!(),
         }
     }
 }
 
+/// A USB PD message.
 #[derive(Debug, Clone, Format)]
 pub struct Message {
+    /// The message header.
     pub header: Header,
+    /// Optional payload data (for data messages).
     pub data: Option<Data>,
 }
 
 impl Message {
+    /// Create a new message from a message header.
     pub fn new(header: Header) -> Self {
         Self { header, data: None }
     }
 
+    /// Serialize a message to a slice, returning the number of written bytes.
     pub fn to_bytes(&self, buffer: &mut [u8]) -> usize {
         let mut size = self.header.to_bytes(buffer);
 
@@ -69,7 +93,10 @@ impl Message {
         size
     }
 
-    pub fn parse_with_state<P: PdoState>(data: &[u8], state: &P) -> Self {
+    /// Parse a message from a slice of bytes, with a PDO state.
+    ///
+    /// FIXME: Is the state required/to spec?
+    pub fn from_bytes_with_state<P: PdoState>(data: &[u8], state: &P) -> Self {
         let mut message = Self::new(Header::from_bytes(&data[..2]));
         let payload = &data[2..];
 
@@ -110,7 +137,7 @@ impl Message {
                 }
                 let raw = RawRequestDataObject(LittleEndian::read_u32(payload));
                 if let Some(t) = state.pdo_at_object_position(raw.object_position()) {
-                    message.data = Some(Data::Request(match t {
+                    message.data = Some(Data::PowerSourceRequest(match t {
                         PowerDataObjectType::FixedSupply => {
                             PowerSourceRequest::FixedSupply(FixedVariableRequestDataObject(raw.0))
                         }
@@ -122,7 +149,7 @@ impl Message {
                         PowerDataObjectType::AVS => PowerSourceRequest::AVS(AVSRequestDataObject(raw.0)),
                     }));
                 } else {
-                    message.data = Some(Data::Request(PowerSourceRequest::Unknown(raw)));
+                    message.data = Some(Data::PowerSourceRequest(PowerSourceRequest::Unknown(raw)));
                 }
             }
             MessageType::Data(DataMessageType::VendorDefined) => {
@@ -172,7 +199,8 @@ impl Message {
         message
     }
 
-    pub fn parse(data: &[u8]) -> Self {
-        Self::parse_with_state(data, &())
+    /// Parse a message from a slice of bytes.
+    pub fn from_bytes(data: &[u8]) -> Self {
+        Self::from_bytes_with_state(data, &())
     }
 }

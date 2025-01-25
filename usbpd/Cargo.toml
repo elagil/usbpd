@@ -14,7 +14,7 @@ harness = false # do not use the built-in cargo test harness -> resolve rust-ana
 test = false
 
 [dependencies]
-proc-bitfield = "0.4"
+proc-bitfield = "0.5.2"
 byteorder = { version = "1.5.0", default-features = false }
 defmt = {version="0.3.6",optional = true}
 heapless = "0.8.0"

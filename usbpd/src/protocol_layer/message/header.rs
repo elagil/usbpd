@@ -1,3 +1,4 @@
+//! Definitions for a USB PD message header.
 use byteorder::{ByteOrder, LittleEndian};
 use defmt::Format;
 use proc_bitfield::bitfield;
@@ -7,7 +8,7 @@ use crate::{DataRole, PowerRole};
 
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq, Format)]
-    pub struct Header(pub u16): Debug, FromRaw, IntoRaw {
+    pub struct Header(pub u16): Debug, FromStorage, IntoStorage {
         pub extended: bool @ 15,
         pub num_objects: u8 [get usize] @ 12..=14,
         pub message_id: u8 @ 9..=11,

@@ -5,10 +5,8 @@ use embassy_stm32::gpio::Output;
 use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
 use embassy_stm32::{bind_interrupts, peripherals};
 use embassy_time::{with_timeout, Duration, Timer};
-use usbpd::protocol_layer::message::pdo;
-use usbpd::sink::device_policy_manager::{request_highest_voltage, DevicePolicyManager};
+use usbpd::sink::device_policy_manager::DevicePolicyManager;
 use usbpd::sink::policy_engine::Sink;
-use usbpd::sink::PowerSourceRequest;
 use usbpd::timers::Timer as SinkTimer;
 use usbpd::Driver as SinkDriver;
 use {defmt_rtt as _, panic_probe as _};
@@ -49,24 +47,24 @@ impl<'d> SinkDriver for UcpdSinkDriver<'d> {
         // The sink policy engine is only running when attached. Therefore VBus is present.
     }
 
-    async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, usbpd::RxError> {
+    async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, usbpd::DriverRxError> {
         self.pd_phy.receive(buffer).await.map_err(|err| match err {
-            ucpd::RxError::Crc | ucpd::RxError::Overrun => usbpd::RxError::Discarded,
-            ucpd::RxError::HardReset => usbpd::RxError::HardReset,
+            ucpd::RxError::Crc | ucpd::RxError::Overrun => usbpd::DriverRxError::Discarded,
+            ucpd::RxError::HardReset => usbpd::DriverRxError::HardReset,
         })
     }
 
-    async fn transmit(&mut self, data: &[u8]) -> Result<(), usbpd::TxError> {
+    async fn transmit(&mut self, data: &[u8]) -> Result<(), usbpd::DriverTxError> {
         self.pd_phy.transmit(data).await.map_err(|err| match err {
-            ucpd::TxError::Discarded => usbpd::TxError::Discarded,
-            ucpd::TxError::HardReset => usbpd::TxError::HardReset,
+            ucpd::TxError::Discarded => usbpd::DriverTxError::Discarded,
+            ucpd::TxError::HardReset => usbpd::DriverTxError::HardReset,
         })
     }
 
-    async fn transmit_hard_reset(&mut self) -> Result<(), usbpd::TxError> {
+    async fn transmit_hard_reset(&mut self) -> Result<(), usbpd::DriverTxError> {
         self.pd_phy.transmit_hardreset().await.map_err(|err| match err {
-            ucpd::TxError::Discarded => usbpd::TxError::Discarded,
-            ucpd::TxError::HardReset => usbpd::TxError::HardReset,
+            ucpd::TxError::Discarded => usbpd::DriverTxError::Discarded,
+            ucpd::TxError::HardReset => usbpd::DriverTxError::HardReset,
         })
     }
 }
@@ -119,15 +117,9 @@ impl SinkTimer for EmbassySinkTimer {
 
 struct Device {}
 
-impl Device {
-    fn new() -> Self {
-        Self {}
-    }
-}
-
 impl DevicePolicyManager for Device {
-    fn request(&mut self, source_capabilities: pdo::SourceCapabilities) -> Option<PowerSourceRequest> {
-        request_highest_voltage(source_capabilities)
+    async fn transition_power(&mut self) {
+        info!("Transitioning power")
     }
 }
 
@@ -148,7 +140,7 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
 
         info!("Waiting for USB connection");
         let cable_orientation = wait_attached(&mut ucpd.cc_phy()).await;
-        info!("USB cable connected, orientation: {}", cable_orientation);
+        info!("USB cable attached, orientation: {}", cable_orientation);
 
         let cc_sel = match cable_orientation {
             CableOrientation::Normal => {
@@ -164,14 +156,13 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
         let (mut cc_phy, pd_phy) = ucpd.split_pd_phy(&mut ucpd_resources.rx_dma, &mut ucpd_resources.tx_dma, cc_sel);
 
         let driver = UcpdSinkDriver::new(pd_phy);
-        let device_policy_manager = Device::new();
-        let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(driver, device_policy_manager);
-        info!("Sink initialized");
+        let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(driver, Device {});
+        info!("Run sink");
 
         match select(sink.run(), wait_detached(&mut cc_phy)).await {
             Either::First(_) => (),
             Either::Second(_) => {
-                info!("Detached");
+                info!("USB cable detached");
                 continue;
             }
         }

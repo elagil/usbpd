@@ -69,14 +69,14 @@ pub enum PowerDataObject {
 
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq, Format)]
-    pub struct PowerDataObjectRaw(pub u32): Debug, FromRaw, IntoRaw {
+    pub struct PowerDataObjectRaw(pub u32): Debug, FromStorage, IntoStorage {
         pub kind: u8 @ 30..=31,
     }
 }
 
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq, Format)]
-    pub struct FixedSupply(pub u32): Debug, FromRaw, IntoRaw {
+    pub struct FixedSupply(pub u32): Debug, FromStorage, IntoStorage {
         /// Fixed supply
         pub kind: u8 @ 30..=31,
         /// Dual-role power
@@ -95,9 +95,9 @@ bitfield! {
         pub epr_mode_capable: bool @ 23,
         /// Peak current
         pub peak_current: u8 @ 20..=21,
-        /// Voltage in 50mV units
+        /// Voltage in 50 mV units
         pub raw_voltage: u16 @ 10..=19,
-        /// Maximum current in 10mA units
+        /// Maximum current in 10 mA units
         pub raw_max_current: u16 @ 0..=9,
     }
 }
@@ -114,14 +114,14 @@ impl FixedSupply {
 
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq, Format)]
-    pub struct Battery(pub u32): Debug, FromRaw, IntoRaw {
+    pub struct Battery(pub u32): Debug, FromStorage, IntoStorage {
         /// Battery
         pub kind: u8 @ 30..=31,
-        /// Maximum Voltage in 50mV units
+        /// Maximum Voltage in 50 mV units
         pub raw_max_voltage: u16 @ 20..=29,
-        /// Minimum Voltage in 50mV units
+        /// Minimum Voltage in 50 mV units
         pub raw_min_voltage: u16 @ 10..=19,
-        /// Maximum Allowable Power in 250mW units
+        /// Maximum Allowable Power in 250 mW units
         pub raw_max_power: u16 @ 0..=9,
     }
 }
@@ -142,7 +142,7 @@ impl Battery {
 
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq, Format)]
-    pub struct VariableSupply(pub u32): Debug, FromRaw, IntoRaw {
+    pub struct VariableSupply(pub u32): Debug, FromStorage, IntoStorage {
         /// Variable supply (non-battery)
         pub kind: u8 @ 30..=31,
         /// Maximum Voltage in 50mV units
@@ -177,7 +177,7 @@ pub enum AugmentedPowerDataObject {
 
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq, Format)]
-    pub struct AugmentedPowerDataObjectRaw(pub u32): Debug, FromRaw, IntoRaw {
+    pub struct AugmentedPowerDataObjectRaw(pub u32): Debug, FromStorage, IntoStorage {
         /// Augmented power data object
         pub kind: u8 @ 30..=31,
         pub supply: u8 @ 28..=29,
@@ -187,7 +187,7 @@ bitfield! {
 
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq, Format)]
-    pub struct SPRProgrammablePowerSupply(pub u32): Debug, FromRaw, IntoRaw {
+    pub struct SPRProgrammablePowerSupply(pub u32): Debug, FromStorage, IntoStorage {
         /// Augmented power data object
         pub kind: u8 @ 30..=31,
         /// SPR programmable power supply
@@ -218,7 +218,7 @@ impl SPRProgrammablePowerSupply {
 
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq, Format)]
-    pub struct EPRAdjustableVoltageSupply(pub u32): Debug, FromRaw, IntoRaw {
+    pub struct EPRAdjustableVoltageSupply(pub u32): Debug, FromStorage, IntoStorage {
         /// Augmented power data object
         pub kind: u8 @ 30..=31,
         /// EPR adjustable voltage supply
@@ -249,7 +249,7 @@ impl EPRAdjustableVoltageSupply {
 
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq, Format)]
-    pub struct RawRequestDataObject(pub u32): Debug, FromRaw, IntoRaw {
+    pub struct RawRequestDataObject(pub u32): Debug, FromStorage, IntoStorage {
         /// Valid range 1..=14
         pub object_position: u8 @ 28..=31,
     }
@@ -257,7 +257,7 @@ bitfield! {
 
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq, Format)]
-    pub struct FixedVariableRequestDataObject(pub u32): Debug, FromRaw, IntoRaw {
+    pub struct FixedVariableRequestDataObject(pub u32): Debug, FromStorage, IntoStorage {
         /// Valid range 1..=14
         pub object_position: u8 @ 28..=31,
         pub giveback_flag: bool @ 27,
@@ -288,7 +288,7 @@ impl FixedVariableRequestDataObject {
 
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq, Format)]
-    pub struct BatteryRequestDataObject(pub u32): Debug, FromRaw, IntoRaw {
+    pub struct BatteryRequestDataObject(pub u32): Debug, FromStorage, IntoStorage {
         /// Object position (0000b and 1110b…1111b are Reserved and Shall Not be used)
         pub object_position: u8 @ 28..=31,
         /// GiveBackFlag = 0
@@ -326,7 +326,7 @@ impl BatteryRequestDataObject {
 
 bitfield!(
     #[derive(Clone, Copy, PartialEq, Eq, Format)]
-    pub struct PPSRequestDataObject(pub u32): Debug, FromRaw, IntoRaw {
+    pub struct PPSRequestDataObject(pub u32): Debug, FromStorage, IntoStorage {
         /// Object position (0000b and 1110b…1111b are Reserved and Shall Not be used)
         pub object_position: u8 @ 28..=31,
         /// Capability mismatch
@@ -362,7 +362,7 @@ impl PPSRequestDataObject {
 
 bitfield!(
     #[derive(Clone, Copy, PartialEq, Eq, Format)]
-    pub struct AVSRequestDataObject(pub u32): Debug, FromRaw, IntoRaw {
+    pub struct AVSRequestDataObject(pub u32): Debug, FromStorage, IntoStorage {
         /// Object position (0000b and 1110b…1111b are Reserved and Shall Not be used)
         pub object_position: u8 @ 28..=31,
         /// Capability mismatch
@@ -450,20 +450,24 @@ impl SourceCapabilities {
             .unwrap_or_default()
     }
 
+    /// Determine, whether dual-role data is supported by the source.
     pub fn dual_role_data(&self) -> bool {
         self.vsafe_5v().map(FixedSupply::dual_role_data).unwrap_or_default()
     }
 
+    /// Determine, whether unchunked extended messages are supported by the source.
     pub fn unchunked_extended_messages_supported(&self) -> bool {
         self.vsafe_5v()
             .map(FixedSupply::unchunked_extended_messages_supported)
             .unwrap_or_default()
     }
 
+    /// Determine, whether the source is EPR mode capable.
     pub fn epr_mode_capable(&self) -> bool {
         self.vsafe_5v().map(FixedSupply::epr_mode_capable).unwrap_or_default()
     }
 
+    /// Get power data objects (PDOs) from the source.
     pub fn pdos(&self) -> &[PowerDataObject] {
         &self.0
     }

@@ -1,9 +1,13 @@
 //! Policy engine for the implementation of a sink.
-use core::future::Future;
 use core::marker::PhantomData;
 
 use defmt::{debug, error, trace, Format};
+use futures::future::{select, Either};
+use futures::pin_mut;
 
+use super::device_policy_manager::DevicePolicyManager;
+use super::PowerSourceRequest;
+use crate::counters::{Counter, Error as CounterError};
 use crate::protocol_layer::message::header::{
     ControlMessageType, DataMessageType, Header, MessageType, SpecificationRevision,
 };
@@ -13,15 +17,28 @@ use crate::protocol_layer::{Error as ProtocolError, ProtocolLayer};
 use crate::timers::{Timer, TimerType};
 use crate::{DataRole, Driver, PowerRole};
 
-use super::device_policy_manager::DevicePolicyManager;
-use super::PowerSourceRequest;
-
 /// Sink capability
-enum Mode {
+///
+/// FIXME: Support EPR.
+enum _Mode {
     /// The classic mode of PD operation where explicit contracts are negotiaged using SPR (A)PDOs.
     Spr,
     /// A Power Delivery mode of operation where maximum allowable voltage is 48V.
     Epr,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Contract {
+    Safe5V,
+    _Implicit, // FIXME: When does an implicit contract exist?
+    Transition,
+    Explicit,
+}
+
+impl Default for Contract {
+    fn default() -> Self {
+        Contract::Safe5V
+    }
 }
 
 /// Sink states.
@@ -41,8 +58,8 @@ enum State {
     HardReset,
     TransitionToDefault,
     GiveSinkCap,
-    GetSourceCap, // FIXME: no EPR support
-    EPRKeepAlive, // FIXME: no EPR support
+    _GetSourceCap, // FIXME: no EPR support
+    _EPRKeepAlive, // FIXME: no EPR support
 }
 
 /// Implementation of the sink policy engine.
@@ -50,17 +67,21 @@ enum State {
 #[derive(Debug)]
 pub struct Sink<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> {
     device_policy_manager: DPM,
-    protocol_layer: Option<ProtocolLayer<DRIVER, TIMER>>,
-    state: State,
+    protocol_layer: ProtocolLayer<DRIVER, TIMER>,
+
     source_capabilities: Option<SourceCapabilities>,
     power_source_request: Option<PowerSourceRequest>,
-    has_explicit_contract: bool,
+    contract: Contract,
+    hard_reset_counter: Counter,
+
+    state: State,
 
     _timer: PhantomData<TIMER>,
 }
 
 #[derive(Debug, Format)]
 enum Error {
+    PortPartnerUnresponsive,
     Protocol(ProtocolError),
 }
 
@@ -80,25 +101,20 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
     pub fn new(driver: DRIVER, device_policy_manager: DPM) -> Self {
         Self {
             device_policy_manager,
-            protocol_layer: Some(Self::new_protocol_layer(driver)),
+            protocol_layer: Self::new_protocol_layer(driver),
             state: State::Discovery,
             source_capabilities: None,
             power_source_request: None,
-            has_explicit_contract: false,
+            contract: Default::default(),
+            hard_reset_counter: Counter::new(crate::counters::CounterType::HardReset),
 
             _timer: PhantomData,
         }
     }
 
-    fn protocol_layer(&mut self) -> &mut ProtocolLayer<DRIVER, TIMER> {
-        self.protocol_layer.as_mut().unwrap()
-    }
-
-    fn reset_protocol_layer(&mut self) {
-        trace!("Reset protocol layer");
-
-        let driver = self.protocol_layer.take().unwrap().reset();
-        self.protocol_layer = Some(Self::new_protocol_layer(driver));
+    /// Set a new driver when re-attached.
+    pub fn re_attach(&mut self, driver: DRIVER) {
+        self.protocol_layer = Self::new_protocol_layer(driver);
     }
 
     /// Run the sink's state machine.
@@ -112,11 +128,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
             if let Err(Error::Protocol(protocol_error)) = result {
                 self.state = match (self.state, protocol_error) {
                     // Handle when hard reset is signaled by the driver itself.
-                    (
-                        _,
-                        ProtocolError::RxError(crate::RxError::HardReset)
-                        | ProtocolError::TxError(crate::TxError::HardReset),
-                    ) => State::HardReset,
+                    (_, ProtocolError::HardReset) => State::TransitionToDefault,
 
                     // Handle when soft reset is signaled by the driver itself.
                     (_, ProtocolError::SoftReset) => State::SoftReset,
@@ -125,23 +137,25 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     // See spec, [6.8.1]
                     (_, ProtocolError::UnexpectedMessage) => State::SendSoftReset,
 
-                    // Fall back to hard reset, after soft reset accept failed to be sent.
-                    (State::SoftReset, ProtocolError::TxError(_)) => State::HardReset,
+                    // Fall back to hard reset
+                    // - after soft reset accept failed to be sent, or
+                    // - after sending soft reset failed.
+                    (State::SoftReset | State::SendSoftReset, ProtocolError::TransmitRetriesExceeded) => {
+                        State::HardReset
+                    }
 
-                    // Fall back to hard reset, after sending soft reset failed.
-                    (State::SendSoftReset, ProtocolError::Timeout | ProtocolError::TxError(_)) => State::HardReset,
+                    // See spec, [8.3.3.3.3]
+                    (State::WaitForCapabilities, ProtocolError::ReceiveTimeout) => State::HardReset,
 
-                    // See spec, [6.4.1.6]
-                    (State::WaitForCapabilities, ProtocolError::Timeout) => State::HardReset,
+                    // See spec, [8.3.3.3.5]
+                    (State::SelectCapability, ProtocolError::ReceiveTimeout) => State::HardReset,
 
-                    (State::SelectCapability, ProtocolError::Timeout) => State::HardReset,
-
-                    // Timeouts increase the retry count within the protocol layer.
-                    (_, ProtocolError::Timeout) => self.state,
+                    // See spec, [8.3.3.3.6]
+                    (State::TransitionSink, _) => State::HardReset,
 
                     (State::Ready, ProtocolError::UnsupportedMessage) => State::SendNotSupported,
 
-                    (_, ProtocolError::Counter(crate::counters::Error::Overrun)) => State::SendSoftReset,
+                    (_, ProtocolError::TransmitRetriesExceeded) => State::SendSoftReset,
 
                     // Attempt to recover protocol errors with a soft reset.
                     (_, error) => {
@@ -151,13 +165,12 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 };
             } else {
                 debug!("Result {} in sink state transition", result);
-                unimplemented!()
             }
         }
     }
 
     async fn get_source_capabilities(&mut self) -> Result<(), Error> {
-        let message = self.protocol_layer().wait_for_source_capabilities().await?;
+        let message = self.protocol_layer.wait_for_source_capabilities().await?;
         trace!("Source capabilities: {}", message);
 
         let Some(Data::SourceCapabilities(capabilities)) = message.data else {
@@ -173,13 +186,13 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
 
         let new_state = match self.state {
             State::Startup => {
-                // Reset protocol layer
-                self.reset_protocol_layer();
+                self.contract = Default::default();
+                self.protocol_layer.reset();
 
                 State::Discovery
             }
             State::Discovery => {
-                self.protocol_layer().wait_for_vbus().await;
+                self.protocol_layer.wait_for_vbus().await;
 
                 State::WaitForCapabilities
             }
@@ -189,27 +202,29 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 State::EvaluateCapabilities
             }
             State::EvaluateCapabilities => {
-                // FIXME: Reset HardResetCounter
-                // self.hard_reset_count.reset();
+                // Sink now knows that it is attached.
 
-                // Evaluate capabilities, and:
-                // - Select suitable one, or
-                // - Respond with capability mismatch
-                // Transition to SelectCapability after capabilities are
-                // evaluated
+                self.hard_reset_counter.reset();
+
                 self.power_source_request = self
                     .device_policy_manager
-                    .request(self.source_capabilities.take().unwrap());
+                    .request(self.source_capabilities.take().unwrap())
+                    .await;
 
                 State::SelectCapability
             }
             State::SelectCapability => {
-                let request = self.power_source_request.take().unwrap();
-                self.protocol_layer().request_supply(request).await?;
+                match self.power_source_request.take() {
+                    Some(request) => self.protocol_layer.request_power(request).await?,
+                    None => {
+                        // FIXME: Send capability mismatch
+                        unimplemented!()
+                    }
+                }
 
                 let message_type = self
-                    .protocol_layer()
-                    .wait_for_any_message(
+                    .protocol_layer
+                    .receive_message_type(
                         &[
                             MessageType::Control(ControlMessageType::Accept),
                             MessageType::Control(ControlMessageType::Wait),
@@ -225,28 +240,25 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     unreachable!()
                 };
 
-                match (self.has_explicit_contract, control_message_type) {
+                match (self.contract, control_message_type) {
                     (_, ControlMessageType::Accept) => State::TransitionSink,
-                    (false, ControlMessageType::Wait | ControlMessageType::Reject) => State::WaitForCapabilities,
-                    (true, ControlMessageType::Wait | ControlMessageType::Reject) => State::Ready,
+                    (Contract::Safe5V, ControlMessageType::Wait | ControlMessageType::Reject) => {
+                        State::WaitForCapabilities
+                    }
+                    (Contract::Explicit, ControlMessageType::Reject | ControlMessageType::Wait) => State::Ready,
                     _ => unreachable!(),
                 }
             }
             State::TransitionSink => {
-                // Entry: Initialize and run PSTransitionTimer
-                // Exit: Request device policy manager transitions sink power
-                // supply to new power (if required)
-                // Transition to
-                // - HardReset on protocol error??
-                // - Ready after PS_RDY message received
-
-                self.protocol_layer()
-                    .wait_for_any_message(
+                self.protocol_layer
+                    .receive_message_type(
                         &[MessageType::Control(ControlMessageType::PsRdy)],
                         TimerType::PSTransitionSpr,
                     )
                     .await?;
 
+                self.contract = Contract::Transition;
+                self.device_policy_manager.transition_power().await;
                 State::Ready
             }
             State::Ready => {
@@ -258,36 +270,54 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 // swap Exit: If initiating an AMS, notify
                 // protocol layer??? Transition to
                 // - EPRKeepAlive on SinkEPRKeepAliveTimer timeout
-                let message = self.protocol_layer().receive().await?;
+                self.contract = Contract::Explicit;
 
-                match message.header.message_type() {
-                    MessageType::Data(DataMessageType::SourceCapabilities) => {
-                        let Some(Data::SourceCapabilities(capabilities)) = message.data else {
-                            unreachable!()
-                        };
-                        self.source_capabilities = Some(capabilities);
-                        State::EvaluateCapabilities
+                let receive_fut = self.protocol_layer.receive_message();
+                let dpm_event_fut = self.device_policy_manager.get_event();
+
+                pin_mut!(receive_fut);
+                pin_mut!(dpm_event_fut);
+
+                match select(receive_fut, dpm_event_fut).await {
+                    Either::Left((message, _)) => {
+                        let message = message?;
+
+                        match message.header.message_type() {
+                            MessageType::Data(DataMessageType::SourceCapabilities) => {
+                                let Some(Data::SourceCapabilities(capabilities)) = message.data else {
+                                    unreachable!()
+                                };
+                                self.source_capabilities = Some(capabilities);
+                                State::EvaluateCapabilities
+                            }
+                            MessageType::Control(ControlMessageType::GetSinkCap) => State::GiveSinkCap,
+                            _ => State::SendNotSupported,
+                        }
                     }
-                    MessageType::Control(ControlMessageType::GetSinkCap) => State::GiveSinkCap,
-                    _ => State::SendNotSupported,
+                    Either::Right((_event, _)) => {
+                        debug!("Got event from DPM: {}", _event);
+                        // FIXME: Evaluate events from DPM.
+                        // E.g. request source cap, select capability, PPS
+                        State::Ready
+                    }
                 }
             }
             State::SendNotSupported => {
-                self.protocol_layer()
+                self.protocol_layer
                     .transmit_control_message(ControlMessageType::NotSupported)
                     .await?;
 
                 State::Ready
             }
             State::SendSoftReset => {
-                self.reset_protocol_layer();
+                self.protocol_layer.reset();
 
-                self.protocol_layer()
+                self.protocol_layer
                     .transmit_control_message(ControlMessageType::SoftReset)
                     .await?;
 
-                self.protocol_layer()
-                    .wait_for_any_message(
+                self.protocol_layer
+                    .receive_message_type(
                         &[MessageType::Control(ControlMessageType::Accept)],
                         TimerType::SenderResponse,
                     )
@@ -296,11 +326,11 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 State::WaitForCapabilities
             }
             State::SoftReset => {
-                self.protocol_layer()
+                self.protocol_layer
                     .transmit_control_message(ControlMessageType::Accept)
                     .await?;
 
-                self.reset_protocol_layer();
+                self.protocol_layer.reset();
 
                 State::WaitForCapabilities
             }
@@ -312,8 +342,12 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 // - EPR mode and EPR_Source_Capabilities message with EPR PDO in pos. 1..7
                 // - source_capabilities message not requested by get_source_caps
                 // Transition to TransitionToDefault
+                match self.hard_reset_counter.increment() {
+                    Ok(_) => self.protocol_layer.hard_reset().await?,
 
-                self.protocol_layer().hard_reset().await?;
+                    // FIXME: Only unresponsive if WaitCapTimer timed out
+                    Err(CounterError::Exceeded) => return Err(Error::PortPartnerUnresponsive),
+                }
 
                 State::TransitionToDefault
             }
@@ -330,17 +364,17 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 // FIXME: Send sink capabilities, as provided by device policy manager.
                 // Sending NotSupported is not to spec.
                 // See spec, [6.4.1.6]
-                self.protocol_layer()
+                self.protocol_layer
                     .transmit_control_message(ControlMessageType::NotSupported)
                     .await?;
 
                 State::Ready
             }
-            State::GetSourceCap => {
+            State::_GetSourceCap => {
                 // Commonly used for switching between EPR and SPR mode.
                 // FIXME: EPR is not supported.
 
-                self.protocol_layer()
+                self.protocol_layer
                     .transmit_control_message(ControlMessageType::GetSourceCap)
                     .await?;
 
@@ -352,7 +386,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 // In other words, in case of a switch.
                 State::EvaluateCapabilities
             }
-            State::EPRKeepAlive => {
+            State::_EPRKeepAlive => {
                 // Entry: Send EPRKeepAlive Message
                 // Entry: Init. and run SenderReponseTimer
                 // Transition to

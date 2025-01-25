@@ -1,6 +1,20 @@
+//! The device policy manager (DPM) allows a device to control the policy engine, and be informed about status changes.
+//!
+//! For example, through the DPM, a device can request certain source capabilities (voltage, current),
+//! or renegotiate the power contract.
+use core::future::Future;
+
+use defmt::Format;
+
+use super::{FixedSupplyRequest, PowerSourceRequest};
 use crate::protocol_layer::message::pdo::{PowerDataObject, SourceCapabilities};
 
-use super::{FixedSupply, PowerSourceRequest};
+/// Events that the device policy manager can send to the policy engine.
+#[derive(Format)]
+pub enum Event {
+    /// FIXME: Implement events.
+    Reserved,
+}
 
 /// Trait for the device policy manager.
 ///
@@ -9,7 +23,22 @@ pub trait DevicePolicyManager {
     /// Request a power source.
     ///
     /// If `None` is returned, the policy engine informs the source of a capability mismatch.
-    fn request(&mut self, source_capabilities: SourceCapabilities) -> Option<PowerSourceRequest>;
+    /// As a default, request the highest advertised voltage.
+    fn request(&mut self, source_capabilities: SourceCapabilities) -> impl Future<Output = Option<PowerSourceRequest>> {
+        async { request_highest_voltage(source_capabilities) }
+    }
+
+    /// Notify the device that it shall transition to a new power level.
+    fn transition_power(&mut self) -> impl Future<Output = ()> {
+        async {}
+    }
+
+    /// The policy engine gets and evaluates device policy events when ready.
+    ///
+    /// By default, this is a future that never resolves.
+    fn get_event(&mut self) -> impl Future<Output = Event> {
+        async { core::future::pending().await }
+    }
 }
 
 /// Request the maximum voltage at its highest allowed current.
@@ -21,27 +50,31 @@ pub fn request_highest_voltage(source_capabilities: SourceCapabilities) -> Optio
     for (index, pdo) in source_capabilities.pdos().iter().enumerate() {
         match (choice, pdo) {
             (None, PowerDataObject::FixedSupply(supply)) => {
-                choice = Some(FixedSupply {
-                    index: index as u8,
-                    raw_voltage: supply.raw_voltage(),
-                    raw_max_current: supply.raw_max_current(),
-                })
-            }
-            (Some(x), PowerDataObject::FixedSupply(supply)) => {
-                if supply.raw_voltage() > x.raw_voltage {
-                    choice = Some(FixedSupply {
+                choice = Some((
+                    supply.voltage(),
+                    FixedSupplyRequest {
                         index: index as u8,
-                        raw_max_current: supply.raw_max_current(),
-                        raw_voltage: supply.raw_voltage(),
-                    });
+                        current_10ma: supply.raw_max_current(),
+                    },
+                ))
+            }
+            (Some((voltage, _)), PowerDataObject::FixedSupply(supply)) => {
+                if supply.voltage() > voltage {
+                    choice = Some((
+                        supply.voltage(),
+                        FixedSupplyRequest {
+                            index: index as u8,
+                            current_10ma: supply.raw_max_current(),
+                        },
+                    ));
                 }
             }
             _ => (),
         };
     }
 
-    if let Some(x) = choice {
-        Some(PowerSourceRequest::FixedSupply(x))
+    if let Some((_, supply)) = choice {
+        Some(PowerSourceRequest::FixedSupply(supply))
     } else {
         None
     }

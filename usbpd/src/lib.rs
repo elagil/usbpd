@@ -1,3 +1,10 @@
+//! USB PD library.
+//!
+//! Includes capabilities for implementing:
+//! - SPR sink
+//!
+//! Provides a policy engine (depending on selected capability), protocol layer,
+//! and relevant traits for the user applation to implement.
 #![no_std]
 #![warn(missing_docs)]
 
@@ -15,7 +22,7 @@ use core::future::Future;
 /// Receive Error.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum RxError {
+pub enum DriverRxError {
     /// Received message discarded, e.g. due to CRC errors.
     Discarded,
 
@@ -26,7 +33,7 @@ pub enum RxError {
 /// Transmit Error.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum TxError {
+pub enum DriverTxError {
     /// Concurrent receive in progress or excessive noise on the line.
     Discarded,
 
@@ -34,20 +41,29 @@ pub enum TxError {
     HardReset,
 }
 
+/// Driver trait, through which the protocol layer talks to the PHY.
 pub trait Driver {
+    /// Wait for availability of VBus voltage.
     fn wait_for_vbus(&self) -> impl Future<Output = ()>;
 
-    fn receive(&mut self, buffer: &mut [u8]) -> impl Future<Output = Result<usize, RxError>>;
+    /// Receive a packet.
+    fn receive(&mut self, buffer: &mut [u8]) -> impl Future<Output = Result<usize, DriverRxError>>;
 
-    fn transmit(&mut self, data: &[u8]) -> impl Future<Output = Result<(), TxError>>;
+    /// Transmit a packet.
+    fn transmit(&mut self, data: &[u8]) -> impl Future<Output = Result<(), DriverTxError>>;
 
-    fn transmit_hard_reset(&mut self) -> impl Future<Output = Result<(), TxError>>;
+    /// Transmit a hard reset signal.
+    fn transmit_hard_reset(&mut self) -> impl Future<Output = Result<(), DriverTxError>>;
 }
 
+/// The power role of the port.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PowerRole {
+    /// The port is a source.
+    /// FIXME: Implement
     Source,
+    /// The port is a sink.
     Sink,
 }
 
@@ -69,10 +85,13 @@ impl From<PowerRole> for bool {
     }
 }
 
+/// The data role of the port.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DataRole {
+    /// The port is an upstream-facing port.
     Ufp,
+    /// The port is a downstream-facing port.
     Dfp,
 }
 
