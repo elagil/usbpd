@@ -9,6 +9,13 @@ env:
   RUSTFLAGS: "-Dwarnings"
 
 jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run formatting
+        run: cargo +nightly fmt
+
   clippy:
     runs-on: ubuntu-latest
     steps:
@@ -36,7 +43,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run build
-        run: cargo build --manifest-path examples/embassy-stm32-g431cb/Cargo.toml
-      - name: Run build
-        run: cargo build --manifest-path examples/embassy-nucleo-h563zi/Cargo.toml
+      - name: Run build for STM32G431CB
+        working-directory: examples/embassy-stm32-g431cb
+        run: cargo build --release
+      - name: Run build for NUCLEO-H563ZI
+        working-directory: examples/embassy-nucleo-h563zi
+        run: cargo build --release
