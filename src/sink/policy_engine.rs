@@ -26,18 +26,13 @@ enum _Mode {
     Epr,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 enum Contract {
+    #[default]
     Safe5V,
     _Implicit, // FIXME: When does an implicit contract exist?
     Transition,
     Explicit,
-}
-
-impl Default for Contract {
-    fn default() -> Self {
-        Contract::Safe5V
-    }
 }
 
 /// Sink states.

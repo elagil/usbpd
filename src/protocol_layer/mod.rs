@@ -146,7 +146,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
 
     /// Get a timer future for a given type.
     pub fn get_timer(timer_type: TimerType) -> impl Future<Output = ()> {
-        TimerType::new::<TIMER>(timer_type)
+        TimerType::get_timer::<TIMER>(timer_type)
     }
 
     /// Wait until a GoodCrc message is received, or a timeout occurs.
@@ -156,7 +156,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         let receive_fut = async {
             let message = self.receive_message_inner().await?;
 
-            return if matches!(
+            if matches!(
                 message.header.message_type(),
                 MessageType::Control(ControlMessageType::GoodCRC)
             ) {
@@ -176,21 +176,17 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                 }
             } else {
                 Err(RxError::UnexpectedMessage)
-            };
-        };
-
-        let timeout_fut = Self::get_timer(TimerType::CRCReceive);
-        let result = {
-            pin_mut!(timeout_fut);
-            pin_mut!(receive_fut);
-
-            match select(timeout_fut, receive_fut).await {
-                Either::Left((_, _)) => Err(RxError::ReceiveTimeout),
-                Either::Right((receive_result, _)) => receive_result,
             }
         };
 
-        result
+        let timeout_fut = Self::get_timer(TimerType::CRCReceive);
+        pin_mut!(timeout_fut);
+        pin_mut!(receive_fut);
+
+        match select(timeout_fut, receive_fut).await {
+            Either::Left((_, _)) => Err(RxError::ReceiveTimeout),
+            Either::Right((receive_result, _)) => receive_result,
+        }
     }
 
     async fn transmit_inner(&mut self, buffer: &[u8]) -> Result<(), TxError> {
@@ -221,23 +217,21 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         let mut buffer = Self::get_message_buffer();
         let size = message.to_bytes(&mut buffer);
 
-        loop {
-            match self.transmit_inner(&buffer[..size]).await {
-                Ok(_) => {
-                    match self.wait_for_good_crc().await {
-                        Ok(()) => (),
-                        Err(RxError::ReceiveTimeout) => match self.counters.retry.increment() {
-                            Ok(_) => (),
-                            Err(CounterError::Exceeded) => return Err(Error::TransmitRetriesExceeded),
-                        },
-                        Err(other) => return Err(other.into()),
-                    }
-
-                    trace!("Transmit success");
-                    return Ok(());
+        match self.transmit_inner(&buffer[..size]).await {
+            Ok(_) => {
+                match self.wait_for_good_crc().await {
+                    Ok(()) => (),
+                    Err(RxError::ReceiveTimeout) => match self.counters.retry.increment() {
+                        Ok(_) => (),
+                        Err(CounterError::Exceeded) => return Err(Error::TransmitRetriesExceeded),
+                    },
+                    Err(other) => return Err(other.into()),
                 }
-                Err(other) => return Err(other.into()),
+
+                trace!("Transmit success");
+                Ok(())
             }
+            Err(other) => Err(other.into()),
         }
     }
 

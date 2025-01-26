@@ -51,7 +51,7 @@ impl TimerType {
     /// Create a new timer for a given type.
     ///
     /// Times out after a duration that is given by the USB PD specification.
-    pub fn new<TIMER: Timer>(timer_type: TimerType) -> impl Future<Output = ()> {
+    pub fn get_timer<TIMER: Timer>(timer_type: TimerType) -> impl Future<Output = ()> {
         match timer_type {
             TimerType::BISTContMode => TIMER::after_millis(45),
             TimerType::ChunkingNotSupported => TIMER::after_millis(45),

@@ -54,8 +54,8 @@ pub enum PowerDataObjectType {
     FixedSupply,
     Battery,
     VariableSupply,
-    PPS,
-    AVS,
+    Pps,
+    Avs,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -64,7 +64,7 @@ pub enum PowerDataObject {
     FixedSupply(FixedSupply),
     Battery(Battery),
     VariableSupply(VariableSupply),
-    AugmentedPowerDataObject(AugmentedPowerDataObject),
+    Augmented(AugmentedPowerDataObject),
     Unknown(PowerDataObjectRaw),
 }
 
@@ -176,8 +176,8 @@ impl VariableSupply {
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AugmentedPowerDataObject {
-    SPR(SPRProgrammablePowerSupply),
-    EPR(EPRAdjustableVoltageSupply),
+    Spr(SPRProgrammablePowerSupply),
+    Epr(EPRAdjustableVoltageSupply),
     Unknown(u32),
 }
 
@@ -283,7 +283,7 @@ bitfield! {
 }
 
 impl FixedVariableRequestDataObject {
-    pub fn to_bytes(&self, buf: &mut [u8]) -> usize {
+    pub fn to_bytes(self, buf: &mut [u8]) -> usize {
         LittleEndian::write_u32(buf, self.0);
         4
     }
@@ -323,7 +323,7 @@ bitfield! {
 }
 
 impl BatteryRequestDataObject {
-    pub fn to_bytes(&self, buf: &mut [u8]) {
+    pub fn to_bytes(self, buf: &mut [u8]) {
         LittleEndian::write_u32(buf, self.0);
     }
 
@@ -360,7 +360,7 @@ bitfield!(
 );
 
 impl PPSRequestDataObject {
-    pub fn to_bytes(&self, buf: &mut [u8]) {
+    pub fn to_bytes(self, buf: &mut [u8]) {
         LittleEndian::write_u32(buf, self.0);
     }
 
@@ -397,7 +397,7 @@ bitfield!(
 );
 
 impl AVSRequestDataObject {
-    pub fn to_bytes(&self, buf: &mut [u8]) {
+    pub fn to_bytes(self, buf: &mut [u8]) {
         LittleEndian::write_u32(buf, self.0);
     }
 
@@ -418,8 +418,8 @@ pub enum PowerSourceRequest {
     FixedSupply(FixedVariableRequestDataObject),
     VariableSupply(FixedVariableRequestDataObject),
     Battery(BatteryRequestDataObject),
-    PPS(PPSRequestDataObject),
-    AVS(AVSRequestDataObject),
+    Pps(PPSRequestDataObject),
+    Avs(AVSRequestDataObject),
     Unknown(RawRequestDataObject),
 }
 
@@ -430,8 +430,8 @@ impl PowerSourceRequest {
             PowerSourceRequest::FixedSupply(p) => p.object_position(),
             PowerSourceRequest::VariableSupply(p) => p.object_position(),
             PowerSourceRequest::Battery(p) => p.object_position(),
-            PowerSourceRequest::PPS(p) => p.object_position(),
-            PowerSourceRequest::AVS(p) => p.object_position(),
+            PowerSourceRequest::Pps(p) => p.object_position(),
+            PowerSourceRequest::Avs(p) => p.object_position(),
             PowerSourceRequest::Unknown(p) => p.object_position(),
         }
     }
@@ -499,9 +499,9 @@ impl PdoState for SourceCapabilities {
                 PowerDataObject::FixedSupply(_) => Some(PowerDataObjectType::FixedSupply),
                 PowerDataObject::Battery(_) => Some(PowerDataObjectType::Battery),
                 PowerDataObject::VariableSupply(_) => Some(PowerDataObjectType::VariableSupply),
-                PowerDataObject::AugmentedPowerDataObject(augmented) => match augmented {
-                    AugmentedPowerDataObject::SPR(_) => Some(PowerDataObjectType::PPS),
-                    AugmentedPowerDataObject::EPR(_) => Some(PowerDataObjectType::AVS),
+                PowerDataObject::Augmented(augmented) => match augmented {
+                    AugmentedPowerDataObject::Spr(_) => Some(PowerDataObjectType::Pps),
+                    AugmentedPowerDataObject::Epr(_) => Some(PowerDataObjectType::Avs),
                     AugmentedPowerDataObject::Unknown(_) => None,
                 },
                 PowerDataObject::Unknown(_) => None,
