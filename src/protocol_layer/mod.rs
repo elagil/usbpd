@@ -211,7 +211,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             MessageType::Control(ControlMessageType::GoodCRC)
         );
 
-        trace!("Transmit message {}", message);
+        trace!("Transmit message: {}", message);
         self.counters.retry.reset();
 
         let mut buffer = Self::get_message_buffer();
@@ -238,7 +238,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     /// Send a GoodCrc message to the port partner.
     async fn transmit_good_crc(&mut self) -> Result<(), Error> {
         trace!(
-            "Transmit message GoodCrc for RX message count {}",
+            "Transmit message GoodCrc for RX message count: {}",
             self.counters.rx_message.unwrap().value()
         );
 
@@ -297,7 +297,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         match self.counters.rx_message.as_mut() {
             None => {
                 trace!(
-                    "Received first message after protocol layer reset with RX counter value {}",
+                    "Received first message after protocol layer reset with RX counter value: {}",
                     rx_message.header.message_id()
                 );
                 self.counters.rx_message = Some(Counter::new_from_value(
@@ -308,7 +308,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             }
             Some(counter) => {
                 if rx_message.header.message_id() == counter.value() {
-                    trace!("Received retransmission of RX counter value {}", counter.value());
+                    trace!("Received retransmission of RX counter value: {}", counter.value());
                     true
                 } else {
                     counter.set(rx_message.header.message_id());
@@ -418,6 +418,8 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
 
     /// Request a certain power level from the source.
     pub async fn request_power(&mut self, supply: PowerSourceRequest) -> Result<(), Error> {
+        trace!("Requesting power source: {}", supply);
+
         match supply {
             PowerSourceRequest::FixedSupply(fixed_supply) => self.request_fixed_supply(fixed_supply).await,
         }

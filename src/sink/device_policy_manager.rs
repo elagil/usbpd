@@ -10,6 +10,7 @@ use super::{FixedSupplyRequest, PowerSourceRequest};
 use crate::protocol_layer::message::pdo::{PowerDataObject, SourceCapabilities};
 
 /// Requestable voltages.
+#[derive(Debug)]
 pub enum FixedVoltageRequest {
     /// The lowest fixed voltage that the source can supply.
     Lowest,
