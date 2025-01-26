@@ -19,6 +19,8 @@ async fn main(spawner: Spawner) {
     {
         // This pin controls the dead-battery mode on the attached TCPP01-M12.
         let tcpp01_m12_ndb = Output::new(p.PA9, embassy_stm32::gpio::Level::Low, embassy_stm32::gpio::Speed::Low);
+        let led_yellow = Output::new(p.PF4, embassy_stm32::gpio::Level::Low, embassy_stm32::gpio::Speed::Low);
+        let led_red = Output::new(p.PG4, embassy_stm32::gpio::Level::Low, embassy_stm32::gpio::Speed::Low);
 
         let ucpd_resources = UcpdResources {
             pin_cc1: p.PB13,
@@ -27,6 +29,8 @@ async fn main(spawner: Spawner) {
             rx_dma: p.GPDMA1_CH0,
             tx_dma: p.GPDMA1_CH1,
             tcpp01_m12_ndb,
+            led_yellow,
+            led_red,
         };
         unwrap!(spawner.spawn(power::ucpd_task(ucpd_resources)));
     }

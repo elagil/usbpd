@@ -26,6 +26,8 @@ pub struct UcpdResources {
     pub rx_dma: peripherals::GPDMA1_CH0,
     pub tx_dma: peripherals::GPDMA1_CH1,
     pub tcpp01_m12_ndb: Output<'static>,
+    pub led_red: Output<'static>,
+    pub led_yellow: Output<'static>,
 }
 
 #[derive(Debug, Format)]
@@ -119,18 +121,21 @@ impl SinkTimer for EmbassySinkTimer {
     }
 }
 
-struct Device {}
+struct Device<'d> {
+    led: &'d mut Output<'static>,
+}
 
-impl DevicePolicyManager for Device {
+impl DevicePolicyManager for Device<'_> {
     async fn request(&mut self, source_capabilities: SourceCapabilities) -> Option<PowerSourceRequest> {
         request_fixed_voltage(
             source_capabilities,
-            FixedVoltageRequest::Specific(ElectricPotential::new::<electric_potential::volt>(9)),
+            FixedVoltageRequest::Specific(ElectricPotential::new::<electric_potential::volt>(5)),
         )
     }
 
     async fn transition_power(&mut self) {
-        info!("Transitioning power")
+        info!("Transitioning power");
+        self.led.set_high();
     }
 }
 
@@ -138,6 +143,9 @@ impl DevicePolicyManager for Device {
 #[embassy_executor::task]
 pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
     loop {
+        ucpd_resources.led_yellow.set_low();
+        ucpd_resources.led_red.set_low();
+
         let mut ucpd = Ucpd::new(
             &mut ucpd_resources.ucpd,
             Irqs {},
@@ -167,8 +175,13 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
         let (mut cc_phy, pd_phy) = ucpd.split_pd_phy(&mut ucpd_resources.rx_dma, &mut ucpd_resources.tx_dma, cc_sel);
 
         let driver = UcpdSinkDriver::new(pd_phy);
-        let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(driver, Device {});
+        let device = Device {
+            led: &mut ucpd_resources.led_red,
+        };
+        let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(driver, device);
         info!("Sink initialized");
+
+        ucpd_resources.led_yellow.set_high();
 
         match select(sink.run(), wait_detached(&mut cc_phy)).await {
             Either::First(_) => (),
