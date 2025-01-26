@@ -420,7 +420,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     }
 
     /// Request a certain power level from the source.
-    pub async fn request_power(&mut self, supply: PowerSourceRequest) -> Result<(), Error> {
+    pub async fn request_power(&mut self, supply: &PowerSourceRequest) -> Result<(), Error> {
         // Only sinks can request from a supply.
         assert!(matches!(self.default_header.port_power_role(), PowerRole::Sink));
         trace!("Requesting power source: {}", supply);
@@ -430,7 +430,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         }
     }
 
-    async fn request_power_fixed_supply(&mut self, supply: FixedSupplyRequest) -> Result<(), Error> {
+    async fn request_power_fixed_supply(&mut self, supply: &FixedSupplyRequest) -> Result<(), Error> {
         let header = Header::new_data(
             self.default_header,
             self.counters.tx_message,

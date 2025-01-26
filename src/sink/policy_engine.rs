@@ -200,7 +200,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 State::SelectCapability(request)
             }
             State::SelectCapability(request) => {
-                self.protocol_layer.request_power(*request).await?;
+                self.protocol_layer.request_power(request).await?;
 
                 let message_type = self
                     .protocol_layer
