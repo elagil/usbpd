@@ -62,8 +62,8 @@ impl From<u8> for VDMCommandType {
             1 => VDMCommandType::ResponderACK,
             2 => VDMCommandType::ResponderNAK,
             3 => VDMCommandType::ResponderBSY,
-            _ => panic!("Cannot convert {:} to VDMCommandType", value), /* Illegal values shall
-                                                                         * panic. */
+            _ => panic!("Cannot convert {} to VDMCommandType", value), /* Illegal values shall
+                                                                        * panic. */
         }
     }
 }
@@ -108,7 +108,7 @@ impl From<u8> for VDMCommand {
             0x10 => VDMCommand::DisplayPortStatus,
             0x11 => VDMCommand::DisplayPortConfig,
             // TODO: Find document that explains what 0x12-0x1f are (DP_SID??)
-            _ => panic!("Cannot convert {:} to VDMCommand", value), // Illegal values shall panic.
+            _ => panic!("Cannot convert {} to VDMCommand", value), // Illegal values shall panic.
         }
     }
 }
@@ -243,8 +243,8 @@ impl From<u8> for VDMVersionMajor {
         match value {
             0b00 => VDMVersionMajor::Version10,
             0b01 => VDMVersionMajor::Version2x,
-            _ => panic!("Cannot convert {:} to VDMVersionMajor", value), /* Illegal values shall
-                                                                          * panic. */
+            _ => panic!("Cannot convert {} to VDMVersionMajor", value), /* Illegal values shall
+                                                                         * panic. */
         }
     }
 }
@@ -270,8 +270,8 @@ impl From<u8> for VDMVersionMinor {
         match value {
             0b00 => VDMVersionMinor::Version20,
             0b01 => VDMVersionMinor::Version21,
-            _ => panic!("Cannot convert {:} to VDMVersionMinor", value), /* Illegal values shall
-                                                                          * panic. */
+            _ => panic!("Cannot convert {} to VDMVersionMinor", value), /* Illegal values shall
+                                                                         * panic. */
         }
     }
 }
@@ -350,8 +350,8 @@ impl From<u8> for SopProductTypeUfp {
             0b010 => SopProductTypeUfp::PdUsbPeripheral,
             0b011 => SopProductTypeUfp::Psd,
 
-            _ => panic!("Cannot convert {:} to SopProductTypeUfp", value), /* Illegal values
-                                                                            * shall panic. */
+            _ => panic!("Cannot convert {} to SopProductTypeUfp", value), /* Illegal values
+                                                                           * shall panic. */
         }
     }
 }
@@ -384,8 +384,8 @@ impl From<u8> for SopProductTypeDfp {
             0b010 => SopProductTypeDfp::PDUSBHost,
             0b011 => SopProductTypeDfp::PowerBrick,
 
-            _ => panic!("Cannot convert {:} to SopProductTypeDfp", value), /* Illegal values
-                                                                            * shall panic. */
+            _ => panic!("Cannot convert {} to SopProductTypeDfp", value), /* Illegal values
+                                                                           * shall panic. */
         }
     }
 }
@@ -409,8 +409,8 @@ impl From<u8> for ConnectorType {
         match value {
             0b10 => ConnectorType::USBTypeCReceptacle,
             0b11 => ConnectorType::USBTypeCPlug,
-            _ => panic!("Cannot convert {:} to ConnectorType", value), /* Illegal values shall
-                                                                        * panic. */
+            _ => panic!("Cannot convert {} to ConnectorType", value), /* Illegal values shall
+                                                                       * panic. */
         }
     }
 }
@@ -496,8 +496,8 @@ impl From<u8> for USBHighestSpeed {
             0b010 => USBHighestSpeed::USB32Gen2,
             0b011 => USBHighestSpeed::USB40Gen3,
             0b100 => USBHighestSpeed::USB40Gen4,
-            _ => panic!("Cannot convert {:} to USBHighestSpeed", value), /* Illegal values shall
-                                                                          * panic. */
+            _ => panic!("Cannot convert {} to USBHighestSpeed", value), /* Illegal values shall
+                                                                         * panic. */
         }
     }
 }
@@ -538,7 +538,7 @@ impl From<u8> for VconnPower {
             0b100 => VconnPower::P4W,
             0b101 => VconnPower::P5W,
             0b110 => VconnPower::P6W,
-            _ => panic!("Cannot convert {:} to VconnPower", value), // Illegal values shall panic.
+            _ => panic!("Cannot convert {} to VconnPower", value), // Illegal values shall panic.
         }
     }
 }
@@ -561,8 +561,8 @@ impl From<u8> for UFPVDOVersion {
     fn from(value: u8) -> Self {
         match value {
             0b011 => UFPVDOVersion::Version1_3,
-            _ => panic!("Cannot convert {:} to UFPVDOVersion", value), /* Illegal values shall
-                                                                        * panic. */
+            _ => panic!("Cannot convert {} to UFPVDOVersion", value), /* Illegal values shall
+                                                                       * panic. */
         }
     }
 }

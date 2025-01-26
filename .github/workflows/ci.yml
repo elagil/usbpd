@@ -9,22 +9,28 @@ env:
   RUSTFLAGS: "-Dwarnings"
 
 jobs:
-  clippy_check:
+  clippy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run Clippy
-        run: cargo clippy --all-targets --all-features
+      - name: Run clippy
+        run: cargo clippy --all-targets
 
-  build:
+      - name: Run clippy with defmt
+        run: cargo clippy --all-targets --features defmt
+
+  build_and_test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Run build
-        run: cargo build
+        run: cargo build --verbose
 
       - name: Run build with defmt
-        run: cargo build --features defmt
+        run: cargo build --verbose --features defmt
+
+      - name: Run tests
+        run: cargo test --verbose
 
   docs:
     name: Docs
@@ -37,7 +43,7 @@ jobs:
       packages: read
 
     needs:
-      - build
+      - build_and_test
 
     if: github.ref == 'refs/heads/main'
 
