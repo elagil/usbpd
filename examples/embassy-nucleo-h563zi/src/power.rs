@@ -126,7 +126,7 @@ struct Device<'d> {
 }
 
 impl DevicePolicyManager for Device<'_> {
-    async fn request(&mut self, source_capabilities: SourceCapabilities) -> Option<PowerSourceRequest> {
+    async fn request(&mut self, source_capabilities: SourceCapabilities) -> PowerSourceRequest {
         request_fixed_voltage(
             source_capabilities,
             FixedVoltageRequest::Specific(ElectricPotential::new::<electric_potential::volt>(5)),

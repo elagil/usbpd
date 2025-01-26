@@ -10,6 +10,8 @@ pub struct FixedSupplyRequest {
     pub index: u8,
     /// The requested current in units of 10 mA.
     pub current_10ma: u16,
+    /// If true, signals a capability mismatch to the source.
+    pub capability_mismatch: bool,
 }
 
 /// Types of power source requests that a device can send to the policy engine.
