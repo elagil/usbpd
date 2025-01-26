@@ -38,7 +38,7 @@ static_cell = "2"
 micromath = "2.1.0"
 
 uom = { version = "0.36.0", default-features = false, features = ["si", "f32"] }
-usbpd = { path = "../../usbpd" }
+usbpd = { path = "../.." }
 
 # cargo build/run
 [profile.dev]
