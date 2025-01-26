@@ -24,19 +24,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run build
-        run: cargo build --verbose
+        run: cargo build
 
       - name: Run build with defmt
-        run: cargo build --verbose --features defmt
+        run: cargo build --features defmt
 
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test
 
   build_examples:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Run build
-        run: cargo build --verbose --manifest-path examples/embassy-stm32-g431cb/Cargo.toml
+        run: cargo build --manifest-path examples/embassy-stm32-g431cb/Cargo.toml
       - name: Run build
-        run: cargo build --verbose --manifest-path examples/embassy-nucleo-h563zi/Cargo.toml
+        run: cargo build --manifest-path examples/embassy-nucleo-h563zi/Cargo.toml
