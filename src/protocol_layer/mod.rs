@@ -18,6 +18,8 @@ use core::marker::PhantomData;
 use futures::future::{select, Either};
 use futures::pin_mut;
 use message::header::{ControlMessageType, DataMessageType, Header, MessageType};
+use message::pdo::FixedVariableRequestDataObject;
+use message::pdo::PowerSourceRequest::FixedSupply;
 use message::{Data, Message};
 
 use crate::counters::{Counter, CounterType, Error as CounterError};
@@ -33,7 +35,7 @@ const MAX_MESSAGE_SIZE: usize = 30;
 /// Errors that can occur in the protocol layer.
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Error {
+pub(crate) enum Error {
     /// Port partner requested soft reset.
     SoftReset,
     /// Driver reported a hard reset.
@@ -117,7 +119,7 @@ impl Default for Counters {
 
 /// The USB PD protocol layer.
 #[derive(Debug)]
-pub struct ProtocolLayer<DRIVER: Driver, TIMER: Timer> {
+pub(crate) struct ProtocolLayer<DRIVER: Driver, TIMER: Timer> {
     driver: DRIVER,
     counters: Counters,
     default_header: Header,
@@ -418,20 +420,16 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
 
     /// Request a certain power level from the source.
     pub async fn request_power(&mut self, supply: PowerSourceRequest) -> Result<(), Error> {
+        // Only sinks can request from a supply.
+        assert!(matches!(self.default_header.port_power_role(), PowerRole::Sink));
         trace!("Requesting power source: {}", supply);
 
         match supply {
-            PowerSourceRequest::FixedSupply(fixed_supply) => self.request_fixed_supply(fixed_supply).await,
+            PowerSourceRequest::FixedSupply(fixed_supply) => self.request_power_fixed_supply(fixed_supply).await,
         }
     }
 
-    async fn request_fixed_supply(&mut self, supply: FixedSupplyRequest) -> Result<(), Error> {
-        use message::pdo::FixedVariableRequestDataObject;
-        use message::pdo::PowerSourceRequest::FixedSupply;
-
-        // Only sinks can request from a supply.
-        assert!(matches!(self.default_header.port_power_role(), PowerRole::Sink));
-
+    async fn request_power_fixed_supply(&mut self, supply: FixedSupplyRequest) -> Result<(), Error> {
         let header = Header::new_data(
             self.default_header,
             self.counters.tx_message,
@@ -455,6 +453,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                 .with_raw_operating_current(current)
                 .with_raw_max_operating_current(current)
                 .with_object_position(obj_position)
+                .with_capability_mismatch(supply.capability_mismatch)
                 .with_no_usb_suspend(true)
                 .with_usb_communications_capable(true),
         )));

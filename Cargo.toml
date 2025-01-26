@@ -15,24 +15,15 @@ exclude = [
     "*.pdf",
 ]
 
-[lib]
-harness = false # do not use the built-in cargo test harness -> resolve rust-analyzer errors
-test = false
-
 [dependencies]
 proc-bitfield = "0.5.2"
 byteorder = { version = "1.5.0", default-features = false }
 heapless = "0.8.0"
-uom = { version = "0.36.0", default-features = false, features = [
-    "si",
-    "u8",
-    "u16",
-    "u32",
-] }
+uom = { version = "0.36.0", default-features = false, features = ["si", "u8", "u16", "u32"] }
 futures = {version ="0.3.31", default-features = false}
 
-defmt = {version="0.3.6",optional = true}
-log = {version ="0.4.25", optional = true}
+defmt = { version="0.3.6",optional = true }
+log = { version ="0.4.25", optional = true }
 
 [features]
 default = []

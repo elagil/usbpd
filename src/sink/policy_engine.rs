@@ -30,8 +30,8 @@ enum _Mode {
 enum Contract {
     #[default]
     Safe5V,
-    _Implicit, // FIXME: When does an implicit contract exist?
-    Transition,
+    _Implicit, // FIXME: Only present after fast role swap, yet unsupported. Limited to max. type C current.
+    TransitionToExplicit,
     Explicit,
 }
 
@@ -202,21 +202,19 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
 
                 self.hard_reset_counter.reset();
 
-                self.power_source_request = self
-                    .device_policy_manager
-                    .request(self.source_capabilities.take().unwrap())
-                    .await;
+                self.power_source_request = Some(
+                    self.device_policy_manager
+                        .request(self.source_capabilities.take().unwrap())
+                        .await,
+                );
 
                 State::SelectCapability
             }
             State::SelectCapability => {
-                match self.power_source_request.take() {
-                    Some(request) => self.protocol_layer.request_power(request).await?,
-                    None => {
-                        // FIXME: Send capability mismatch
-                        unimplemented!()
-                    }
-                }
+                let request = self.power_source_request.take();
+                self.protocol_layer
+                    .request_power(request.expect("Invalid request"))
+                    .await?;
 
                 let message_type = self
                     .protocol_layer
@@ -253,7 +251,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     )
                     .await?;
 
-                self.contract = Contract::Transition;
+                self.contract = Contract::TransitionToExplicit;
                 self.device_policy_manager.transition_power().await;
                 State::Ready
             }
@@ -262,9 +260,8 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 // Entry: Init. and run DiscoverIdentityTimer(4)
                 // Entry: Init. and run SinkPPSPeriodicTimer(5)
                 // Entry: Init. and run SinkEPRKeppAlivaTimer(6) in EPR mode
-                // Entry: Send GetSinkCap message if sink supports fast role
-                // swap Exit: If initiating an AMS, notify
-                // protocol layer??? Transition to
+                // Entry: Send GetSinkCap message if sink supports fast role swap
+                // Exit: If initiating an AMS, notify protocol layer??? Transition to
                 // - EPRKeepAlive on SinkEPRKeepAliveTimer timeout
                 self.contract = Contract::Explicit;
 

@@ -36,7 +36,7 @@ pub trait DevicePolicyManager {
     ///
     /// If `None` is returned, the policy engine informs the source of a capability mismatch.
     /// By default, request the highest advertised voltage.
-    fn request(&mut self, source_capabilities: SourceCapabilities) -> impl Future<Output = Option<PowerSourceRequest>> {
+    fn request(&mut self, source_capabilities: SourceCapabilities) -> impl Future<Output = PowerSourceRequest> {
         async { request_fixed_voltage(source_capabilities, FixedVoltageRequest::Highest) }
     }
 
@@ -59,7 +59,7 @@ pub trait DevicePolicyManager {
 pub fn request_fixed_voltage(
     source_capabilities: SourceCapabilities,
     fixed_voltage_request: FixedVoltageRequest,
-) -> Option<PowerSourceRequest> {
+) -> PowerSourceRequest {
     let mut choice = None;
 
     for (index, pdo) in source_capabilities.pdos().iter().enumerate() {
@@ -70,6 +70,7 @@ pub fn request_fixed_voltage(
                     FixedSupplyRequest {
                         index: index as u8,
                         current_10ma: supply.raw_max_current(),
+                        capability_mismatch: false,
                     },
                 ))
             }
@@ -84,6 +85,7 @@ pub fn request_fixed_voltage(
                         FixedSupplyRequest {
                             index: index as u8,
                             current_10ma: supply.raw_max_current(),
+                            capability_mismatch: false,
                         },
                     ));
 
@@ -98,8 +100,8 @@ pub fn request_fixed_voltage(
     }
 
     if let Some((_, supply)) = choice {
-        Some(PowerSourceRequest::FixedSupply(supply))
+        PowerSourceRequest::FixedSupply(supply)
     } else {
-        None
+        unreachable!("Must select a valid capability")
     }
 }
