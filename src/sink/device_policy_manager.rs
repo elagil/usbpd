@@ -41,7 +41,9 @@ pub trait DevicePolicyManager {
     }
 
     /// Notify the device that it shall transition to a new power level.
-    fn transition_power(&mut self) -> impl Future<Output = ()> {
+    ///
+    /// The device is informed about the request that was accepted by the source.
+    fn transition_power(&mut self, _accepted: PowerSourceRequest) -> impl Future<Output = ()> {
         async {}
     }
 
@@ -69,7 +71,8 @@ pub fn request_fixed_voltage(
                     supply.voltage(),
                     FixedSupplyRequest {
                         index: index as u8,
-                        current_10ma: supply.raw_max_current(),
+                        current: supply.max_current(),
+                        voltage: supply.voltage(),
                         capability_mismatch: false,
                     },
                 ))
@@ -84,7 +87,8 @@ pub fn request_fixed_voltage(
                         supply.voltage(),
                         FixedSupplyRequest {
                             index: index as u8,
-                            current_10ma: supply.raw_max_current(),
+                            current: supply.max_current(),
+                            voltage: supply.voltage(),
                             capability_mismatch: false,
                         },
                     ));

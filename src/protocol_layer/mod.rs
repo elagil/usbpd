@@ -21,6 +21,7 @@ use message::header::{ControlMessageType, DataMessageType, Header, MessageType};
 use message::pdo::FixedVariableRequestDataObject;
 use message::pdo::PowerSourceRequest::FixedSupply;
 use message::{Data, Message};
+use uom::si::electric_current;
 
 use crate::counters::{Counter, CounterType, Error as CounterError};
 use crate::sink::{FixedSupplyRequest, PowerSourceRequest};
@@ -437,7 +438,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             1,
         );
 
-        let mut current = supply.current_10ma;
+        let mut current = supply.current.get::<electric_current::centiampere>();
 
         if current > 0x3ff {
             error!("Clamping invalid current: {} mA", 10 * current);

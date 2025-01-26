@@ -37,15 +37,14 @@ enum Contract {
 
 /// Sink states.
 #[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum State {
     /// Default state at startup.
     Startup,
     Discovery,
     WaitForCapabilities,
     EvaluateCapabilities,
-    SelectCapability,
-    TransitionSink,
+    SelectCapability(PowerSourceRequest),
+    TransitionSink(PowerSourceRequest),
     Ready,
     SendNotSupported,
     SendSoftReset,
@@ -65,7 +64,6 @@ pub struct Sink<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> {
     protocol_layer: ProtocolLayer<DRIVER, TIMER>,
 
     source_capabilities: Option<SourceCapabilities>,
-    power_source_request: Option<PowerSourceRequest>,
     contract: Contract,
     hard_reset_counter: Counter,
 
@@ -100,7 +98,6 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
             protocol_layer: Self::new_protocol_layer(driver),
             state: State::Discovery,
             source_capabilities: None,
-            power_source_request: None,
             contract: Default::default(),
             hard_reset_counter: Counter::new(crate::counters::CounterType::HardReset),
 
@@ -144,10 +141,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     (State::WaitForCapabilities, ProtocolError::ReceiveTimeout) => State::HardReset,
 
                     // See spec, [8.3.3.3.5]
-                    (State::SelectCapability, ProtocolError::ReceiveTimeout) => State::HardReset,
+                    (State::SelectCapability(_), ProtocolError::ReceiveTimeout) => State::HardReset,
 
                     // See spec, [8.3.3.3.6]
-                    (State::TransitionSink, _) => State::HardReset,
+                    (State::TransitionSink(_), _) => State::HardReset,
 
                     (State::Ready, ProtocolError::UnsupportedMessage) => State::SendNotSupported,
 
@@ -202,19 +199,15 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
 
                 self.hard_reset_counter.reset();
 
-                self.power_source_request = Some(
-                    self.device_policy_manager
-                        .request(self.source_capabilities.take().unwrap())
-                        .await,
-                );
+                let request = self
+                    .device_policy_manager
+                    .request(self.source_capabilities.take().unwrap())
+                    .await;
 
-                State::SelectCapability
+                State::SelectCapability(request)
             }
-            State::SelectCapability => {
-                let request = self.power_source_request.take();
-                self.protocol_layer
-                    .request_power(request.expect("Invalid request"))
-                    .await?;
+            State::SelectCapability(request) => {
+                self.protocol_layer.request_power(request).await?;
 
                 let message_type = self
                     .protocol_layer
@@ -235,7 +228,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 };
 
                 match (self.contract, control_message_type) {
-                    (_, ControlMessageType::Accept) => State::TransitionSink,
+                    (_, ControlMessageType::Accept) => State::TransitionSink(request),
                     (Contract::Safe5V, ControlMessageType::Wait | ControlMessageType::Reject) => {
                         State::WaitForCapabilities
                     }
@@ -243,7 +236,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     _ => unreachable!(),
                 }
             }
-            State::TransitionSink => {
+            State::TransitionSink(accepted_request) => {
                 self.protocol_layer
                     .receive_message_type(
                         &[MessageType::Control(ControlMessageType::PsRdy)],
@@ -252,7 +245,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     .await?;
 
                 self.contract = Contract::TransitionToExplicit;
-                self.device_policy_manager.transition_power().await;
+                self.device_policy_manager.transition_power(accepted_request).await;
                 State::Ready
             }
             State::Ready => {
