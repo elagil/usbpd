@@ -49,6 +49,12 @@ critical-section = "1.1"
 embedded-storage = "0.3.1"
 static_cell = "2"
 
+uom = { version = "0.36.0", default-features = false, features = [
+    "si",
+    "u8",
+    "u16",
+    "u32",
+] }
 usbpd = { path = "../.." }
 
 # cargo build/run

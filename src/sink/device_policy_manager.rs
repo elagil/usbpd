@@ -4,8 +4,20 @@
 //! or renegotiate the power contract.
 use core::future::Future;
 
+use uom::si::u16::ElectricPotential;
+
 use super::{FixedSupplyRequest, PowerSourceRequest};
 use crate::protocol_layer::message::pdo::{PowerDataObject, SourceCapabilities};
+
+/// Requestable voltages.
+pub enum FixedVoltageRequest {
+    /// The lowest fixed voltage that the source can supply.
+    Lowest,
+    /// The highest fixed voltage that the source can supply.
+    Highest,
+    /// A specific voltage.
+    Specific(ElectricPotential),
+}
 
 /// Events that the device policy manager can send to the policy engine.
 #[derive(Debug)]
@@ -22,9 +34,9 @@ pub trait DevicePolicyManager {
     /// Request a power source.
     ///
     /// If `None` is returned, the policy engine informs the source of a capability mismatch.
-    /// As a default, request the highest advertised voltage.
+    /// By default, request the highest advertised voltage.
     fn request(&mut self, source_capabilities: SourceCapabilities) -> impl Future<Output = Option<PowerSourceRequest>> {
-        async { request_highest_voltage(source_capabilities) }
+        async { request_fixed_voltage(source_capabilities, FixedVoltageRequest::Highest) }
     }
 
     /// Notify the device that it shall transition to a new power level.
@@ -40,10 +52,13 @@ pub trait DevicePolicyManager {
     }
 }
 
-/// Request the maximum voltage at its highest allowed current.
+/// Request a fixed voltage at maximum current.
 ///
 /// Normally, this yields the highest power.
-pub fn request_highest_voltage(source_capabilities: SourceCapabilities) -> Option<PowerSourceRequest> {
+pub fn request_fixed_voltage(
+    source_capabilities: SourceCapabilities,
+    fixed_voltage_request: FixedVoltageRequest,
+) -> Option<PowerSourceRequest> {
     let mut choice = None;
 
     for (index, pdo) in source_capabilities.pdos().iter().enumerate() {
@@ -57,8 +72,12 @@ pub fn request_highest_voltage(source_capabilities: SourceCapabilities) -> Optio
                     },
                 ))
             }
-            (Some((voltage, _)), PowerDataObject::FixedSupply(supply)) => {
-                if supply.voltage() > voltage {
+            (Some((chosen_voltage, _)), PowerDataObject::FixedSupply(supply)) => {
+                if match fixed_voltage_request {
+                    FixedVoltageRequest::Lowest => supply.voltage() < chosen_voltage,
+                    FixedVoltageRequest::Highest => supply.voltage() > chosen_voltage,
+                    FixedVoltageRequest::Specific(requested_voltage) => supply.voltage() == requested_voltage,
+                } {
                     choice = Some((
                         supply.voltage(),
                         FixedSupplyRequest {
@@ -66,6 +85,11 @@ pub fn request_highest_voltage(source_capabilities: SourceCapabilities) -> Optio
                             current_10ma: supply.raw_max_current(),
                         },
                     ));
+
+                    if matches!(fixed_voltage_request, FixedVoltageRequest::Specific(_)) {
+                        // Found requested voltage.
+                        break;
+                    }
                 }
             }
             _ => (),
