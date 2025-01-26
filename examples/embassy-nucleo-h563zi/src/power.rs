@@ -5,8 +5,8 @@ use embassy_stm32::gpio::Output;
 use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
 use embassy_stm32::{bind_interrupts, peripherals};
 use embassy_time::{with_timeout, Duration, Timer};
-use uom::si::electric_potential;
 use uom::si::u16::ElectricPotential;
+use uom::si::{electric_current, electric_potential};
 use usbpd::protocol_layer::message::pdo::SourceCapabilities;
 use usbpd::sink::device_policy_manager::{request_fixed_voltage, DevicePolicyManager, FixedVoltageRequest};
 use usbpd::sink::policy_engine::Sink;
@@ -133,8 +133,14 @@ impl DevicePolicyManager for Device<'_> {
         )
     }
 
-    async fn transition_power(&mut self) {
-        info!("Transitioning power");
+    async fn transition_power(&mut self, accepted: PowerSourceRequest) {
+        if let PowerSourceRequest::FixedSupply(x) = accepted {
+            info!(
+                "Transitioning {} mV, {} mA",
+                x.voltage.get::<electric_potential::millivolt>(),
+                x.current.get::<electric_current::milliampere>()
+            );
+        }
         self.led.set_high();
     }
 }
