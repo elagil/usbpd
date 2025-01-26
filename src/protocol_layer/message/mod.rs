@@ -114,10 +114,10 @@ impl Message {
                             0b00 => PowerDataObject::FixedSupply(FixedSupply(pdo.0)),
                             0b01 => PowerDataObject::Battery(Battery(pdo.0)),
                             0b10 => PowerDataObject::VariableSupply(VariableSupply(pdo.0)),
-                            0b11 => PowerDataObject::AugmentedPowerDataObject({
+                            0b11 => PowerDataObject::Augmented({
                                 match AugmentedPowerDataObjectRaw(pdo.0).supply() {
-                                    0b00 => AugmentedPowerDataObject::SPR(SPRProgrammablePowerSupply(pdo.0)),
-                                    0b01 => AugmentedPowerDataObject::EPR(EPRAdjustableVoltageSupply(pdo.0)),
+                                    0b00 => AugmentedPowerDataObject::Spr(SPRProgrammablePowerSupply(pdo.0)),
+                                    0b01 => AugmentedPowerDataObject::Epr(EPRAdjustableVoltageSupply(pdo.0)),
                                     x => {
                                         warn!("Unknown AugmentedPowerDataObject supply {}", x);
                                         AugmentedPowerDataObject::Unknown(pdo.0)
@@ -147,8 +147,8 @@ impl Message {
                         PowerDataObjectType::VariableSupply => {
                             PowerSourceRequest::VariableSupply(FixedVariableRequestDataObject(raw.0))
                         }
-                        PowerDataObjectType::PPS => PowerSourceRequest::PPS(PPSRequestDataObject(raw.0)),
-                        PowerDataObjectType::AVS => PowerSourceRequest::AVS(AVSRequestDataObject(raw.0)),
+                        PowerDataObjectType::Pps => PowerSourceRequest::Pps(PPSRequestDataObject(raw.0)),
+                        PowerDataObjectType::Avs => PowerSourceRequest::Avs(AVSRequestDataObject(raw.0)),
                     }));
                 } else {
                     message.data = Some(Data::PowerSourceRequest(PowerSourceRequest::Unknown(raw)));

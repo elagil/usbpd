@@ -74,7 +74,7 @@ impl Header {
         Header(LittleEndian::read_u16(buf))
     }
 
-    pub fn to_bytes(&self, buf: &mut [u8]) -> usize {
+    pub fn to_bytes(self, buf: &mut [u8]) -> usize {
         LittleEndian::write_u16(buf, self.0);
         2
     }

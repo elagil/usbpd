@@ -12,7 +12,7 @@ pub enum VendorDataObject {
 }
 
 impl VendorDataObject {
-    pub fn to_bytes(&self, buf: &mut [u8]) {
+    pub fn to_bytes(self, buf: &mut [u8]) {
         match self {
             VendorDataObject::VDMHeader(header) => header.to_bytes(buf),
             VendorDataObject::IDHeader(header) => header.to_bytes(buf),
@@ -146,7 +146,7 @@ pub enum VDMHeader {
 }
 
 impl VDMHeader {
-    pub fn to_bytes(&self, buf: &mut [u8]) {
+    pub fn to_bytes(self, buf: &mut [u8]) {
         match self {
             VDMHeader::Structured(header) => header.to_bytes(buf),
             VDMHeader::Unstructured(header) => header.to_bytes(buf),
@@ -185,7 +185,7 @@ bitfield! {
 }
 
 impl VDMHeaderRaw {
-    pub fn to_bytes(&self, buf: &mut [u8]) {
+    pub fn to_bytes(self, buf: &mut [u8]) {
         LittleEndian::write_u32(buf, self.0);
     }
 }
@@ -211,7 +211,7 @@ bitfield! {
 }
 
 impl VDMHeaderStructured {
-    pub fn to_bytes(&self, buf: &mut [u8]) {
+    pub fn to_bytes(self, buf: &mut [u8]) {
         LittleEndian::write_u32(buf, self.0);
     }
 }
@@ -290,7 +290,7 @@ bitfield! {
 }
 
 impl VDMHeaderUnstructured {
-    pub fn to_bytes(&self, buf: &mut [u8]) {
+    pub fn to_bytes(self, buf: &mut [u8]) {
         LittleEndian::write_u32(buf, self.0);
     }
 }
@@ -304,11 +304,11 @@ bitfield! {
         /// Device data capable
         pub device_data: bool @ 30,
         /// Product type UFP
-        pub product_type_ufp: u8 [SOPProductTypeUFP] @ 27..=29,
+        pub product_type_ufp: u8 [SopProductTypeUfp] @ 27..=29,
         /// Modal Operation Supported
         pub modal_supported: bool @ 26,
         /// Product type DFP
-        pub product_type_dfp: u8 [SOPProductTypeDFP] @ 23..=25,
+        pub product_type_dfp: u8 [SopProductTypeDfp] @ 23..=25,
         /// Connector type
         pub connector_type: u8 [ConnectorType] @ 21..=22,
         /// VID
@@ -317,40 +317,40 @@ bitfield! {
 }
 
 impl VDMIdentityHeader {
-    pub fn to_bytes(&self, buf: &mut [u8]) {
+    pub fn to_bytes(self, buf: &mut [u8]) {
         LittleEndian::write_u32(buf, self.0);
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum SOPProductTypeUFP {
+pub enum SopProductTypeUfp {
     NotUFP,
-    PDUSBHub,
-    PDUSBPeripheral,
-    PSD,
+    PdUsbHub,
+    PdUsbPeripheral,
+    Psd,
 }
 
-impl From<SOPProductTypeUFP> for u8 {
-    fn from(value: SOPProductTypeUFP) -> Self {
+impl From<SopProductTypeUfp> for u8 {
+    fn from(value: SopProductTypeUfp) -> Self {
         match value {
-            SOPProductTypeUFP::NotUFP => 0b000,
-            SOPProductTypeUFP::PDUSBHub => 0b001,
-            SOPProductTypeUFP::PDUSBPeripheral => 0b010,
-            SOPProductTypeUFP::PSD => 0b011,
+            SopProductTypeUfp::NotUFP => 0b000,
+            SopProductTypeUfp::PdUsbHub => 0b001,
+            SopProductTypeUfp::PdUsbPeripheral => 0b010,
+            SopProductTypeUfp::Psd => 0b011,
         }
     }
 }
 
-impl From<u8> for SOPProductTypeUFP {
+impl From<u8> for SopProductTypeUfp {
     fn from(value: u8) -> Self {
         match value {
-            0b000 => SOPProductTypeUFP::NotUFP,
-            0b001 => SOPProductTypeUFP::PDUSBHub,
-            0b010 => SOPProductTypeUFP::PDUSBPeripheral,
-            0b011 => SOPProductTypeUFP::PSD,
+            0b000 => SopProductTypeUfp::NotUFP,
+            0b001 => SopProductTypeUfp::PdUsbHub,
+            0b010 => SopProductTypeUfp::PdUsbPeripheral,
+            0b011 => SopProductTypeUfp::Psd,
 
-            _ => panic!("Cannot convert {:} to SOPProductTypeUFP", value), /* Illegal values
+            _ => panic!("Cannot convert {:} to SopProductTypeUfp", value), /* Illegal values
                                                                             * shall panic. */
         }
     }
@@ -358,33 +358,33 @@ impl From<u8> for SOPProductTypeUFP {
 
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum SOPProductTypeDFP {
+pub enum SopProductTypeDfp {
     NotDFP,
     PDUSBHub,
     PDUSBHost,
     PowerBrick,
 }
 
-impl From<SOPProductTypeDFP> for u8 {
-    fn from(value: SOPProductTypeDFP) -> Self {
+impl From<SopProductTypeDfp> for u8 {
+    fn from(value: SopProductTypeDfp) -> Self {
         match value {
-            SOPProductTypeDFP::NotDFP => 0b000,
-            SOPProductTypeDFP::PDUSBHub => 0b001,
-            SOPProductTypeDFP::PDUSBHost => 0b010,
-            SOPProductTypeDFP::PowerBrick => 0b011,
+            SopProductTypeDfp::NotDFP => 0b000,
+            SopProductTypeDfp::PDUSBHub => 0b001,
+            SopProductTypeDfp::PDUSBHost => 0b010,
+            SopProductTypeDfp::PowerBrick => 0b011,
         }
     }
 }
 
-impl From<u8> for SOPProductTypeDFP {
+impl From<u8> for SopProductTypeDfp {
     fn from(value: u8) -> Self {
         match value {
-            0b000 => SOPProductTypeDFP::NotDFP,
-            0b001 => SOPProductTypeDFP::PDUSBHub,
-            0b010 => SOPProductTypeDFP::PDUSBHost,
-            0b011 => SOPProductTypeDFP::PowerBrick,
+            0b000 => SopProductTypeDfp::NotDFP,
+            0b001 => SopProductTypeDfp::PDUSBHub,
+            0b010 => SopProductTypeDfp::PDUSBHost,
+            0b011 => SopProductTypeDfp::PowerBrick,
 
-            _ => panic!("Cannot convert {:} to SOPProductTypeDFP", value), /* Illegal values
+            _ => panic!("Cannot convert {:} to SopProductTypeDfp", value), /* Illegal values
                                                                             * shall panic. */
         }
     }
@@ -424,7 +424,7 @@ bitfield! {
 }
 
 impl CertStatVDO {
-    pub fn to_bytes(&self, buf: &mut [u8]) {
+    pub fn to_bytes(self, buf: &mut [u8]) {
         LittleEndian::write_u32(buf, self.0);
     }
 }
@@ -440,7 +440,7 @@ bitfield! {
 }
 
 impl ProductVDO {
-    pub fn to_bytes(&self, buf: &mut [u8]) {
+    pub fn to_bytes(self, buf: &mut [u8]) {
         LittleEndian::write_u32(buf, self.0);
     }
 }
@@ -461,7 +461,7 @@ bitfield! {
 }
 
 impl UFPTypeVDO {
-    pub fn to_bytes(&self, buf: &mut [u8]) {
+    pub fn to_bytes(self, buf: &mut [u8]) {
         LittleEndian::write_u32(buf, self.0);
     }
 }
@@ -587,7 +587,7 @@ bitfield! {
 }
 
 impl DisplayPortCapabilities {
-    pub fn to_bytes(&self, buf: &mut [u8]) {
+    pub fn to_bytes(self, buf: &mut [u8]) {
         LittleEndian::write_u32(buf, self.0);
     }
 }
