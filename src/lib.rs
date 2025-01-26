@@ -12,7 +12,7 @@
 pub(crate) mod fmt;
 
 pub(crate) mod counters;
-pub(crate) mod protocol_layer;
+pub mod protocol_layer;
 pub mod sink;
 pub mod timers;
 
