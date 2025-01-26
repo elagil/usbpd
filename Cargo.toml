@@ -11,6 +11,7 @@ readme = "README.md"
 license = "MIT"
 keywords = ["no_std", "usb-pd", "embedded"]
 exclude = [
+    ".github",
     "*.pdf",
 ]
 
