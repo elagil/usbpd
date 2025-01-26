@@ -136,7 +136,7 @@ impl DevicePolicyManager for Device<'_> {
     async fn transition_power(&mut self, accepted: PowerSourceRequest) {
         if let PowerSourceRequest::FixedSupply(x) = accepted {
             info!(
-                "Transitioning {} mV, {} mA",
+                "Transitioning to fixed supply at: {} mV, {} mA",
                 x.voltage.get::<electric_potential::millivolt>(),
                 x.current.get::<electric_current::milliampere>()
             );
