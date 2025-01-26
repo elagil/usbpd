@@ -36,13 +36,13 @@ enum Contract {
 }
 
 /// Sink states.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum State {
     /// Default state at startup.
     Startup,
     Discovery,
     WaitForCapabilities,
-    EvaluateCapabilities,
+    EvaluateCapabilities(SourceCapabilities),
     SelectCapability(PowerSourceRequest),
     TransitionSink(PowerSourceRequest),
     Ready,
@@ -62,8 +62,6 @@ enum State {
 pub struct Sink<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> {
     device_policy_manager: DPM,
     protocol_layer: ProtocolLayer<DRIVER, TIMER>,
-
-    source_capabilities: Option<SourceCapabilities>,
     contract: Contract,
     hard_reset_counter: Counter,
 
@@ -97,7 +95,6 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
             device_policy_manager,
             protocol_layer: Self::new_protocol_layer(driver),
             state: State::Discovery,
-            source_capabilities: None,
             contract: Default::default(),
             hard_reset_counter: Counter::new(crate::counters::CounterType::HardReset),
 
@@ -119,65 +116,68 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
             }
 
             if let Err(Error::Protocol(protocol_error)) = result {
-                self.state = match (self.state, protocol_error) {
+                let new_state = match (&self.state, protocol_error) {
                     // Handle when hard reset is signaled by the driver itself.
-                    (_, ProtocolError::HardReset) => State::TransitionToDefault,
+                    (_, ProtocolError::HardReset) => Some(State::TransitionToDefault),
 
                     // Handle when soft reset is signaled by the driver itself.
-                    (_, ProtocolError::SoftReset) => State::SoftReset,
+                    (_, ProtocolError::SoftReset) => Some(State::SoftReset),
 
                     // Unexpected messages indicate a protocol error and demand a soft reset.
                     // See spec, [6.8.1]
-                    (_, ProtocolError::UnexpectedMessage) => State::SendSoftReset,
+                    (_, ProtocolError::UnexpectedMessage) => Some(State::SendSoftReset),
 
                     // Fall back to hard reset
                     // - after soft reset accept failed to be sent, or
                     // - after sending soft reset failed.
                     (State::SoftReset | State::SendSoftReset, ProtocolError::TransmitRetriesExceeded) => {
-                        State::HardReset
+                        Some(State::HardReset)
                     }
 
                     // See spec, [8.3.3.3.3]
-                    (State::WaitForCapabilities, ProtocolError::ReceiveTimeout) => State::HardReset,
+                    (State::WaitForCapabilities, ProtocolError::ReceiveTimeout) => Some(State::HardReset),
 
                     // See spec, [8.3.3.3.5]
-                    (State::SelectCapability(_), ProtocolError::ReceiveTimeout) => State::HardReset,
+                    (State::SelectCapability(_), ProtocolError::ReceiveTimeout) => Some(State::HardReset),
 
                     // See spec, [8.3.3.3.6]
-                    (State::TransitionSink(_), _) => State::HardReset,
+                    (State::TransitionSink(_), _) => Some(State::HardReset),
 
-                    (State::Ready, ProtocolError::UnsupportedMessage) => State::SendNotSupported,
+                    (State::Ready, ProtocolError::UnsupportedMessage) => Some(State::SendNotSupported),
 
-                    (_, ProtocolError::TransmitRetriesExceeded) => State::SendSoftReset,
+                    (_, ProtocolError::TransmitRetriesExceeded) => Some(State::SendSoftReset),
 
                     // Attempt to recover protocol errors with a soft reset.
                     (_, error) => {
                         error!("Protocol error {} in sink state transition", error);
-                        self.state
+                        None
                     }
                 };
+
+                if let Some(state) = new_state {
+                    self.state = state
+                }
             } else {
                 debug!("Result {} in sink state transition", result);
             }
         }
     }
 
-    async fn get_source_capabilities(&mut self) -> Result<(), Error> {
+    async fn wait_for_source_capabilities(&mut self) -> Result<SourceCapabilities, Error> {
         let message = self.protocol_layer.wait_for_source_capabilities().await?;
         trace!("Source capabilities: {}", message);
 
         let Some(Data::SourceCapabilities(capabilities)) = message.data else {
             unreachable!()
         };
-        self.source_capabilities = Some(capabilities);
 
-        Ok(())
+        Ok(capabilities)
     }
 
     async fn update_state(&mut self) -> Result<(), Error> {
         trace!("Handle sink state: {:?}", self.state);
 
-        let new_state = match self.state {
+        let new_state = match &self.state {
             State::Startup => {
                 self.contract = Default::default();
                 self.protocol_layer.reset();
@@ -189,25 +189,18 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
 
                 State::WaitForCapabilities
             }
-            State::WaitForCapabilities => {
-                self.get_source_capabilities().await?;
-
-                State::EvaluateCapabilities
-            }
-            State::EvaluateCapabilities => {
+            State::WaitForCapabilities => State::EvaluateCapabilities(self.wait_for_source_capabilities().await?),
+            State::EvaluateCapabilities(capabilities) => {
                 // Sink now knows that it is attached.
 
                 self.hard_reset_counter.reset();
 
-                let request = self
-                    .device_policy_manager
-                    .request(self.source_capabilities.take().unwrap())
-                    .await;
+                let request = self.device_policy_manager.request(capabilities).await;
 
                 State::SelectCapability(request)
             }
             State::SelectCapability(request) => {
-                self.protocol_layer.request_power(request).await?;
+                self.protocol_layer.request_power(*request).await?;
 
                 let message_type = self
                     .protocol_layer
@@ -228,7 +221,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 };
 
                 match (self.contract, control_message_type) {
-                    (_, ControlMessageType::Accept) => State::TransitionSink(request),
+                    (_, ControlMessageType::Accept) => State::TransitionSink(*request),
                     (Contract::Safe5V, ControlMessageType::Wait | ControlMessageType::Reject) => {
                         State::WaitForCapabilities
                     }
@@ -273,8 +266,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                                 let Some(Data::SourceCapabilities(capabilities)) = message.data else {
                                     unreachable!()
                                 };
-                                self.source_capabilities = Some(capabilities);
-                                State::EvaluateCapabilities
+                                State::EvaluateCapabilities(capabilities)
                             }
                             MessageType::Control(ControlMessageType::GetSinkCap) => State::GiveSinkCap,
                             _ => State::SendNotSupported,
@@ -364,13 +356,11 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     .transmit_control_message(ControlMessageType::GetSourceCap)
                     .await?;
 
-                self.get_source_capabilities().await?;
-
                 // Return to `Ready` state instead, when
                 // - in EPR mode, and SPR capabilities requested, or
                 // - in SPR mode, and EPR capabilities requested.
                 // In other words, in case of a switch.
-                State::EvaluateCapabilities
+                State::EvaluateCapabilities(self.wait_for_source_capabilities().await?)
             }
             State::_EPRKeepAlive => {
                 // Entry: Send EPRKeepAlive Message
