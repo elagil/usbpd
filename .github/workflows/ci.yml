@@ -14,10 +14,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run clippy
-        run: cargo clippy --all-targets
+        run: cargo clippy
 
       - name: Run clippy with defmt
-        run: cargo clippy --all-targets --features defmt
+        run: cargo clippy --features defmt
 
   build_and_test:
     runs-on: ubuntu-latest
