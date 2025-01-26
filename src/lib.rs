@@ -8,8 +8,11 @@
 #![no_std]
 #![warn(missing_docs)]
 
-pub mod counters;
-pub mod protocol_layer;
+// This mod MUST go first, so that the others see its macros.
+pub(crate) mod fmt;
+
+pub(crate) mod counters;
+pub(crate) mod protocol_layer;
 pub mod sink;
 pub mod timers;
 

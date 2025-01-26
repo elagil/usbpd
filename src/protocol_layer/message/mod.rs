@@ -13,7 +13,6 @@ pub mod pdo;
 pub mod vdo;
 
 use byteorder::{ByteOrder, LittleEndian};
-use defmt::{trace, warn, Format};
 use header::{DataMessageType, Header, MessageType};
 use heapless::Vec;
 use pdo::{
@@ -42,14 +41,16 @@ impl PdoState for () {
 }
 
 /// Data that data messages can carry.
-#[derive(Debug, Clone, Format)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[allow(unused)] // FIXME: Implement or remove vendor defined data message support.
 pub enum Data {
     /// Source capability data.
     SourceCapabilities(SourceCapabilities),
     /// Request for a power level from the source.
     PowerSourceRequest(PowerSourceRequest),
     /// Vendor defined.
-    VendorDefined((VDMHeader, Vec<u32, 7>)), // TODO: Incomplete
+    VendorDefined((VDMHeader, Vec<u32, 7>)), // TODO: Unused, and incomplete
     /// Unknown data type.
     Unknown,
 }
@@ -68,7 +69,8 @@ impl Data {
 }
 
 /// A USB PD message.
-#[derive(Debug, Clone, Format)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Message {
     /// The message header.
     pub header: Header,

@@ -15,7 +15,6 @@ pub mod message;
 use core::future::Future;
 use core::marker::PhantomData;
 
-use defmt::{error, trace, Format};
 use futures::future::{select, Either};
 use futures::pin_mut;
 use message::header::{ControlMessageType, DataMessageType, Header, MessageType};
@@ -32,7 +31,8 @@ use crate::{Driver, DriverRxError, DriverTxError, PowerRole};
 const MAX_MESSAGE_SIZE: usize = 30;
 
 /// Errors that can occur in the protocol layer.
-#[derive(Debug, Format)]
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
     /// Port partner requested soft reset.
     SoftReset,
@@ -48,6 +48,9 @@ pub enum Error {
     UnexpectedMessage,
 }
 
+/// Errors that can occur during reception of data.
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum RxError {
     /// Port partner requested soft reset.
     SoftReset,
@@ -73,6 +76,9 @@ impl From<RxError> for Error {
     }
 }
 
+/// Errors that can occur during transmission of data.
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum TxError {
     /// Driver reported a hard reset.
     HardReset,

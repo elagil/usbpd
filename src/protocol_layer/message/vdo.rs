@@ -1,8 +1,8 @@
 use byteorder::{ByteOrder, LittleEndian};
-use defmt::Format;
 use proc_bitfield::bitfield;
 
-#[derive(Clone, Copy, Format, Debug)]
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VendorDataObject {
     VDMHeader(VDMHeader),
     IDHeader(VDMIdentityHeader),
@@ -35,7 +35,8 @@ impl From<VendorDataObject> for u32 {
     }
 }
 
-#[derive(Clone, Copy, Format, Debug)]
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VDMCommandType {
     InitiatorREQ,
     ResponderACK,
@@ -67,7 +68,8 @@ impl From<u8> for VDMCommandType {
     }
 }
 
-#[derive(Clone, Copy, Format)]
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VDMCommand {
     DiscoverIdentity,
     DiscoverSVIDS,
@@ -111,7 +113,8 @@ impl From<u8> for VDMCommand {
     }
 }
 
-#[derive(Clone, Copy, Format)]
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VDMType {
     Unstructured,
     Structured,
@@ -135,7 +138,8 @@ impl From<bool> for VDMType {
     }
 }
 
-#[derive(Clone, Copy, Format, Debug)]
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VDMHeader {
     Structured(VDMHeaderStructured),
     Unstructured(VDMHeaderUnstructured),
@@ -170,7 +174,8 @@ impl From<u32> for VDMHeader {
 }
 
 bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq, Format)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct VDMHeaderRaw(pub u32): FromStorage, IntoStorage {
         /// VDM Standard or Vendor ID
         pub standard_or_vid: u16 @ 16..=31,
@@ -186,7 +191,8 @@ impl VDMHeaderRaw {
 }
 
 bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq, Format, Debug)]
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct VDMHeaderStructured(pub u32): FromStorage, IntoStorage {
         /// VDM Standard or Vendor ID
         pub standard_or_vid: u16 @ 16..=31,
@@ -216,7 +222,8 @@ impl Default for VDMHeaderStructured {
     }
 }
 
-#[derive(Clone, Copy, Format)]
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VDMVersionMajor {
     Version10,
     Version2x,
@@ -242,7 +249,8 @@ impl From<u8> for VDMVersionMajor {
     }
 }
 
-#[derive(Clone, Copy, Format)]
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VDMVersionMinor {
     Version20,
     Version21,
@@ -269,7 +277,8 @@ impl From<u8> for VDMVersionMinor {
 }
 
 bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq, Format, Debug)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct VDMHeaderUnstructured(pub u32): FromStorage, IntoStorage {
         /// VDM Standard or Vendor ID
         pub standard_or_vid: u16 @ 16..=31,
@@ -287,7 +296,8 @@ impl VDMHeaderUnstructured {
 }
 
 bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq, Format, Debug)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct VDMIdentityHeader(pub u32): FromStorage, IntoStorage {
         /// Host data capable
         pub host_data: bool @ 31,
@@ -312,7 +322,8 @@ impl VDMIdentityHeader {
     }
 }
 
-#[derive(Clone, Copy, Format)]
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SOPProductTypeUFP {
     NotUFP,
     PDUSBHub,
@@ -345,7 +356,8 @@ impl From<u8> for SOPProductTypeUFP {
     }
 }
 
-#[derive(Clone, Copy, Format)]
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SOPProductTypeDFP {
     NotDFP,
     PDUSBHub,
@@ -403,7 +415,8 @@ impl From<u8> for ConnectorType {
     }
 }
 bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq, Format, Debug)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct CertStatVDO(pub u32): FromStorage, IntoStorage {
         /// XID
         pub xid: u32 @ 0..=31,
@@ -417,7 +430,8 @@ impl CertStatVDO {
 }
 
 bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq, Format, Debug)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct ProductVDO(pub u32): FromStorage, IntoStorage {
         /// USB Product ID
         pub pid: u16 @ 16..=31,
@@ -432,7 +446,8 @@ impl ProductVDO {
 }
 
 bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq, Format, Debug)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct UFPTypeVDO(pub u32): FromStorage, IntoStorage {
         /// USB Product ID
         pub version: u8 @ 29..=31,
@@ -451,7 +466,8 @@ impl UFPTypeVDO {
     }
 }
 
-#[derive(Clone, Copy, Format)]
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum USBHighestSpeed {
     USB20Only,
     USB32Gen1,
@@ -486,7 +502,8 @@ impl From<u8> for USBHighestSpeed {
     }
 }
 
-#[derive(Clone, Copy, Format)]
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VconnPower {
     P1W,
     P1_5W,
@@ -526,7 +543,8 @@ impl From<u8> for VconnPower {
     }
 }
 
-#[derive(Clone, Copy, Format)]
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum UFPVDOVersion {
     Version1_3,
 }
@@ -550,7 +568,8 @@ impl From<u8> for UFPVDOVersion {
 }
 
 bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq, Format)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct DisplayPortCapabilities(pub u32): FromStorage, IntoStorage {
         /// UFP_D Pin Assignments Supported
         pub ufp_d_pin_assignments: u8 @ 16..=23,

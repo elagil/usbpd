@@ -4,13 +4,12 @@
 //! or renegotiate the power contract.
 use core::future::Future;
 
-use defmt::Format;
-
 use super::{FixedSupplyRequest, PowerSourceRequest};
 use crate::protocol_layer::message::pdo::{PowerDataObject, SourceCapabilities};
 
 /// Events that the device policy manager can send to the policy engine.
-#[derive(Format)]
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Event {
     /// FIXME: Implement events.
     Reserved,
