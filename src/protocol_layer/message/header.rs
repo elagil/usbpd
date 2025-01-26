@@ -1,13 +1,13 @@
 //! Definitions for a USB PD message header.
 use byteorder::{ByteOrder, LittleEndian};
-use defmt::Format;
 use proc_bitfield::bitfield;
 
 use crate::counters::Counter;
 use crate::{DataRole, PowerRole};
 
 bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq, Format)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Header(pub u16): Debug, FromStorage, IntoStorage {
         pub extended: bool @ 15,
         pub num_objects: u8 [get usize] @ 12..=14,
@@ -88,7 +88,8 @@ impl Header {
     }
 }
 
-#[derive(Debug, Format, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SpecificationRevision {
     R1_0,
     R2_0,
@@ -116,13 +117,15 @@ impl From<SpecificationRevision> for u8 {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Format)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum MessageType {
     Control(ControlMessageType),
     Data(DataMessageType),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Format)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ControlMessageType {
     GoodCRC = 0b0_0001,
     GotoMin = 0b0_0010,
@@ -183,7 +186,8 @@ impl From<u8> for ControlMessageType {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Format)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DataMessageType {
     SourceCapabilities = 0b0_0001,
     Request = 0b0_0010,

@@ -1,7 +1,6 @@
 //! Policy engine for the implementation of a sink.
 use core::marker::PhantomData;
 
-use defmt::{debug, error, trace, Format};
 use futures::future::{select, Either};
 use futures::pin_mut;
 
@@ -42,7 +41,8 @@ impl Default for Contract {
 }
 
 /// Sink states.
-#[derive(Debug, Clone, Copy, Format)]
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum State {
     /// Default state at startup.
     Startup,
@@ -79,7 +79,8 @@ pub struct Sink<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> {
     _timer: PhantomData<TIMER>,
 }
 
-#[derive(Debug, Format)]
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum Error {
     PortPartnerUnresponsive,
     Protocol(ProtocolError),

@@ -1,9 +1,9 @@
 //! Definition of counters, used for retry attempts, and message IDs.
-use defmt::Format;
 
 /// Counter error variants.
 #[non_exhaustive]
-#[derive(Debug, Format)]
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
     /// The counter wrapped around its maximum allowed value and was reset.
     Exceeded,
@@ -11,6 +11,7 @@ pub enum Error {
 
 /// A counter structure, used for detecting overruns (e.g. retries).
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Counter {
     value: u8,
     max_value: u8,
@@ -18,6 +19,7 @@ pub struct Counter {
 
 /// The type of counter that can be created.
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[allow(missing_docs)]
 pub enum CounterType {
     Busy,

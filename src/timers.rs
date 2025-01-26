@@ -11,6 +11,7 @@ use core::future::Future;
 /// Types of timers that are used for timeouts.
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TimerType {
     BISTContMode,
     ChunkingNotSupported,

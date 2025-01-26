@@ -3,7 +3,6 @@ use _250milliwatts_mod::_250milliwatts;
 use _50milliamperes_mod::_50milliamperes;
 use _50millivolts_mod::_50millivolts;
 use byteorder::{ByteOrder, LittleEndian};
-use defmt::Format;
 use heapless::Vec;
 use proc_bitfield::bitfield;
 use uom::si::electric_current::centiampere;
@@ -49,7 +48,8 @@ mod _250milliwatts_mod {
     }
 }
 
-#[derive(Clone, Copy, Debug, Format)]
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PowerDataObjectType {
     FixedSupply,
     Battery,
@@ -58,7 +58,8 @@ pub enum PowerDataObjectType {
     AVS,
 }
 
-#[derive(Clone, Copy, Debug, Format)]
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PowerDataObject {
     FixedSupply(FixedSupply),
     Battery(Battery),
@@ -68,14 +69,16 @@ pub enum PowerDataObject {
 }
 
 bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq, Format)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct PowerDataObjectRaw(pub u32): Debug, FromStorage, IntoStorage {
         pub kind: u8 @ 30..=31,
     }
 }
 
 bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq, Format)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct FixedSupply(pub u32): Debug, FromStorage, IntoStorage {
         /// Fixed supply
         pub kind: u8 @ 30..=31,
@@ -113,7 +116,8 @@ impl FixedSupply {
 }
 
 bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq, Format)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct Battery(pub u32): Debug, FromStorage, IntoStorage {
         /// Battery
         pub kind: u8 @ 30..=31,
@@ -141,7 +145,8 @@ impl Battery {
 }
 
 bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq, Format)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct VariableSupply(pub u32): Debug, FromStorage, IntoStorage {
         /// Variable supply (non-battery)
         pub kind: u8 @ 30..=31,
@@ -168,7 +173,8 @@ impl VariableSupply {
     }
 }
 
-#[derive(Clone, Copy, Debug, Format)]
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AugmentedPowerDataObject {
     SPR(SPRProgrammablePowerSupply),
     EPR(EPRAdjustableVoltageSupply),
@@ -176,7 +182,8 @@ pub enum AugmentedPowerDataObject {
 }
 
 bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq, Format)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct AugmentedPowerDataObjectRaw(pub u32): Debug, FromStorage, IntoStorage {
         /// Augmented power data object
         pub kind: u8 @ 30..=31,
@@ -186,7 +193,8 @@ bitfield! {
 }
 
 bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq, Format)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct SPRProgrammablePowerSupply(pub u32): Debug, FromStorage, IntoStorage {
         /// Augmented power data object
         pub kind: u8 @ 30..=31,
@@ -217,7 +225,8 @@ impl SPRProgrammablePowerSupply {
 }
 
 bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq, Format)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct EPRAdjustableVoltageSupply(pub u32): Debug, FromStorage, IntoStorage {
         /// Augmented power data object
         pub kind: u8 @ 30..=31,
@@ -248,7 +257,8 @@ impl EPRAdjustableVoltageSupply {
 }
 
 bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq, Format)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct RawRequestDataObject(pub u32): Debug, FromStorage, IntoStorage {
         /// Valid range 1..=14
         pub object_position: u8 @ 28..=31,
@@ -256,7 +266,8 @@ bitfield! {
 }
 
 bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq, Format)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct FixedVariableRequestDataObject(pub u32): Debug, FromStorage, IntoStorage {
         /// Valid range 1..=14
         pub object_position: u8 @ 28..=31,
@@ -287,7 +298,8 @@ impl FixedVariableRequestDataObject {
 }
 
 bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq, Format)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct BatteryRequestDataObject(pub u32): Debug, FromStorage, IntoStorage {
         /// Object position (0000b and 1110b…1111b are Reserved and Shall Not be used)
         pub object_position: u8 @ 28..=31,
@@ -325,7 +337,8 @@ impl BatteryRequestDataObject {
 }
 
 bitfield!(
-    #[derive(Clone, Copy, PartialEq, Eq, Format)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct PPSRequestDataObject(pub u32): Debug, FromStorage, IntoStorage {
         /// Object position (0000b and 1110b…1111b are Reserved and Shall Not be used)
         pub object_position: u8 @ 28..=31,
@@ -361,7 +374,8 @@ impl PPSRequestDataObject {
 }
 
 bitfield!(
-    #[derive(Clone, Copy, PartialEq, Eq, Format)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     pub struct AVSRequestDataObject(pub u32): Debug, FromStorage, IntoStorage {
         /// Object position (0000b and 1110b…1111b are Reserved and Shall Not be used)
         pub object_position: u8 @ 28..=31,
@@ -396,7 +410,10 @@ impl AVSRequestDataObject {
     }
 }
 
-#[derive(Debug, Clone, Format)]
+/// Power requests towards the source.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[allow(unused)] // FIXME: Implement missing request types.
 pub enum PowerSourceRequest {
     FixedSupply(FixedVariableRequestDataObject),
     VariableSupply(FixedVariableRequestDataObject),
@@ -408,7 +425,7 @@ pub enum PowerSourceRequest {
 
 // FIXME: required?
 impl PowerSourceRequest {
-    pub fn object_position(&self) -> u8 {
+    pub fn _object_position(&self) -> u8 {
         match self {
             PowerSourceRequest::FixedSupply(p) => p.object_position(),
             PowerSourceRequest::VariableSupply(p) => p.object_position(),
@@ -420,7 +437,8 @@ impl PowerSourceRequest {
     }
 }
 
-#[derive(Debug, Clone, Format)]
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SourceCapabilities(pub(crate) Vec<PowerDataObject, 8>);
 
 impl SourceCapabilities {
