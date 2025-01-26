@@ -120,7 +120,7 @@ impl SinkTimer for EmbassySinkTimer {
 struct Device {}
 
 impl DevicePolicyManager for Device {
-    async fn transition_power(&mut self, accepted: PowerSourceRequest) {
+    async fn transition_power(&mut self, accepted: &PowerSourceRequest) {
         if let PowerSourceRequest::FixedSupply(x) = accepted {
             info!(
                 "Transitioning to fixed supply at: {} mV, {} mA",

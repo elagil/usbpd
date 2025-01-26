@@ -126,14 +126,14 @@ struct Device<'d> {
 }
 
 impl DevicePolicyManager for Device<'_> {
-    async fn request(&mut self, source_capabilities: SourceCapabilities) -> PowerSourceRequest {
+    async fn request(&mut self, source_capabilities: &SourceCapabilities) -> PowerSourceRequest {
         request_fixed_voltage(
             source_capabilities,
             FixedVoltageRequest::Specific(ElectricPotential::new::<electric_potential::volt>(5)),
         )
     }
 
-    async fn transition_power(&mut self, accepted: PowerSourceRequest) {
+    async fn transition_power(&mut self, accepted: &PowerSourceRequest) {
         if let PowerSourceRequest::FixedSupply(x) = accepted {
             info!(
                 "Transitioning to fixed supply at: {} mV, {} mA",

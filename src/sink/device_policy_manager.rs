@@ -36,14 +36,14 @@ pub trait DevicePolicyManager {
     ///
     /// If `None` is returned, the policy engine informs the source of a capability mismatch.
     /// By default, request the highest advertised voltage.
-    fn request(&mut self, source_capabilities: SourceCapabilities) -> impl Future<Output = PowerSourceRequest> {
+    fn request(&mut self, source_capabilities: &SourceCapabilities) -> impl Future<Output = PowerSourceRequest> {
         async { request_fixed_voltage(source_capabilities, FixedVoltageRequest::Highest) }
     }
 
     /// Notify the device that it shall transition to a new power level.
     ///
     /// The device is informed about the request that was accepted by the source.
-    fn transition_power(&mut self, _accepted: PowerSourceRequest) -> impl Future<Output = ()> {
+    fn transition_power(&mut self, _accepted: &PowerSourceRequest) -> impl Future<Output = ()> {
         async {}
     }
 
@@ -59,7 +59,7 @@ pub trait DevicePolicyManager {
 ///
 /// Normally, this yields the highest power.
 pub fn request_fixed_voltage(
-    source_capabilities: SourceCapabilities,
+    source_capabilities: &SourceCapabilities,
     fixed_voltage_request: FixedVoltageRequest,
 ) -> PowerSourceRequest {
     let mut choice = None;
