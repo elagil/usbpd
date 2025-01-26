@@ -5,8 +5,10 @@ use embassy_stm32::gpio::Output;
 use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
 use embassy_stm32::{bind_interrupts, peripherals};
 use embassy_time::{with_timeout, Duration, Timer};
+use uom::si::{electric_current, electric_potential};
 use usbpd::sink::device_policy_manager::DevicePolicyManager;
 use usbpd::sink::policy_engine::Sink;
+use usbpd::sink::PowerSourceRequest;
 use usbpd::timers::Timer as SinkTimer;
 use usbpd::Driver as SinkDriver;
 use {defmt_rtt as _, panic_probe as _};
@@ -118,8 +120,14 @@ impl SinkTimer for EmbassySinkTimer {
 struct Device {}
 
 impl DevicePolicyManager for Device {
-    async fn transition_power(&mut self) {
-        info!("Transitioning power")
+    async fn transition_power(&mut self, accepted: PowerSourceRequest) {
+        if let PowerSourceRequest::FixedSupply(x) = accepted {
+            info!(
+                "Transitioning to fixed supply at: {} mV, {} mA",
+                x.voltage.get::<electric_potential::millivolt>(),
+                x.current.get::<electric_current::milliampere>()
+            );
+        }
     }
 }
 
