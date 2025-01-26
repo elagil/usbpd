@@ -10,6 +10,9 @@ homepage = "https://github.com/elagil/usbpd"
 readme = "README.md"
 license = "MIT"
 keywords = ["no_std", "usb-pd", "embedded"]
+exclude = [
+    "*.pdf",
+]
 
 [lib]
 harness = false # do not use the built-in cargo test harness -> resolve rust-analyzer errors
