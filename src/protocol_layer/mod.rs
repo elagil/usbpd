@@ -462,3 +462,42 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         self.transmit(message).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+
+    use core::iter::zip;
+
+    use super::{
+        message::{header::Header, pdo::SourceCapabilities, Data},
+        ProtocolLayer,
+    };
+    use crate::dummy::{get_dummy_source_capabilities, DummyDriver, DummyTimer, DUMMY_CAPABILITIES};
+
+    fn get_protocol_layer() -> ProtocolLayer<DummyDriver, DummyTimer> {
+        ProtocolLayer::new(
+            DummyDriver::new(),
+            Header::new_template(
+                crate::DataRole::Ufp,
+                crate::PowerRole::Sink,
+                super::message::header::SpecificationRevision::R3_0,
+            ),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_it() {
+        let mut protocol_layer = get_protocol_layer();
+
+        protocol_layer.driver.inject_received_data(&DUMMY_CAPABILITIES);
+        let message = protocol_layer.receive_message().await.unwrap();
+
+        if let Some(Data::SourceCapabilities(SourceCapabilities(caps))) = message.data {
+            for (cap, dummy_cap) in zip(caps, get_dummy_source_capabilities()) {
+                assert_eq!(cap, dummy_cap);
+            }
+        } else {
+            panic!()
+        }
+    }
+}

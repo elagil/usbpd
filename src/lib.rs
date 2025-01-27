@@ -16,6 +16,9 @@ pub mod protocol_layer;
 pub mod sink;
 pub mod timers;
 
+#[cfg(test)]
+pub mod dummy;
+
 #[macro_use]
 extern crate uom;
 

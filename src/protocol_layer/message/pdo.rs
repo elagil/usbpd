@@ -58,7 +58,7 @@ pub enum PowerDataObjectType {
     Avs,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PowerDataObject {
     FixedSupply(FixedSupply),
@@ -106,6 +106,10 @@ bitfield! {
 }
 
 impl FixedSupply {
+    pub fn new() -> Self {
+        Self(0)
+    }
+
     pub fn voltage(&self) -> si::u16::ElectricPotential {
         si::u16::ElectricPotential::new::<_50millivolts>(self.raw_voltage())
     }
@@ -173,7 +177,7 @@ impl VariableSupply {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AugmentedPowerDataObject {
     Spr(SPRProgrammablePowerSupply),
@@ -211,6 +215,10 @@ bitfield! {
 }
 
 impl SPRProgrammablePowerSupply {
+    pub fn new() -> Self {
+        Self(0).with_kind(0b11).with_supply(0b00)
+    }
+
     pub fn max_voltage(&self) -> si::u16::ElectricPotential {
         si::u16::ElectricPotential::new::<decivolt>(self.raw_max_voltage().into())
     }
