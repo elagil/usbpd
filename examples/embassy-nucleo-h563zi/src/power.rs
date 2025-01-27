@@ -189,7 +189,7 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
 
         ucpd_resources.led_yellow.set_high();
 
-        match select(sink.run_step(), wait_detached(&mut cc_phy)).await {
+        match select(sink.run(), wait_detached(&mut cc_phy)).await {
             Either::First(_) => (),
             Either::Second(_) => {
                 info!("Detached");
