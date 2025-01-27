@@ -21,7 +21,7 @@ use message::header::{ControlMessageType, DataMessageType, Header, MessageType};
 use message::pdo::FixedVariableRequestDataObject;
 use message::pdo::PowerSourceRequest::FixedSupply;
 use message::{Data, Message};
-use uom::si::electric_current;
+use uom::si::{electric_current, electric_potential};
 
 use crate::counters::{Counter, CounterType, Error as CounterError};
 use crate::sink::{FixedSupplyRequest, PowerSourceRequest};
@@ -287,7 +287,8 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
 
             match message.header.message_type() {
                 MessageType::Control(ControlMessageType::Reserved) | MessageType::Data(DataMessageType::Reserved) => {
-                    return Err(RxError::UnsupportedMessage)
+                    trace!("Unsupported message type in header: {}", message.header);
+                    return Err(RxError::UnsupportedMessage);
                 }
                 MessageType::Control(ControlMessageType::SoftReset) => return Err(RxError::SoftReset),
                 _ => (),
@@ -435,10 +436,17 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     pub async fn request_power(&mut self, supply: &PowerSourceRequest) -> Result<(), Error> {
         // Only sinks can request from a supply.
         assert!(matches!(self.default_header.port_power_role(), PowerRole::Sink));
-        trace!("Requesting power source: {}", supply);
 
         match supply {
-            PowerSourceRequest::FixedSupply(fixed_supply) => self.request_power_fixed_supply(fixed_supply).await,
+            PowerSourceRequest::FixedSupply(fixed_supply) => {
+                trace!(
+                    "Requesting fixed supply: {}, {}",
+                    fixed_supply.voltage.get::<electric_potential::millivolt>(),
+                    fixed_supply.current.get::<electric_current::milliampere>()
+                );
+
+                self.request_power_fixed_supply(fixed_supply).await
+            }
         }
     }
 

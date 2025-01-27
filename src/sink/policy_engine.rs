@@ -180,8 +180,6 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
     }
 
     async fn update_state(&mut self) -> Result<(), Error> {
-        trace!("Handle sink state: {:?}", self.state);
-
         let new_state = match &self.state {
             State::Startup => {
                 self.contract = Default::default();
@@ -378,7 +376,6 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
             }
         };
 
-        trace!("Sink state transition: {:?} -> {:?}", self.state, new_state);
         self.state = new_state;
 
         Ok(())
