@@ -143,6 +143,18 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         self.counters = Default::default();
     }
 
+    /// Allows tests to access the driver directly.
+    #[cfg(test)]
+    pub fn driver(&mut self) -> &mut DRIVER {
+        &mut self.driver
+    }
+
+    /// Allows tests to access the default header directly.
+    #[cfg(test)]
+    pub fn header(&self) -> &Header {
+        &self.default_header
+    }
+
     fn get_message_buffer() -> [u8; MAX_MESSAGE_SIZE] {
         [0u8; MAX_MESSAGE_SIZE]
     }
@@ -468,13 +480,13 @@ mod tests {
 
     use core::iter::zip;
 
-    use super::{
-        message::{header::Header, pdo::SourceCapabilities, Data},
-        ProtocolLayer,
-    };
+    use super::message::header::Header;
+    use super::message::pdo::SourceCapabilities;
+    use super::message::Data;
+    use super::ProtocolLayer;
     use crate::dummy::{get_dummy_source_capabilities, DummyDriver, DummyTimer, DUMMY_CAPABILITIES};
 
-    fn get_protocol_layer() -> ProtocolLayer<DummyDriver, DummyTimer> {
+    fn get_protocol_layer() -> ProtocolLayer<DummyDriver<30>, DummyTimer> {
         ProtocolLayer::new(
             DummyDriver::new(),
             Header::new_template(
