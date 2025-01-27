@@ -294,6 +294,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                 _ => (),
             }
 
+            trace!("Received message {}", message);
             return Ok(message);
         }
     }
