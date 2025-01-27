@@ -105,6 +105,12 @@ bitfield! {
     }
 }
 
+impl Default for FixedSupply {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FixedSupply {
     pub fn new() -> Self {
         Self(0)
@@ -180,8 +186,8 @@ impl VariableSupply {
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum AugmentedPowerDataObject {
-    Spr(SPRProgrammablePowerSupply),
-    Epr(EPRAdjustableVoltageSupply),
+    Spr(SprProgrammablePowerSupply),
+    Epr(EprAdjustableVoltageSupply),
     Unknown(u32),
 }
 
@@ -199,7 +205,7 @@ bitfield! {
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub struct SPRProgrammablePowerSupply(pub u32): Debug, FromStorage, IntoStorage {
+    pub struct SprProgrammablePowerSupply(pub u32): Debug, FromStorage, IntoStorage {
         /// Augmented power data object
         pub kind: u8 @ 30..=31,
         /// SPR programmable power supply
@@ -214,7 +220,13 @@ bitfield! {
     }
 }
 
-impl SPRProgrammablePowerSupply {
+impl Default for SprProgrammablePowerSupply {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SprProgrammablePowerSupply {
     pub fn new() -> Self {
         Self(0).with_kind(0b11).with_supply(0b00)
     }
@@ -235,7 +247,7 @@ impl SPRProgrammablePowerSupply {
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub struct EPRAdjustableVoltageSupply(pub u32): Debug, FromStorage, IntoStorage {
+    pub struct EprAdjustableVoltageSupply(pub u32): Debug, FromStorage, IntoStorage {
         /// Augmented power data object
         pub kind: u8 @ 30..=31,
         /// EPR adjustable voltage supply
@@ -250,7 +262,7 @@ bitfield! {
     }
 }
 
-impl EPRAdjustableVoltageSupply {
+impl EprAdjustableVoltageSupply {
     pub fn max_voltage(&self) -> si::u16::ElectricPotential {
         si::u16::ElectricPotential::new::<decivolt>(self.raw_max_voltage())
     }

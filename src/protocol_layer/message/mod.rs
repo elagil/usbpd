@@ -16,8 +16,8 @@ use byteorder::{ByteOrder, LittleEndian};
 use header::{DataMessageType, Header, MessageType};
 use heapless::Vec;
 use pdo::{
-    AugmentedPowerDataObject, AugmentedPowerDataObjectRaw, Battery, EPRAdjustableVoltageSupply, FixedSupply,
-    PowerDataObject, PowerDataObjectRaw, SPRProgrammablePowerSupply, SourceCapabilities, VariableSupply,
+    AugmentedPowerDataObject, AugmentedPowerDataObjectRaw, Battery, EprAdjustableVoltageSupply, FixedSupply,
+    PowerDataObject, PowerDataObjectRaw, SourceCapabilities, SprProgrammablePowerSupply, VariableSupply,
 };
 use vdo::{VDMHeader, VDMHeaderRaw, VDMHeaderStructured, VDMHeaderUnstructured, VDMType};
 
@@ -116,8 +116,8 @@ impl Message {
                             0b10 => PowerDataObject::VariableSupply(VariableSupply(pdo.0)),
                             0b11 => PowerDataObject::Augmented({
                                 match AugmentedPowerDataObjectRaw(pdo.0).supply() {
-                                    0b00 => AugmentedPowerDataObject::Spr(SPRProgrammablePowerSupply(pdo.0)),
-                                    0b01 => AugmentedPowerDataObject::Epr(EPRAdjustableVoltageSupply(pdo.0)),
+                                    0b00 => AugmentedPowerDataObject::Spr(SprProgrammablePowerSupply(pdo.0)),
+                                    0b01 => AugmentedPowerDataObject::Epr(EprAdjustableVoltageSupply(pdo.0)),
                                     x => {
                                         warn!("Unknown AugmentedPowerDataObject supply {}", x);
                                         AugmentedPowerDataObject::Unknown(pdo.0)
