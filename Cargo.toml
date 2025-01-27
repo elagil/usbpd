@@ -27,6 +27,9 @@ futures = { version = "0.3.31", default-features = false }
 defmt = { version = "0.3.6", optional = true }
 log = { version = "0.4.25", optional = true }
 
+[dev-dependencies]
+tokio = { version = "1.43.0", features = ["rt", "macros"] }
+
 [features]
 default = []
 
