@@ -5,7 +5,7 @@
 //!
 //! Provides a policy engine (depending on selected capability), protocol layer,
 //! and relevant traits for the user applation to implement.
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 #![warn(missing_docs)]
 
 // This mod MUST go first, so that the others see its macros.

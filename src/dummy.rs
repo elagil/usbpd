@@ -1,51 +1,71 @@
 //! Implements a dummy driver and timer for testing.
+use std::future::pending;
+use std::vec::Vec;
 
-use crate::{
-    protocol_layer::message::pdo::{
-        AugmentedPowerDataObject, FixedSupply, PowerDataObject, SprProgrammablePowerSupply,
-    },
-    timers::Timer,
-    Driver,
+use crate::protocol_layer::message::pdo::{
+    AugmentedPowerDataObject, FixedSupply, PowerDataObject, SprProgrammablePowerSupply,
 };
-use heapless::Vec;
+use crate::sink::device_policy_manager::DevicePolicyManager as SinkDevicePolicyManager;
+use crate::timers::Timer;
+use crate::Driver;
+
+/// A dummy sink device that implements the sink device policy manager.
+pub struct DummySinkDevice {}
+
+impl SinkDevicePolicyManager for DummySinkDevice {}
 
 /// A dummy timer for testing.
 pub struct DummyTimer {}
 
 impl Timer for DummyTimer {
     async fn after_millis(_milliseconds: u64) {
-        // Return immediately.
+        // Never time out
+        pending().await
     }
 }
 
 /// A dummy driver for testing.
-pub struct DummyDriver {
-    rx_vec: Vec<u8, 30>,
+pub struct DummyDriver<const N: usize> {
+    rx_vec: Vec<heapless::Vec<u8, N>>,
+    tx_vec: Vec<heapless::Vec<u8, N>>,
 }
 
-impl DummyDriver {
+impl<const N: usize> DummyDriver<N> {
     /// Create a new dummy driver.
     pub fn new() -> Self {
-        Self { rx_vec: Vec::new() }
+        Self {
+            rx_vec: Vec::new(),
+            tx_vec: Vec::new(),
+        }
     }
 
     /// Inject received data that can be retrieved later.
     pub fn inject_received_data(&mut self, data: &[u8]) {
-        self.rx_vec.extend_from_slice(data).unwrap()
+        let mut vec = heapless::Vec::new();
+        vec.extend_from_slice(data).unwrap();
+
+        self.rx_vec.push(vec);
+    }
+
+    /// Probe data that was transmitted by the stack.
+    pub fn probe_transmitted_data(&mut self) -> heapless::Vec<u8, N> {
+        self.tx_vec.remove(0)
     }
 }
 
-impl Driver for DummyDriver {
+impl<const N: usize> Driver for DummyDriver<N> {
     async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, crate::DriverRxError> {
-        let length = self.rx_vec.len();
-        buffer.copy_from_slice(&self.rx_vec);
-        self.rx_vec.clear();
+        let first = self.rx_vec.remove(0);
+        buffer.copy_from_slice(&first);
 
-        Ok(length)
+        Ok(first.len())
     }
 
-    async fn transmit(&mut self, _data: &[u8]) -> Result<(), crate::DriverTxError> {
-        // Do nothing.
+    async fn transmit(&mut self, data: &[u8]) -> Result<(), crate::DriverTxError> {
+        let mut vec = heapless::Vec::new();
+        vec.extend_from_slice(data).unwrap();
+        self.tx_vec.push(vec);
+
         Ok(())
     }
 
@@ -104,30 +124,26 @@ pub const DUMMY_CAPABILITIES: [u8; 30] = [
 /// Get dummy source capabilities for testing.
 ///
 /// Corresponds to the `DUMMY_CAPABILITIES` above.
-pub fn get_dummy_source_capabilities() -> Vec<PowerDataObject, 8> {
-    let mut pdos: Vec<PowerDataObject, 8> = Vec::new();
+pub fn get_dummy_source_capabilities() -> Vec<PowerDataObject> {
+    let mut pdos: Vec<PowerDataObject> = Vec::new();
     pdos.push(PowerDataObject::FixedSupply(
         FixedSupply::new()
             .with_raw_voltage(100)
             .with_raw_max_current(300)
             .with_unconstrained_power(true),
-    ))
-    .unwrap();
+    ));
 
     pdos.push(PowerDataObject::FixedSupply(
         FixedSupply::new().with_raw_voltage(180).with_raw_max_current(300),
-    ))
-    .unwrap();
+    ));
 
     pdos.push(PowerDataObject::FixedSupply(
         FixedSupply::new().with_raw_voltage(300).with_raw_max_current(300),
-    ))
-    .unwrap();
+    ));
 
     pdos.push(PowerDataObject::FixedSupply(
         FixedSupply::new().with_raw_voltage(400).with_raw_max_current(225),
-    ))
-    .unwrap();
+    ));
 
     pdos.push(PowerDataObject::Augmented(AugmentedPowerDataObject::Spr(
         SprProgrammablePowerSupply::new()
@@ -135,8 +151,7 @@ pub fn get_dummy_source_capabilities() -> Vec<PowerDataObject, 8> {
             .with_raw_min_voltage(33)
             .with_raw_max_voltage(110)
             .with_pps_power_limited(true),
-    )))
-    .unwrap();
+    )));
 
     pdos.push(PowerDataObject::Augmented(AugmentedPowerDataObject::Spr(
         SprProgrammablePowerSupply::new()
@@ -144,8 +159,7 @@ pub fn get_dummy_source_capabilities() -> Vec<PowerDataObject, 8> {
             .with_raw_min_voltage(33)
             .with_raw_max_voltage(160)
             .with_pps_power_limited(true),
-    )))
-    .unwrap();
+    )));
 
     pdos.push(PowerDataObject::Augmented(AugmentedPowerDataObject::Spr(
         SprProgrammablePowerSupply::new()
@@ -153,8 +167,38 @@ pub fn get_dummy_source_capabilities() -> Vec<PowerDataObject, 8> {
             .with_raw_min_voltage(33)
             .with_raw_max_voltage(210)
             .with_pps_power_limited(true),
-    )))
-    .unwrap();
+    )));
 
     pdos
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::dummy::DummyDriver;
+    use crate::Driver;
+
+    #[tokio::test]
+    async fn test_receive() {
+        let mut driver: DummyDriver<30> = DummyDriver::new();
+
+        let mut injected_data = [0u8; 30];
+        injected_data[0] = 123;
+
+        driver.inject_received_data(&injected_data);
+
+        injected_data[1] = 255;
+        driver.inject_received_data(&injected_data);
+
+        let mut buf = [0u8; 30];
+        driver.receive(&mut buf).await.unwrap();
+
+        assert_eq!(buf[0], 123);
+        assert_eq!(buf[1], 0);
+
+        let mut buf = [0u8; 30];
+        driver.receive(&mut buf).await.unwrap();
+
+        assert_eq!(buf[0], 123);
+        assert_eq!(buf[1], 255);
+    }
 }

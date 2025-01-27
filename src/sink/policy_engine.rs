@@ -107,59 +107,64 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
         self.protocol_layer = Self::new_protocol_layer(driver);
     }
 
-    /// Run the sink's state machine.
+    /// Run a single step in the policy engine state machine.
+    async fn run_step(&mut self) {
+        let result = self.update_state().await;
+        if result.is_ok() {
+            return;
+        }
+
+        if let Err(Error::Protocol(protocol_error)) = result {
+            let new_state = match (&self.state, protocol_error) {
+                // Handle when hard reset is signaled by the driver itself.
+                (_, ProtocolError::HardReset) => Some(State::TransitionToDefault),
+
+                // Handle when soft reset is signaled by the driver itself.
+                (_, ProtocolError::SoftReset) => Some(State::SoftReset),
+
+                // Unexpected messages indicate a protocol error and demand a soft reset.
+                // See spec, [6.8.1]
+                (_, ProtocolError::UnexpectedMessage) => Some(State::SendSoftReset),
+
+                // Fall back to hard reset
+                // - after soft reset accept failed to be sent, or
+                // - after sending soft reset failed.
+                (State::SoftReset | State::SendSoftReset, ProtocolError::TransmitRetriesExceeded) => {
+                    Some(State::HardReset)
+                }
+
+                // See spec, [8.3.3.3.3]
+                (State::WaitForCapabilities, ProtocolError::ReceiveTimeout) => Some(State::HardReset),
+
+                // See spec, [8.3.3.3.5]
+                (State::SelectCapability(_), ProtocolError::ReceiveTimeout) => Some(State::HardReset),
+
+                // See spec, [8.3.3.3.6]
+                (State::TransitionSink(_), _) => Some(State::HardReset),
+
+                (State::Ready, ProtocolError::UnsupportedMessage) => Some(State::SendNotSupported),
+
+                (_, ProtocolError::TransmitRetriesExceeded) => Some(State::SendSoftReset),
+
+                // Attempt to recover protocol errors with a soft reset.
+                (_, error) => {
+                    error!("Protocol error {} in sink state transition", error);
+                    None
+                }
+            };
+
+            if let Some(state) = new_state {
+                self.state = state
+            }
+        } else {
+            debug!("Result {} in sink state transition", result);
+        }
+    }
+
+    /// Run the sink's state machine continuously.
     pub async fn run(&mut self) {
         loop {
-            let result = self.update_state().await;
-            if result.is_ok() {
-                continue;
-            }
-
-            if let Err(Error::Protocol(protocol_error)) = result {
-                let new_state = match (&self.state, protocol_error) {
-                    // Handle when hard reset is signaled by the driver itself.
-                    (_, ProtocolError::HardReset) => Some(State::TransitionToDefault),
-
-                    // Handle when soft reset is signaled by the driver itself.
-                    (_, ProtocolError::SoftReset) => Some(State::SoftReset),
-
-                    // Unexpected messages indicate a protocol error and demand a soft reset.
-                    // See spec, [6.8.1]
-                    (_, ProtocolError::UnexpectedMessage) => Some(State::SendSoftReset),
-
-                    // Fall back to hard reset
-                    // - after soft reset accept failed to be sent, or
-                    // - after sending soft reset failed.
-                    (State::SoftReset | State::SendSoftReset, ProtocolError::TransmitRetriesExceeded) => {
-                        Some(State::HardReset)
-                    }
-
-                    // See spec, [8.3.3.3.3]
-                    (State::WaitForCapabilities, ProtocolError::ReceiveTimeout) => Some(State::HardReset),
-
-                    // See spec, [8.3.3.3.5]
-                    (State::SelectCapability(_), ProtocolError::ReceiveTimeout) => Some(State::HardReset),
-
-                    // See spec, [8.3.3.3.6]
-                    (State::TransitionSink(_), _) => Some(State::HardReset),
-
-                    (State::Ready, ProtocolError::UnsupportedMessage) => Some(State::SendNotSupported),
-
-                    (_, ProtocolError::TransmitRetriesExceeded) => Some(State::SendSoftReset),
-
-                    // Attempt to recover protocol errors with a soft reset.
-                    (_, error) => {
-                        error!("Protocol error {} in sink state transition", error);
-                        None
-                    }
-                };
-
-                if let Some(state) = new_state {
-                    self.state = state
-                }
-            } else {
-                debug!("Result {} in sink state transition", result);
-            }
+            self.run_step().await
         }
     }
 
@@ -373,9 +378,96 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
             }
         };
 
-        // trace!("Sink state transition: {:?} -> {:?}", self.state, new_state);
+        trace!("Sink state transition: {:?} -> {:?}", self.state, new_state);
         self.state = new_state;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Sink;
+    use crate::counters::{Counter, CounterType};
+    use crate::dummy::{DummyDriver, DummySinkDevice, DummyTimer, DUMMY_CAPABILITIES};
+    use crate::protocol_layer::message::header::{ControlMessageType, DataMessageType, Header, MessageType};
+    use crate::protocol_layer::message::Message;
+    use crate::sink::policy_engine::State;
+
+    fn get_policy_engine() -> Sink<DummyDriver<30>, DummyTimer, DummySinkDevice> {
+        Sink::new(DummyDriver::new(), DummySinkDevice {})
+    }
+
+    fn simulate_source_control_message(
+        policy_engine: &mut Sink<DummyDriver<30>, DummyTimer, DummySinkDevice>,
+        control_message_type: ControlMessageType,
+        message_id: u8,
+    ) {
+        let header = *policy_engine.protocol_layer.header();
+        let mut buf = [0u8; 30];
+
+        Message::new(Header::new_control(
+            header,
+            Counter::new_from_value(CounterType::MessageId, message_id),
+            control_message_type,
+        ))
+        .to_bytes(&mut buf);
+        policy_engine.protocol_layer.driver().inject_received_data(&buf);
+    }
+
+    #[tokio::test]
+    async fn test_negotiation() {
+        // Instantiated in `Discovery` state
+        let mut policy_engine = get_policy_engine();
+
+        // Provide capabilities
+        policy_engine
+            .protocol_layer
+            .driver()
+            .inject_received_data(&DUMMY_CAPABILITIES);
+
+        // `Discovery` -> `WaitForCapabilities`
+        policy_engine.run_step().await;
+
+        // `WaitForCapabilities` -> `EvaluateCapabilities`
+        policy_engine.run_step().await;
+
+        let good_crc = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data());
+        assert!(matches!(
+            good_crc.header.message_type(),
+            MessageType::Control(ControlMessageType::GoodCRC)
+        ));
+
+        // Simulate `GoodCrc` with ID 0.
+        simulate_source_control_message(&mut policy_engine, ControlMessageType::GoodCRC, 0);
+
+        // `EvaluateCapabilities` -> `SelectCapability`
+        policy_engine.run_step().await;
+
+        // Simulate `Accept` message.
+        simulate_source_control_message(&mut policy_engine, ControlMessageType::Accept, 1);
+
+        // `SelectCapability` -> `TransitionSink`
+        policy_engine.run_step().await;
+
+        let request_capabilities = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data());
+        assert!(matches!(
+            request_capabilities.header.message_type(),
+            MessageType::Data(DataMessageType::Request)
+        ));
+
+        // Simulate `PsRdy` message.
+        simulate_source_control_message(&mut policy_engine, ControlMessageType::PsRdy, 2);
+
+        // `TransitionSink` -> `Ready`
+        policy_engine.run_step().await;
+
+        assert!(matches!(policy_engine.state, State::Ready));
+
+        let good_crc = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data());
+        assert!(matches!(
+            good_crc.header.message_type(),
+            MessageType::Control(ControlMessageType::GoodCRC)
+        ));
     }
 }
