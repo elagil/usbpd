@@ -2,7 +2,7 @@
 
 use crate::{
     protocol_layer::message::pdo::{
-        AugmentedPowerDataObject, FixedSupply, PowerDataObject, SPRProgrammablePowerSupply,
+        AugmentedPowerDataObject, FixedSupply, PowerDataObject, SprProgrammablePowerSupply,
     },
     timers::Timer,
     Driver,
@@ -130,7 +130,7 @@ pub fn get_dummy_source_capabilities() -> Vec<PowerDataObject, 8> {
     .unwrap();
 
     pdos.push(PowerDataObject::Augmented(AugmentedPowerDataObject::Spr(
-        SPRProgrammablePowerSupply::new()
+        SprProgrammablePowerSupply::new()
             .with_raw_max_current(100)
             .with_raw_min_voltage(33)
             .with_raw_max_voltage(110)
@@ -139,7 +139,7 @@ pub fn get_dummy_source_capabilities() -> Vec<PowerDataObject, 8> {
     .unwrap();
 
     pdos.push(PowerDataObject::Augmented(AugmentedPowerDataObject::Spr(
-        SPRProgrammablePowerSupply::new()
+        SprProgrammablePowerSupply::new()
             .with_raw_max_current(60)
             .with_raw_min_voltage(33)
             .with_raw_max_voltage(160)
@@ -148,7 +148,7 @@ pub fn get_dummy_source_capabilities() -> Vec<PowerDataObject, 8> {
     .unwrap();
 
     pdos.push(PowerDataObject::Augmented(AugmentedPowerDataObject::Spr(
-        SPRProgrammablePowerSupply::new()
+        SprProgrammablePowerSupply::new()
             .with_raw_max_current(45)
             .with_raw_min_voltage(33)
             .with_raw_max_voltage(210)
