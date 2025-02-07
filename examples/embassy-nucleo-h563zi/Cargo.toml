@@ -56,7 +56,7 @@ uom = { version = "0.36.0", default-features = false, features = [
     "u16",
     "u32",
 ] }
-usbpd = { path = "../..", features = ["defmt"] }
+usbpd = { path = "../../usbpd", features = ["defmt"] }
 
 # cargo build/run
 [profile.dev]
