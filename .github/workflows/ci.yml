@@ -9,16 +9,25 @@ env:
   RUSTFLAGS: "-Dwarnings"
 
 jobs:
-  build:
+  build_and_test:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run build
-        run: ./ci/build.sh
 
-  test:
-    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Run tests
-        run: ./ci/test.sh
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Cache build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            examples/embassy-nucleo-h563zi
+            examples/embassy-stm32-g431cb
+
+      - name: Build
+        run: bash .github/ci/build.sh
+
+      - name: Test
+        run: bash .github/ci/test.sh
