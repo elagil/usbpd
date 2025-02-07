@@ -1,8 +1,3 @@
-use _20millivolts_mod::_20millivolts;
-use _250milliwatts_mod::_250milliwatts;
-use _50milliamperes_mod::_50milliamperes;
-use _50millivolts_mod::_50millivolts;
-use byteorder::{ByteOrder, LittleEndian};
 use heapless::Vec;
 use proc_bitfield::bitfield;
 use uom::si::electric_current::centiampere;
@@ -11,46 +6,13 @@ use uom::si::power::watt;
 use uom::si::{self};
 
 use super::PdoState;
-
-mod _20millivolts_mod {
-    unit! {
-        system: uom::si;
-        quantity: uom::si::electric_potential;
-
-        @_20millivolts: 0.02; "_20mV", "_20millivolts", "_20millivolts";
-    }
-}
-
-mod _50milliamperes_mod {
-    unit! {
-        system: uom::si;
-        quantity: uom::si::electric_current;
-
-        @_50milliamperes: 0.05; "_50mA", "_50milliamps", "_50milliamps";
-    }
-}
-
-mod _50millivolts_mod {
-    unit! {
-        system: uom::si;
-        quantity: uom::si::electric_potential;
-
-        @_50millivolts: 0.05; "_50mV", "_50millivolts", "_50millivolts";
-    }
-}
-
-mod _250milliwatts_mod {
-    unit! {
-        system: uom::si;
-        quantity: uom::si::power;
-
-        @_250milliwatts: 0.25; "_250mW", "_250milliwatts", "_250milliwatts";
-    }
-}
+use super::_250milliwatts_mod::_250milliwatts;
+use super::_50milliamperes_mod::_50milliamperes;
+use super::_50millivolts_mod::_50millivolts;
 
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum PowerDataObjectType {
+pub enum Kind {
     FixedSupply,
     Battery,
     VariableSupply,
@@ -64,14 +26,14 @@ pub enum PowerDataObject {
     FixedSupply(FixedSupply),
     Battery(Battery),
     VariableSupply(VariableSupply),
-    Augmented(AugmentedPowerDataObject),
-    Unknown(PowerDataObjectRaw),
+    Augmented(Augmented),
+    Unknown(RawPowerDataObject),
 }
 
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub struct PowerDataObjectRaw(pub u32): Debug, FromStorage, IntoStorage {
+    pub struct RawPowerDataObject(pub u32): Debug, FromStorage, IntoStorage {
         pub kind: u8 @ 30..=31,
     }
 }
@@ -185,7 +147,7 @@ impl VariableSupply {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum AugmentedPowerDataObject {
+pub enum Augmented {
     Spr(SprProgrammablePowerSupply),
     Epr(EprAdjustableVoltageSupply),
     Unknown(u32),
@@ -194,7 +156,7 @@ pub enum AugmentedPowerDataObject {
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub struct AugmentedPowerDataObjectRaw(pub u32): Debug, FromStorage, IntoStorage {
+    pub struct AugmentedRaw(pub u32): Debug, FromStorage, IntoStorage {
         /// Augmented power data object
         pub kind: u8 @ 30..=31,
         pub supply: u8 @ 28..=29,
@@ -276,187 +238,6 @@ impl EprAdjustableVoltageSupply {
     }
 }
 
-bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub struct RawRequestDataObject(pub u32): Debug, FromStorage, IntoStorage {
-        /// Valid range 1..=14
-        pub object_position: u8 @ 28..=31,
-    }
-}
-
-bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub struct FixedVariableRequestDataObject(pub u32): Debug, FromStorage, IntoStorage {
-        /// Valid range 1..=14
-        pub object_position: u8 @ 28..=31,
-        pub giveback_flag: bool @ 27,
-        pub capability_mismatch: bool @ 26,
-        pub usb_communications_capable: bool @ 25,
-        pub no_usb_suspend: bool @ 24,
-        pub unchunked_extended_messages_supported: bool @ 23,
-        pub epr_mode_capable: bool @ 22,
-        pub raw_operating_current: u16 @ 10..=19,
-        pub raw_max_operating_current: u16 @ 0..=9,
-    }
-}
-
-impl FixedVariableRequestDataObject {
-    pub fn to_bytes(self, buf: &mut [u8]) -> usize {
-        LittleEndian::write_u32(buf, self.0);
-        4
-    }
-
-    pub fn operating_current(&self) -> si::u16::ElectricCurrent {
-        si::u16::ElectricCurrent::new::<centiampere>(self.raw_operating_current())
-    }
-
-    pub fn max_operating_current(&self) -> si::u16::ElectricCurrent {
-        si::u16::ElectricCurrent::new::<centiampere>(self.raw_max_operating_current())
-    }
-}
-
-bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub struct BatteryRequestDataObject(pub u32): Debug, FromStorage, IntoStorage {
-        /// Object position (0000b and 1110b…1111b are Reserved and Shall Not be used)
-        pub object_position: u8 @ 28..=31,
-        /// GiveBackFlag = 0
-        pub giveback_flag: bool @ 27,
-        /// Capability mismatch
-        pub capability_mismatch: bool @ 26,
-        /// USB communications capable
-        pub usb_communications_capable: bool @ 25,
-        /// No USB Suspend
-        pub no_usb_suspend: bool @ 24,
-        /// Unchunked extended messages supported
-        pub unchunked_extended_messages_supported: bool @ 23,
-        /// EPR mode capable
-        pub epr_mode_capable: bool @ 22,
-        /// Operating power in 250mW units
-        pub raw_operating_power: u16 @ 10..=19,
-        /// Maximum operating power in 250mW units
-        pub raw_max_operating_power: u16 @ 0..=9,
-    }
-}
-
-impl BatteryRequestDataObject {
-    pub fn to_bytes(self, buf: &mut [u8]) {
-        LittleEndian::write_u32(buf, self.0);
-    }
-
-    pub fn operating_power(&self) -> si::u32::Power {
-        si::u32::Power::new::<_250milliwatts>(self.raw_operating_power().into())
-    }
-
-    pub fn max_operating_power(&self) -> si::u32::Power {
-        si::u32::Power::new::<_250milliwatts>(self.raw_max_operating_power().into())
-    }
-}
-
-bitfield!(
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub struct PPSRequestDataObject(pub u32): Debug, FromStorage, IntoStorage {
-        /// Object position (0000b and 1110b…1111b are Reserved and Shall Not be used)
-        pub object_position: u8 @ 28..=31,
-        /// Capability mismatch
-        pub capability_mismatch: bool @ 26,
-        /// USB communications capable
-        pub usb_communications_capable: bool @ 25,
-        /// No USB Suspend
-        pub no_usb_suspend: bool @ 24,
-        /// Unchunked extended messages supported
-        pub unchunked_extended_messages_supported: bool @ 23,
-        /// EPR mode capable
-        pub epr_mode_capable: bool @ 22,
-        /// Output voltage in 20mV units
-        pub raw_output_voltage: u16 @ 9..=20,
-        /// Operating current in 50mA units
-        pub raw_operating_current: u16 @ 0..=6,
-    }
-);
-
-impl PPSRequestDataObject {
-    pub fn to_bytes(self, buf: &mut [u8]) {
-        LittleEndian::write_u32(buf, self.0);
-    }
-
-    pub fn output_voltage(&self) -> si::u16::ElectricPotential {
-        si::u16::ElectricPotential::new::<_20millivolts>(self.raw_output_voltage())
-    }
-
-    pub fn operating_current(&self) -> si::u16::ElectricCurrent {
-        si::u16::ElectricCurrent::new::<_50milliamperes>(self.raw_operating_current())
-    }
-}
-
-bitfield!(
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub struct AVSRequestDataObject(pub u32): Debug, FromStorage, IntoStorage {
-        /// Object position (0000b and 1110b…1111b are Reserved and Shall Not be used)
-        pub object_position: u8 @ 28..=31,
-        /// Capability mismatch
-        pub capability_mismatch: bool @ 26,
-        /// USB communications capable
-        pub usb_communications_capable: bool @ 25,
-        /// No USB Suspend
-        pub no_usb_suspend: bool @ 24,
-        /// Unchunked extended messages supported
-        pub unchunked_extended_messages_supported: bool @ 23,
-        /// EPR mode capable
-        pub epr_mode_capable: bool @ 22,
-        /// Output voltage in 20mV units
-        pub raw_output_voltage: u16 @ 9..=20,
-        /// Operating current in 50mA units
-        pub raw_operating_current: u16 @ 0..=6,
-    }
-);
-
-impl AVSRequestDataObject {
-    pub fn to_bytes(self, buf: &mut [u8]) {
-        LittleEndian::write_u32(buf, self.0);
-    }
-
-    pub fn output_voltage(&self) -> si::u16::ElectricPotential {
-        si::u16::ElectricPotential::new::<_20millivolts>(self.raw_output_voltage())
-    }
-
-    pub fn operating_current(&self) -> si::u16::ElectricCurrent {
-        si::u16::ElectricCurrent::new::<_50milliamperes>(self.raw_operating_current())
-    }
-}
-
-/// Power requests towards the source.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[allow(unused)] // FIXME: Implement missing request types.
-pub enum PowerSourceRequest {
-    FixedSupply(FixedVariableRequestDataObject),
-    VariableSupply(FixedVariableRequestDataObject),
-    Battery(BatteryRequestDataObject),
-    Pps(PPSRequestDataObject),
-    Avs(AVSRequestDataObject),
-    Unknown(RawRequestDataObject),
-}
-
-// FIXME: required?
-impl PowerSourceRequest {
-    pub fn _object_position(&self) -> u8 {
-        match self {
-            PowerSourceRequest::FixedSupply(p) => p.object_position(),
-            PowerSourceRequest::VariableSupply(p) => p.object_position(),
-            PowerSourceRequest::Battery(p) => p.object_position(),
-            PowerSourceRequest::Pps(p) => p.object_position(),
-            PowerSourceRequest::Avs(p) => p.object_position(),
-            PowerSourceRequest::Unknown(p) => p.object_position(),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SourceCapabilities(pub(crate) Vec<PowerDataObject, 8>);
@@ -512,17 +293,17 @@ impl SourceCapabilities {
 }
 
 impl PdoState for SourceCapabilities {
-    fn pdo_at_object_position(&self, position: u8) -> Option<PowerDataObjectType> {
+    fn pdo_at_object_position(&self, position: u8) -> Option<Kind> {
         self.pdos()
             .get(position.saturating_sub(1) as usize)
             .and_then(|pdo| match pdo {
-                PowerDataObject::FixedSupply(_) => Some(PowerDataObjectType::FixedSupply),
-                PowerDataObject::Battery(_) => Some(PowerDataObjectType::Battery),
-                PowerDataObject::VariableSupply(_) => Some(PowerDataObjectType::VariableSupply),
+                PowerDataObject::FixedSupply(_) => Some(Kind::FixedSupply),
+                PowerDataObject::Battery(_) => Some(Kind::Battery),
+                PowerDataObject::VariableSupply(_) => Some(Kind::VariableSupply),
                 PowerDataObject::Augmented(augmented) => match augmented {
-                    AugmentedPowerDataObject::Spr(_) => Some(PowerDataObjectType::Pps),
-                    AugmentedPowerDataObject::Epr(_) => Some(PowerDataObjectType::Avs),
-                    AugmentedPowerDataObject::Unknown(_) => None,
+                    Augmented::Spr(_) => Some(Kind::Pps),
+                    Augmented::Epr(_) => Some(Kind::Avs),
+                    Augmented::Unknown(_) => None,
                 },
                 PowerDataObject::Unknown(_) => None,
             })
@@ -530,13 +311,13 @@ impl PdoState for SourceCapabilities {
 }
 
 impl PdoState for Option<SourceCapabilities> {
-    fn pdo_at_object_position(&self, position: u8) -> Option<PowerDataObjectType> {
+    fn pdo_at_object_position(&self, position: u8) -> Option<Kind> {
         self.as_ref().pdo_at_object_position(position)
     }
 }
 
 impl PdoState for Option<&SourceCapabilities> {
-    fn pdo_at_object_position(&self, position: u8) -> Option<PowerDataObjectType> {
+    fn pdo_at_object_position(&self, position: u8) -> Option<Kind> {
         self.and_then(|s| s.pdo_at_object_position(position))
     }
 }

@@ -5,12 +5,10 @@ use embassy_stm32::gpio::Output;
 use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
 use embassy_stm32::{bind_interrupts, peripherals};
 use embassy_time::{with_timeout, Duration, Timer};
-use uom::si::u16::ElectricPotential;
-use uom::si::{electric_current, electric_potential};
 use usbpd::protocol_layer::message::pdo::SourceCapabilities;
-use usbpd::sink::device_policy_manager::{request_fixed_voltage, DevicePolicyManager, FixedVoltageRequest};
+use usbpd::sink::device_policy_manager::{DevicePolicyManager, Event};
 use usbpd::sink::policy_engine::Sink;
-use usbpd::sink::PowerSourceRequest;
+use usbpd::sink::request::PowerSourceRequest;
 use usbpd::timers::Timer as SinkTimer;
 use usbpd::Driver as SinkDriver;
 use {defmt_rtt as _, panic_probe as _};
@@ -48,7 +46,7 @@ impl<'d> UcpdSinkDriver<'d> {
     }
 }
 
-impl<'d> SinkDriver for UcpdSinkDriver<'d> {
+impl SinkDriver for UcpdSinkDriver<'_> {
     async fn wait_for_vbus(&self) {
         // The sink policy engine is only running when attached. Therefore VBus is present.
     }
@@ -127,21 +125,30 @@ struct Device<'d> {
 
 impl DevicePolicyManager for Device<'_> {
     async fn request(&mut self, source_capabilities: &SourceCapabilities) -> PowerSourceRequest {
-        request_fixed_voltage(
+        PowerSourceRequest::new_fixed(
+            usbpd::sink::request::CurrentRequest::Highest,
+            usbpd::sink::request::VoltageRequest::Safe5V,
             source_capabilities,
-            FixedVoltageRequest::Specific(ElectricPotential::new::<electric_potential::volt>(5)),
         )
+        .unwrap()
     }
 
-    async fn transition_power(&mut self, accepted: &PowerSourceRequest) {
-        if let PowerSourceRequest::FixedSupply(x) = accepted {
-            info!(
-                "Transitioning to fixed supply at: {} mV, {} mA",
-                x.voltage.get::<electric_potential::millivolt>(),
-                x.current.get::<electric_current::milliampere>()
-            );
-        }
+    async fn transition_power(&mut self, _accepted: &PowerSourceRequest) {
         self.led.set_high();
+    }
+
+    async fn get_event(&mut self, source_capabilities: &SourceCapabilities) -> Event {
+        // Periodically request another power level.
+        Timer::after_secs(5).await;
+
+        Event::RequestPower(
+            PowerSourceRequest::new_fixed(
+                usbpd::sink::request::CurrentRequest::Highest,
+                usbpd::sink::request::VoltageRequest::Safe5V,
+                source_capabilities,
+            )
+            .unwrap(),
+        )
     }
 }
 
@@ -164,7 +171,7 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
         ucpd_resources.tcpp01_m12_ndb.set_high();
 
         info!("Waiting for USB connection");
-        let cable_orientation = wait_attached(&mut ucpd.cc_phy()).await;
+        let cable_orientation = wait_attached(ucpd.cc_phy()).await;
         info!("USB cable connected, orientation: {}", cable_orientation);
 
         let cc_sel = match cable_orientation {

@@ -2,7 +2,7 @@
 
 // FIXME: add documentation
 #[allow(missing_docs)]
-pub mod header;
+pub(crate) mod header;
 
 // FIXME: add documentation
 #[allow(missing_docs)]
@@ -10,32 +10,62 @@ pub mod pdo;
 
 // FIXME: add documentation
 #[allow(missing_docs)]
-pub mod vdo;
+pub(crate) mod vdo;
+
+pub(crate) mod request;
 
 use byteorder::{ByteOrder, LittleEndian};
 use header::{DataMessageType, Header, MessageType};
 use heapless::Vec;
-use pdo::{
-    AugmentedPowerDataObject, AugmentedPowerDataObjectRaw, Battery, EprAdjustableVoltageSupply, FixedSupply,
-    PowerDataObject, PowerDataObjectRaw, SourceCapabilities, SprProgrammablePowerSupply, VariableSupply,
-};
+use pdo::{PowerDataObject, RawPowerDataObject, SourceCapabilities};
 use vdo::{VDMHeader, VDMHeaderRaw, VDMHeaderStructured, VDMHeaderUnstructured, VDMType};
 
-use self::pdo::{
-    AVSRequestDataObject, BatteryRequestDataObject, FixedVariableRequestDataObject, PPSRequestDataObject,
-    PowerDataObjectType, PowerSourceRequest, RawRequestDataObject,
-};
+pub(super) mod _50milliamperes_mod {
+    unit! {
+        system: uom::si;
+        quantity: uom::si::electric_current;
+
+        @_50milliamperes: 0.05; "_50mA", "_50milliamps", "_50milliamps";
+    }
+}
+
+pub(super) mod _50millivolts_mod {
+    unit! {
+        system: uom::si;
+        quantity: uom::si::electric_potential;
+
+        @_50millivolts: 0.05; "_50mV", "_50millivolts", "_50millivolts";
+    }
+}
+
+pub(super) mod _20millivolts_mod {
+    unit! {
+        system: uom::si;
+        quantity: uom::si::electric_potential;
+
+        @_20millivolts: 0.02; "_20mV", "_20millivolts", "_20millivolts";
+    }
+}
+
+pub(super) mod _250milliwatts_mod {
+    unit! {
+        system: uom::si;
+        quantity: uom::si::power;
+
+        @_250milliwatts: 0.25; "_250mW", "_250milliwatts", "_250milliwatts";
+    }
+}
 
 /// PDO State.
 ///
 /// FIXME: Required?
 pub trait PdoState {
     /// FIXME: Required?
-    fn pdo_at_object_position(&self, position: u8) -> Option<PowerDataObjectType>;
+    fn pdo_at_object_position(&self, position: u8) -> Option<pdo::Kind>;
 }
 
 impl PdoState for () {
-    fn pdo_at_object_position(&self, _position: u8) -> Option<PowerDataObjectType> {
+    fn pdo_at_object_position(&self, _position: u8) -> Option<pdo::Kind> {
         None
     }
 }
@@ -48,7 +78,7 @@ pub enum Data {
     /// Source capability data.
     SourceCapabilities(SourceCapabilities),
     /// Request for a power level from the source.
-    PowerSourceRequest(PowerSourceRequest),
+    PowerSourceRequest(request::PowerSource),
     /// Vendor defined.
     VendorDefined((VDMHeader, Vec<u32, 7>)), // TODO: Unused, and incomplete
     /// Unknown data type.
@@ -61,7 +91,9 @@ impl Data {
         match self {
             Self::Unknown => 0,
             Self::SourceCapabilities(_) => unimplemented!(),
-            Self::PowerSourceRequest(PowerSourceRequest::FixedSupply(data_object)) => data_object.to_bytes(payload),
+            Self::PowerSourceRequest(request::PowerSource::FixedVariableSupply(data_object)) => {
+                data_object.to_bytes(payload)
+            }
             Self::PowerSourceRequest(_) => unimplemented!(),
             Self::VendorDefined(_) => unimplemented!(),
         }
@@ -109,18 +141,18 @@ impl Message {
                     payload
                         .chunks_exact(4)
                         .take(message.header.num_objects())
-                        .map(|buf| PowerDataObjectRaw(LittleEndian::read_u32(buf)))
+                        .map(|buf| RawPowerDataObject(LittleEndian::read_u32(buf)))
                         .map(|pdo| match pdo.kind() {
-                            0b00 => PowerDataObject::FixedSupply(FixedSupply(pdo.0)),
-                            0b01 => PowerDataObject::Battery(Battery(pdo.0)),
-                            0b10 => PowerDataObject::VariableSupply(VariableSupply(pdo.0)),
+                            0b00 => PowerDataObject::FixedSupply(pdo::FixedSupply(pdo.0)),
+                            0b01 => PowerDataObject::Battery(pdo::Battery(pdo.0)),
+                            0b10 => PowerDataObject::VariableSupply(pdo::VariableSupply(pdo.0)),
                             0b11 => PowerDataObject::Augmented({
-                                match AugmentedPowerDataObjectRaw(pdo.0).supply() {
-                                    0b00 => AugmentedPowerDataObject::Spr(SprProgrammablePowerSupply(pdo.0)),
-                                    0b01 => AugmentedPowerDataObject::Epr(EprAdjustableVoltageSupply(pdo.0)),
+                                match pdo::AugmentedRaw(pdo.0).supply() {
+                                    0b00 => pdo::Augmented::Spr(pdo::SprProgrammablePowerSupply(pdo.0)),
+                                    0b01 => pdo::Augmented::Epr(pdo::EprAdjustableVoltageSupply(pdo.0)),
                                     x => {
                                         warn!("Unknown AugmentedPowerDataObject supply {}", x);
-                                        AugmentedPowerDataObject::Unknown(pdo.0)
+                                        pdo::Augmented::Unknown(pdo.0)
                                     }
                                 }
                             }),
@@ -137,21 +169,18 @@ impl Message {
                     message.data = Some(Data::Unknown);
                     return message;
                 }
-                let raw = RawRequestDataObject(LittleEndian::read_u32(payload));
+                let raw = request::RawDataObject(LittleEndian::read_u32(payload));
                 if let Some(t) = state.pdo_at_object_position(raw.object_position()) {
                     message.data = Some(Data::PowerSourceRequest(match t {
-                        PowerDataObjectType::FixedSupply => {
-                            PowerSourceRequest::FixedSupply(FixedVariableRequestDataObject(raw.0))
+                        pdo::Kind::FixedSupply | pdo::Kind::VariableSupply => {
+                            request::PowerSource::FixedVariableSupply(request::FixedVariableSupply(raw.0))
                         }
-                        PowerDataObjectType::Battery => PowerSourceRequest::Battery(BatteryRequestDataObject(raw.0)),
-                        PowerDataObjectType::VariableSupply => {
-                            PowerSourceRequest::VariableSupply(FixedVariableRequestDataObject(raw.0))
-                        }
-                        PowerDataObjectType::Pps => PowerSourceRequest::Pps(PPSRequestDataObject(raw.0)),
-                        PowerDataObjectType::Avs => PowerSourceRequest::Avs(AVSRequestDataObject(raw.0)),
+                        pdo::Kind::Battery => request::PowerSource::Battery(request::Battery(raw.0)),
+                        pdo::Kind::Pps => request::PowerSource::Pps(request::Pps(raw.0)),
+                        pdo::Kind::Avs => request::PowerSource::Avs(request::Avs(raw.0)),
                     }));
                 } else {
-                    message.data = Some(Data::PowerSourceRequest(PowerSourceRequest::Unknown(raw)));
+                    message.data = Some(Data::PowerSourceRequest(request::PowerSource::Unknown(raw)));
                 }
             }
             MessageType::Data(DataMessageType::VendorDefined) => {

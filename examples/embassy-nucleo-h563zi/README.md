@@ -10,3 +10,5 @@ when a contract was negotiated (power transition).
 > The NUCLEO-H563ZI uses a [TCPP01-M12 port protection IC](https://www.st.com/en/protections-and-emi-filters/tcpp01-m12.html), set up for 5 V over-voltage protection on the sink input.
 > If more voltage is negotiated, it will disconnect power. For this reason, negotiated voltage for this
 > example defaults to only 5 V.
+
+The software demonstrates re-requesting 5 V every five seconds.
