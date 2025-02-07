@@ -9,43 +9,16 @@ env:
   RUSTFLAGS: "-Dwarnings"
 
 jobs:
-  format:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run formatting
-        run: cargo fmt
-
-  clippy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run clippy
-        run: cargo clippy
-
-      - name: Run clippy with defmt
-        run: cargo clippy --features defmt
-
-  build_and_test:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Run build
-        run: cargo build
+        run: ./ci/build.sh
 
-      - name: Run build with defmt
-        run: cargo build --features defmt
-
-      - name: Run tests
-        run: cargo test
-
-  build_examples:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run build for STM32G431CB
-        working-directory: examples/embassy-stm32-g431cb
-        run: cargo build --release
-      - name: Run build for NUCLEO-H563ZI
-        working-directory: examples/embassy-nucleo-h563zi
-        run: cargo build --release
+      - name: Run tests
+        run: ./ci/test.sh
