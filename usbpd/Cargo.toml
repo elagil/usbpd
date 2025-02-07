@@ -10,7 +10,6 @@ homepage = "https://github.com/elagil/usbpd"
 readme = "README.md"
 license = "MIT"
 keywords = ["no_std", "usb-pd", "embedded"]
-exclude = [".github", "*.pdf"]
 
 [dependencies]
 proc-bitfield = "0.5.2"
