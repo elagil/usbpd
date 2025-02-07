@@ -7,7 +7,7 @@ license = "MIT"
 [dependencies]
 # Change stm32h563zi to your chip name, if necessary.
 # FIXME: Use released versions, when embassy-stm32 contains required fix for STM32H5 UCPD
-embassy-stm32 = { git = "https://github.com/embassy-rs/embassy", rev = "306431822043c3c111e7970e0471c7d5c15e708f", features = [
+embassy-stm32 = { path = "../../embassy/embassy-stm32", features = [
     "defmt",
     "stm32h563zi",
     "memory-x",
@@ -16,22 +16,20 @@ embassy-stm32 = { git = "https://github.com/embassy-rs/embassy", rev = "30643182
     "unstable-pac",
     "low-power",
 ] }
-embassy-sync = { git = "https://github.com/embassy-rs/embassy", rev = "306431822043c3c111e7970e0471c7d5c15e708f", features = [
-    "defmt",
-] }
-embassy-executor = { git = "https://github.com/embassy-rs/embassy", rev = "306431822043c3c111e7970e0471c7d5c15e708f", features = [
+embassy-sync = { path = "../../embassy/embassy-sync", features = ["defmt"] }
+embassy-executor = { path = "../../embassy/embassy-executor", features = [
     "task-arena-size-32768",
     "arch-cortex-m",
     "executor-thread",
     "defmt",
 ] }
-embassy-time = { git = "https://github.com/embassy-rs/embassy", rev = "306431822043c3c111e7970e0471c7d5c15e708f", features = [
+embassy-time = { path = "../../embassy/embassy-time", features = [
     "defmt",
     "defmt-timestamp-uptime",
     "tick-hz-32_768",
 ] }
 
-embassy-futures = { git = "https://github.com/embassy-rs/embassy", rev = "306431822043c3c111e7970e0471c7d5c15e708f" }
+embassy-futures = { path = "../../embassy/embassy-futures" }
 
 defmt = "0.3"
 defmt-rtt = "0.4"

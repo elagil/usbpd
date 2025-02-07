@@ -5,7 +5,7 @@ use futures::future::{select, Either};
 use futures::pin_mut;
 
 use super::device_policy_manager::DevicePolicyManager;
-use super::PowerSourceRequest;
+use super::request::PowerSourceRequest;
 use crate::counters::{Counter, Error as CounterError};
 use crate::protocol_layer::message::header::{
     ControlMessageType, DataMessageType, Header, MessageType, SpecificationRevision,
@@ -13,6 +13,7 @@ use crate::protocol_layer::message::header::{
 use crate::protocol_layer::message::pdo::SourceCapabilities;
 use crate::protocol_layer::message::Data;
 use crate::protocol_layer::{Error as ProtocolError, ProtocolLayer};
+use crate::sink::device_policy_manager::Event;
 use crate::timers::{Timer, TimerType};
 use crate::{DataRole, Driver, PowerRole};
 
@@ -54,6 +55,9 @@ enum State {
     GiveSinkCap,
     _GetSourceCap, // FIXME: no EPR support
     _EPRKeepAlive, // FIXME: no EPR support
+
+    // States for reacting to DPM events
+    EventRequestSourceCapabilities,
 }
 
 /// Implementation of the sink policy engine.
@@ -64,6 +68,7 @@ pub struct Sink<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> {
     protocol_layer: ProtocolLayer<DRIVER, TIMER>,
     contract: Contract,
     hard_reset_counter: Counter,
+    source_capabilities: Option<SourceCapabilities>,
 
     state: State,
 
@@ -97,6 +102,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
             state: State::Discovery,
             contract: Default::default(),
             hard_reset_counter: Counter::new(crate::counters::CounterType::HardReset),
+            source_capabilities: None,
 
             _timer: PhantomData,
         }
@@ -125,6 +131,8 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 // Unexpected messages indicate a protocol error and demand a soft reset.
                 // See spec, [6.8.1]
                 (_, ProtocolError::UnexpectedMessage) => Some(State::SendSoftReset),
+
+                // FIXME: Unexpected message in power transition -> hard reset?
 
                 // Fall back to hard reset
                 // - after soft reset accept failed to be sent, or
@@ -189,16 +197,22 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
             }
             State::Discovery => {
                 self.protocol_layer.wait_for_vbus().await;
+                self.source_capabilities = None;
 
                 State::WaitForCapabilities
             }
             State::WaitForCapabilities => State::EvaluateCapabilities(self.wait_for_source_capabilities().await?),
             State::EvaluateCapabilities(capabilities) => {
                 // Sink now knows that it is attached.
+                // FIXME: No clone? Size is 72 bytes.
+                self.source_capabilities = Some(capabilities.clone());
 
                 self.hard_reset_counter.reset();
 
-                let request = self.device_policy_manager.request(capabilities).await;
+                let request = self
+                    .device_policy_manager
+                    .request(self.source_capabilities.as_ref().unwrap())
+                    .await;
 
                 State::SelectCapability(request)
             }
@@ -255,7 +269,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 self.contract = Contract::Explicit;
 
                 let receive_fut = self.protocol_layer.receive_message();
-                let dpm_event_fut = self.device_policy_manager.get_event();
+
+                let dpm_event_fut = self
+                    .device_policy_manager
+                    .get_event(self.source_capabilities.as_ref().unwrap());
 
                 pin_mut!(receive_fut);
                 pin_mut!(dpm_event_fut);
@@ -275,12 +292,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                             _ => State::SendNotSupported,
                         }
                     }
-                    Either::Right((_event, _)) => {
-                        debug!("Got event from DPM: {}", _event);
-                        // FIXME: Evaluate events from DPM.
-                        // E.g. request source cap, select capability, PPS
-                        State::Ready
-                    }
+                    Either::Right((event, _)) => match event {
+                        Event::RequestSourceCapabilities => State::EventRequestSourceCapabilities,
+                        Event::RequestPower(power) => State::SelectCapability(power),
+                    },
                 }
             }
             State::SendNotSupported => {
@@ -373,6 +388,12 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 // - HardReset on SenderResponseTimerTimeout
 
                 State::Ready
+            }
+            State::EventRequestSourceCapabilities => {
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::GetSourceCap)
+                    .await?;
+                State::WaitForCapabilities
             }
         };
 

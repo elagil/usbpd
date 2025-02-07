@@ -18,13 +18,11 @@ use core::marker::PhantomData;
 use futures::future::{select, Either};
 use futures::pin_mut;
 use message::header::{ControlMessageType, DataMessageType, Header, MessageType};
-use message::pdo::FixedVariableRequestDataObject;
-use message::pdo::PowerSourceRequest::FixedSupply;
+use message::request::{self};
 use message::{Data, Message};
-use uom::si::{electric_current, electric_potential};
 
 use crate::counters::{Counter, CounterType, Error as CounterError};
-use crate::sink::{FixedSupplyRequest, PowerSourceRequest};
+use crate::sink::request::PowerSourceRequest;
 use crate::timers::{Timer, TimerType};
 use crate::{Driver, DriverRxError, DriverTxError, PowerRole};
 
@@ -434,24 +432,10 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     }
 
     /// Request a certain power level from the source.
-    pub async fn request_power(&mut self, supply: &PowerSourceRequest) -> Result<(), Error> {
+    pub async fn request_power(&mut self, power: &PowerSourceRequest) -> Result<(), Error> {
         // Only sinks can request from a supply.
         assert!(matches!(self.default_header.port_power_role(), PowerRole::Sink));
 
-        match supply {
-            PowerSourceRequest::FixedSupply(fixed_supply) => {
-                trace!(
-                    "Requesting fixed supply: {}, {}",
-                    fixed_supply.voltage.get::<electric_potential::millivolt>(),
-                    fixed_supply.current.get::<electric_current::milliampere>()
-                );
-
-                self.request_power_fixed_supply(fixed_supply).await
-            }
-        }
-    }
-
-    async fn request_power_fixed_supply(&mut self, supply: &FixedSupplyRequest) -> Result<(), Error> {
         let header = Header::new_data(
             self.default_header,
             self.counters.tx_message,
@@ -459,26 +443,15 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             1,
         );
 
-        let mut current = supply.current.get::<electric_current::centiampere>();
-
-        if current > 0x3ff {
-            error!("Clamping invalid current: {} mA", 10 * current);
-            current = 0x3ff;
-        }
-
-        let obj_position = supply.index + 1;
-        assert!(obj_position > 0b0000 && obj_position <= 0b1110);
-
         let mut message = Message::new(header);
-        message.data = Some(Data::PowerSourceRequest(FixedSupply(
-            FixedVariableRequestDataObject(0)
-                .with_raw_operating_current(current)
-                .with_raw_max_operating_current(current)
-                .with_object_position(obj_position)
-                .with_capability_mismatch(supply.capability_mismatch)
-                .with_no_usb_suspend(true)
-                .with_usb_communications_capable(true),
-        )));
+
+        match power {
+            PowerSourceRequest::FixedVariableSupply(supply) => {
+                message.data = Some(Data::PowerSourceRequest(request::PowerSource::FixedVariableSupply(
+                    *supply,
+                )))
+            }
+        }
 
         self.transmit(message).await
     }

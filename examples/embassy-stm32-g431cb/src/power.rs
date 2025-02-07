@@ -5,10 +5,8 @@ use embassy_stm32::gpio::Output;
 use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
 use embassy_stm32::{bind_interrupts, peripherals};
 use embassy_time::{with_timeout, Duration, Timer};
-use uom::si::{electric_current, electric_potential};
 use usbpd::sink::device_policy_manager::DevicePolicyManager;
 use usbpd::sink::policy_engine::Sink;
-use usbpd::sink::PowerSourceRequest;
 use usbpd::timers::Timer as SinkTimer;
 use usbpd::Driver as SinkDriver;
 use {defmt_rtt as _, panic_probe as _};
@@ -44,7 +42,7 @@ impl<'d> UcpdSinkDriver<'d> {
     }
 }
 
-impl<'d> SinkDriver for UcpdSinkDriver<'d> {
+impl SinkDriver for UcpdSinkDriver<'_> {
     async fn wait_for_vbus(&self) {
         // The sink policy engine is only running when attached. Therefore VBus is present.
     }
@@ -119,17 +117,7 @@ impl SinkTimer for EmbassySinkTimer {
 
 struct Device {}
 
-impl DevicePolicyManager for Device {
-    async fn transition_power(&mut self, accepted: &PowerSourceRequest) {
-        if let PowerSourceRequest::FixedSupply(x) = accepted {
-            info!(
-                "Transitioning to fixed supply at: {} mV, {} mA",
-                x.voltage.get::<electric_potential::millivolt>(),
-                x.current.get::<electric_current::milliampere>()
-            );
-        }
-    }
-}
+impl DevicePolicyManager for Device {}
 
 /// Handle USB PD negotiation.
 #[embassy_executor::task]
@@ -147,7 +135,7 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
         ucpd_resources.tcpp01_m12_ndb.set_high();
 
         info!("Waiting for USB connection");
-        let cable_orientation = wait_attached(&mut ucpd.cc_phy()).await;
+        let cable_orientation = wait_attached(ucpd.cc_phy()).await;
         info!("USB cable attached, orientation: {}", cable_orientation);
 
         let cc_sel = match cable_orientation {
