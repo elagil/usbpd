@@ -6,7 +6,13 @@ do
     pushd $dir
     cargo fmt
     cargo clippy -- -D warnings
-    cargo clippy --features defmt -- -D warnings
     cargo build --release
+    popd
+done
+
+for dir in .
+do
+    pushd $dir
+    cargo clippy --features defmt -- -D warnings
     popd
 done
