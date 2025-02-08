@@ -1,5 +1,5 @@
 //! Handles USB PD negotiation.
-use defmt::{info, Format};
+use defmt::{info, warn, Format};
 use embassy_futures::select::{select, Either};
 use embassy_stm32::gpio::Output;
 use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
@@ -197,7 +197,7 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
         ucpd_resources.led_yellow.set_high();
 
         match select(sink.run(), wait_detached(&mut cc_phy)).await {
-            Either::First(_) => (),
+            Either::First(result) => warn!("Sink loop broken with result: {}", result),
             Either::Second(_) => {
                 info!("Detached");
                 continue;

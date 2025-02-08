@@ -75,10 +75,13 @@ pub struct Sink<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> {
     _timer: PhantomData<TIMER>,
 }
 
+/// Errors that can occur in the sink policy engine state machine.
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-enum Error {
+pub enum Error {
+    /// The port partner is unresponsive.
     PortPartnerUnresponsive,
+    /// A protocol error has occured.
     Protocol(ProtocolError),
 }
 
@@ -114,10 +117,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
     }
 
     /// Run a single step in the policy engine state machine.
-    async fn run_step(&mut self) {
+    async fn run_step(&mut self) -> Result<(), Error> {
         let result = self.update_state().await;
         if result.is_ok() {
-            return;
+            return Ok(());
         }
 
         if let Err(Error::Protocol(protocol_error)) = result {
@@ -164,15 +167,20 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
             if let Some(state) = new_state {
                 self.state = state
             }
+
+            Ok(())
         } else {
-            debug!("Result {} in sink state transition", result);
+            error!("Unrecoverable result {} in sink state transition", result);
+            result
         }
     }
 
     /// Run the sink's state machine continuously.
-    pub async fn run(&mut self) {
+    ///
+    /// The loop is only broken for unrecoverable errors, for example if the port partner is unresponsive.
+    pub async fn run(&mut self) -> Result<(), Error> {
         loop {
-            self.run_step().await
+            self.run_step().await?;
         }
     }
 

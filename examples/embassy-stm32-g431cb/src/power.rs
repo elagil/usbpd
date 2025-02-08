@@ -156,9 +156,9 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
         info!("Run sink");
 
         match select(sink.run(), wait_detached(&mut cc_phy)).await {
-            Either::First(_) => (),
+            Either::First(result) => warn!("Sink loop broken with result: {}", result),
             Either::Second(_) => {
-                info!("USB cable detached");
+                info!("Detached");
                 continue;
             }
         }
