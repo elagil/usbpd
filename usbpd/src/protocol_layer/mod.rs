@@ -34,7 +34,7 @@ const MAX_MESSAGE_SIZE: usize = 30;
 /// Errors that can occur in the protocol layer.
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub(crate) enum Error {
+pub enum Error {
     /// Port partner requested soft reset.
     SoftReset,
     /// Driver reported a hard reset.
