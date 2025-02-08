@@ -1,5 +1,5 @@
 //! Handles USB PD negotiation.
-use defmt::{info, Format};
+use defmt::{info, Format, warn};
 use embassy_futures::select::{select, Either};
 use embassy_stm32::gpio::Output;
 use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
