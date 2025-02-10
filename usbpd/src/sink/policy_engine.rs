@@ -5,13 +5,12 @@ use futures::future::{select, Either};
 use futures::pin_mut;
 
 use super::device_policy_manager::DevicePolicyManager;
-use super::request::PowerSourceRequest;
 use crate::counters::{Counter, Error as CounterError};
 use crate::protocol_layer::message::header::{
     ControlMessageType, DataMessageType, Header, MessageType, SpecificationRevision,
 };
 use crate::protocol_layer::message::pdo::SourceCapabilities;
-use crate::protocol_layer::message::Data;
+use crate::protocol_layer::message::{request, Data};
 use crate::protocol_layer::{Error as ProtocolError, ProtocolLayer};
 use crate::sink::device_policy_manager::Event;
 use crate::timers::{Timer, TimerType};
@@ -44,8 +43,8 @@ enum State {
     Discovery,
     WaitForCapabilities,
     EvaluateCapabilities(SourceCapabilities),
-    SelectCapability(PowerSourceRequest),
-    TransitionSink(PowerSourceRequest),
+    SelectCapability(request::PowerSource),
+    TransitionSink(request::PowerSource),
     Ready,
     SendNotSupported,
     SendSoftReset,
@@ -225,7 +224,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 State::SelectCapability(request)
             }
             State::SelectCapability(request) => {
-                self.protocol_layer.request_power(request).await?;
+                self.protocol_layer.request_power(*request).await?;
 
                 let message_type = self
                     .protocol_layer

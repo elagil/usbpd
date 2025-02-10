@@ -4,8 +4,8 @@
 //! or renegotiate the power contract.
 use core::future::Future;
 
-use super::request::{CurrentRequest, PowerSourceRequest, VoltageRequest};
-use crate::protocol_layer::message::pdo::SourceCapabilities;
+use crate::protocol_layer::message::pdo;
+use crate::protocol_layer::message::request;
 
 /// Events that the device policy manager can send to the policy engine.
 #[derive(Debug)]
@@ -13,7 +13,7 @@ pub enum Event {
     /// Request source capabilities (again).
     RequestSourceCapabilities,
     /// Request a certain power level.
-    RequestPower(PowerSourceRequest),
+    RequestPower(request::PowerSource),
 }
 
 /// Trait for the device policy manager.
@@ -21,24 +21,28 @@ pub enum Event {
 /// This entity commands the policy engine and enforces device policy.
 pub trait DevicePolicyManager {
     /// Request a power source.
-    fn request(&mut self, source_capabilities: &SourceCapabilities) -> impl Future<Output = PowerSourceRequest> {
+    fn request(&mut self, source_capabilities: &pdo::SourceCapabilities) -> impl Future<Output = request::PowerSource> {
         async {
-            PowerSourceRequest::new_fixed(CurrentRequest::Highest, VoltageRequest::Highest, source_capabilities)
-                .unwrap()
+            request::PowerSource::new_fixed(
+                request::CurrentRequest::Highest,
+                request::VoltageRequest::Highest,
+                source_capabilities,
+            )
+            .unwrap()
         }
     }
 
     /// Notify the device that it shall transition to a new power level.
     ///
     /// The device is informed about the request that was accepted by the source.
-    fn transition_power(&mut self, _accepted: &PowerSourceRequest) -> impl Future<Output = ()> {
+    fn transition_power(&mut self, _accepted: &request::PowerSource) -> impl Future<Output = ()> {
         async {}
     }
 
     /// The policy engine gets and evaluates device policy events when ready.
     ///
     /// By default, this is a future that never resolves.
-    fn get_event(&mut self, _source_capabilities: &SourceCapabilities) -> impl Future<Output = Event> {
+    fn get_event(&mut self, _source_capabilities: &pdo::SourceCapabilities) -> impl Future<Output = Event> {
         async { core::future::pending().await }
     }
 }

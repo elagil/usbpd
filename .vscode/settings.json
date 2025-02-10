@@ -1,6 +1,6 @@
 {
     "rust-analyzer.linkedProjects": [
-        "Cargo.toml",
+        "usbpd/Cargo.toml",
         "examples/embassy-nucleo-h563zi/Cargo.toml",
         "examples/embassy-stm32-g431cb/Cargo.toml",
     ]

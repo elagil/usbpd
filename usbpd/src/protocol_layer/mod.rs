@@ -22,7 +22,6 @@ use message::request::{self};
 use message::{Data, Message};
 
 use crate::counters::{Counter, CounterType, Error as CounterError};
-use crate::sink::request::PowerSourceRequest;
 use crate::timers::{Timer, TimerType};
 use crate::{Driver, DriverRxError, DriverTxError, PowerRole};
 
@@ -401,6 +400,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             }
         }
 
+        trace!("Performed hard reset");
         Ok(())
     }
 
@@ -432,7 +432,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     }
 
     /// Request a certain power level from the source.
-    pub async fn request_power(&mut self, power: &PowerSourceRequest) -> Result<(), Error> {
+    pub async fn request_power(&mut self, power_source_request: request::PowerSource) -> Result<(), Error> {
         // Only sinks can request from a supply.
         assert!(matches!(self.default_header.port_power_role(), PowerRole::Sink));
 
@@ -443,17 +443,11 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             1,
         );
 
-        let mut message = Message::new(header);
-
-        match power {
-            PowerSourceRequest::FixedVariableSupply(supply) => {
-                message.data = Some(Data::PowerSourceRequest(request::PowerSource::FixedVariableSupply(
-                    *supply,
-                )))
-            }
-        }
-
-        self.transmit(message).await
+        self.transmit(Message::new_with_data(
+            header,
+            Data::PowerSourceRequest(power_source_request),
+        ))
+        .await
     }
 }
 
