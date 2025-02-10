@@ -229,21 +229,23 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         let mut buffer = Self::get_message_buffer();
         let size = message.to_bytes(&mut buffer);
 
-        match self.transmit_inner(&buffer[..size]).await {
-            Ok(_) => {
-                match self.wait_for_good_crc().await {
-                    Ok(()) => (),
+        loop {
+            match self.transmit_inner(&buffer[..size]).await {
+                Ok(_) => match self.wait_for_good_crc().await {
+                    Ok(()) => {
+                        trace!("Transmit success");
+                        return Ok(());
+                    }
                     Err(RxError::ReceiveTimeout) => match self.counters.retry.increment() {
-                        Ok(_) => (),
+                        Ok(_) => {
+                            // Retry transmission, until the retry counter is exceeded.
+                        }
                         Err(CounterError::Exceeded) => return Err(Error::TransmitRetriesExceeded),
                     },
                     Err(other) => return Err(other.into()),
-                }
-
-                trace!("Transmit success");
-                Ok(())
+                },
+                Err(other) => return Err(other.into()),
             }
-            Err(other) => Err(other.into()),
         }
     }
 
