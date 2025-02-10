@@ -6,9 +6,9 @@ use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
 use embassy_stm32::{bind_interrupts, peripherals};
 use embassy_time::{with_timeout, Duration, Timer};
 use usbpd::protocol_layer::message::pdo::SourceCapabilities;
+use usbpd::protocol_layer::message::request;
 use usbpd::sink::device_policy_manager::{DevicePolicyManager, Event};
 use usbpd::sink::policy_engine::Sink;
-use usbpd::sink::request::PowerSourceRequest;
 use usbpd::timers::Timer as SinkTimer;
 use usbpd::Driver as SinkDriver;
 use {defmt_rtt as _, panic_probe as _};
@@ -124,16 +124,16 @@ struct Device<'d> {
 }
 
 impl DevicePolicyManager for Device<'_> {
-    async fn request(&mut self, source_capabilities: &SourceCapabilities) -> PowerSourceRequest {
-        PowerSourceRequest::new_fixed(
-            usbpd::sink::request::CurrentRequest::Highest,
-            usbpd::sink::request::VoltageRequest::Safe5V,
+    async fn request(&mut self, source_capabilities: &SourceCapabilities) -> request::PowerSource {
+        request::PowerSource::new_fixed(
+            request::CurrentRequest::Highest,
+            request::VoltageRequest::Safe5V,
             source_capabilities,
         )
         .unwrap()
     }
 
-    async fn transition_power(&mut self, _accepted: &PowerSourceRequest) {
+    async fn transition_power(&mut self, _accepted: &request::PowerSource) {
         self.led.set_high();
     }
 
@@ -142,9 +142,9 @@ impl DevicePolicyManager for Device<'_> {
         Timer::after_secs(5).await;
 
         Event::RequestPower(
-            PowerSourceRequest::new_fixed(
-                usbpd::sink::request::CurrentRequest::Highest,
-                usbpd::sink::request::VoltageRequest::Safe5V,
+            request::PowerSource::new_fixed(
+                request::CurrentRequest::Highest,
+                request::VoltageRequest::Safe5V,
                 source_capabilities,
             )
             .unwrap(),

@@ -12,7 +12,9 @@ pub mod pdo;
 #[allow(missing_docs)]
 pub(crate) mod vdo;
 
-pub(crate) mod request;
+// FIXME: add documentation
+#[allow(missing_docs)]
+pub mod request;
 
 use byteorder::{ByteOrder, LittleEndian};
 use header::{DataMessageType, Header, MessageType};
@@ -114,6 +116,14 @@ impl Message {
     /// Create a new message from a message header.
     pub fn new(header: Header) -> Self {
         Self { header, data: None }
+    }
+
+    /// Create a new message from a message header and payload data.
+    pub fn new_with_data(header: Header, data: Data) -> Self {
+        Self {
+            header,
+            data: Some(data),
+        }
     }
 
     /// Serialize a message to a slice, returning the number of written bytes.
