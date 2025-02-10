@@ -452,10 +452,10 @@ mod tests {
             .inject_received_data(&DUMMY_CAPABILITIES);
 
         // `Discovery` -> `WaitForCapabilities`
-        policy_engine.run_step().await;
+        policy_engine.run_step().await.unwrap();
 
         // `WaitForCapabilities` -> `EvaluateCapabilities`
-        policy_engine.run_step().await;
+        policy_engine.run_step().await.unwrap();
 
         let good_crc = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data());
         assert!(matches!(
@@ -467,13 +467,13 @@ mod tests {
         simulate_source_control_message(&mut policy_engine, ControlMessageType::GoodCRC, 0);
 
         // `EvaluateCapabilities` -> `SelectCapability`
-        policy_engine.run_step().await;
+        policy_engine.run_step().await.unwrap();
 
         // Simulate `Accept` message.
         simulate_source_control_message(&mut policy_engine, ControlMessageType::Accept, 1);
 
         // `SelectCapability` -> `TransitionSink`
-        policy_engine.run_step().await;
+        policy_engine.run_step().await.unwrap();
 
         let request_capabilities = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data());
         assert!(matches!(
@@ -485,7 +485,7 @@ mod tests {
         simulate_source_control_message(&mut policy_engine, ControlMessageType::PsRdy, 2);
 
         // `TransitionSink` -> `Ready`
-        policy_engine.run_step().await;
+        policy_engine.run_step().await.unwrap();
 
         assert!(matches!(policy_engine.state, State::Ready));
 
