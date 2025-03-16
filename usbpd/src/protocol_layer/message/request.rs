@@ -2,13 +2,13 @@
 use byteorder::{ByteOrder, LittleEndian};
 use proc_bitfield::bitfield;
 use uom::si::electric_current::{self, centiampere};
-use uom::si::u16::{ElectricCurrent, ElectricPotential};
+use uom::si::f32::{ElectricCurrent, ElectricPotential};
 use uom::si::{self};
 
 use super::_20millivolts_mod::_20millivolts;
 use super::_250milliwatts_mod::_250milliwatts;
 use super::_50milliamperes_mod::_50milliamperes;
-use super::pdo;
+use super::pdo::{self, Augmented};
 
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -114,8 +114,9 @@ bitfield!(
 );
 
 impl Pps {
-    pub fn to_bytes(self, buf: &mut [u8]) {
+    pub fn to_bytes(self, buf: &mut [u8])  -> usize {
         LittleEndian::write_u32(buf, self.0);
+        4
     }
 
     pub fn output_voltage(&self) -> si::u16::ElectricPotential {
@@ -257,6 +258,27 @@ impl PowerSource {
         None
     }
 
+    /// Find a suitable PDO for a Programmable Power Supply (PPS) by evaluating the provided voltage
+    /// request against the source capabilities.
+    ///
+    /// Reports the index of the found PDO, and the augmented supply instance, or `None` if there is no match to the request.
+    fn find_pps_voltage(
+        source_capabilities: &pdo::SourceCapabilities,
+        voltage: uom::si::f32::ElectricPotential,
+    ) -> Option<(usize, &pdo::Augmented)> {
+        for (index, cap) in source_capabilities.pdos().iter().enumerate() {
+            if let pdo::PowerDataObject::Augmented(augmented) = cap {
+                if let Augmented::Spr(spr) = augmented {
+                    if spr.min_voltage() <= voltage && spr.max_voltage() >= voltage {
+                        return Some((index, augmented));
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
     /// Create a new power source request for a fixed supply.
     ///
     /// Finds a suitable PDO by evaluating the provided current and voltage requests against the source capabilities.
@@ -282,7 +304,7 @@ impl PowerSource {
             CurrentRequest::Specific(x) => (x, x > supply.max_current()),
         };
 
-        let mut raw_current = current.get::<electric_current::centiampere>();
+        let mut raw_current = current.get::<electric_current::centiampere>() as u16;
 
         if raw_current > 0x3ff {
             error!("Clamping invalid current: {} mA", 10 * raw_current);
@@ -300,6 +322,55 @@ impl PowerSource {
                 .with_capability_mismatch(mismatch)
                 .with_no_usb_suspend(true)
                 .with_usb_communications_capable(true), // FIXME: Make adjustable?
+        ))
+    }
+
+    /// Create a new power source request for a programmable power supply (PPS).
+    ///
+    /// Finds a suitable PDO by evaluating the provided current and voltage requests against the source capabilities.
+    /// If no PDO is found that matches the request, an error is returned.
+    pub fn new_pps(
+        current_request: CurrentRequest,
+        voltage: uom::si::f32::ElectricPotential,
+        source_capabilities: &pdo::SourceCapabilities,
+    ) -> Result<Self, Error> {
+        let selected = Self::find_pps_voltage(source_capabilities, voltage);
+
+        if selected.is_none() {
+            return Err(Error::VoltageMismatch);
+        }
+
+        let (index, supply) = selected.unwrap();
+        let max_current = match supply {
+            Augmented::Spr(spr) => spr.max_current(),
+            _ => unreachable!(),
+        };
+
+        let (current, mismatch) = match current_request {
+            CurrentRequest::Highest => (max_current, false),
+            CurrentRequest::Specific(x) => (x, x > max_current),
+        };
+
+        let mut raw_current = current.get::<_50milliamperes>() as u16;
+
+        if raw_current > 0x3ff {
+            error!("Clamping invalid current: {} mA", 10 * raw_current);
+            raw_current = 0x3ff;
+        }
+
+        let raw_voltage = voltage.get::<_20millivolts>() as u16;
+
+        let object_position = index + 1;
+        assert!(object_position > 0b0000 && object_position <= 0b1110);
+
+        Ok(Self::Pps(
+            Pps(0)
+            .with_raw_output_voltage(raw_voltage)
+                .with_raw_operating_current(raw_current)
+                .with_object_position(object_position as u8)
+                .with_capability_mismatch(mismatch)
+                .with_no_usb_suspend(true)
+                .with_usb_communications_capable(true),
         ))
     }
 }

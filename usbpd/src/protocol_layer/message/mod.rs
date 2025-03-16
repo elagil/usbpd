@@ -96,6 +96,9 @@ impl Data {
             Self::PowerSourceRequest(request::PowerSource::FixedVariableSupply(data_object)) => {
                 data_object.to_bytes(payload)
             }
+            Self::PowerSourceRequest(request::PowerSource::Pps(data_object)) => {
+                data_object.to_bytes(payload)
+            }
             Self::PowerSourceRequest(_) => unimplemented!(),
             Self::VendorDefined(_) => unimplemented!(),
         }
