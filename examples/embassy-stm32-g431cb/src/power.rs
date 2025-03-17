@@ -4,7 +4,8 @@ use embassy_futures::select::{select, Either};
 use embassy_stm32::gpio::Output;
 use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
 use embassy_stm32::{bind_interrupts, peripherals};
-use embassy_time::{with_timeout, Duration, Timer};
+use embassy_time::{with_timeout, Duration, Ticker, Timer};
+use usbpd::protocol_layer::message::request::{CurrentRequest, PowerSource, VoltageRequest};
 use usbpd::sink::device_policy_manager::DevicePolicyManager;
 use usbpd::sink::policy_engine::Sink;
 use usbpd::timers::Timer as SinkTimer;
@@ -115,9 +116,48 @@ impl SinkTimer for EmbassySinkTimer {
     }
 }
 
-struct Device {}
+struct Device {
+    target_voltage: uom::si::f32::ElectricPotential,
+}
 
-impl DevicePolicyManager for Device {}
+impl DevicePolicyManager for Device {
+    async fn request(
+        &mut self,
+        source_capabilities: &usbpd::protocol_layer::message::pdo::SourceCapabilities,
+    ) -> PowerSource {
+        match PowerSource::new_pps(CurrentRequest::Highest, self.target_voltage, source_capabilities) {
+            Ok(req) => {
+                self.target_voltage = (self.target_voltage
+                    + uom::si::f32::ElectricPotential::new::<uom::si::electric_potential::millivolt>(100.))
+                .round::<uom::si::electric_potential::decivolt>();
+
+                defmt::info!(
+                    "request: {}. The next attempt will apply a voltage of {} V, commencing after 5 seconds.",
+                    req,
+                    self.target_voltage.get::<uom::si::electric_potential::volt>()
+                );
+
+                req
+            }
+            Err(_) => {
+                defmt::error!("can not get request. fallback to fixed 5V");
+                PowerSource::new_fixed(CurrentRequest::Highest, VoltageRequest::Safe5V, source_capabilities).unwrap()
+            }
+        }
+    }
+
+    async fn get_event(
+        &mut self,
+        _: &usbpd::protocol_layer::message::pdo::SourceCapabilities,
+    ) -> usbpd::sink::device_policy_manager::Event {
+        use usbpd::sink::device_policy_manager::Event;
+
+        let mut keep_pps_alive_ticker = Ticker::every(Duration::from_millis(5000));
+
+        keep_pps_alive_ticker.next().await;
+        Event::RequestSourceCapabilities
+    }
+}
 
 /// Handle USB PD negotiation.
 #[embassy_executor::task]
@@ -152,7 +192,12 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
         let (mut cc_phy, pd_phy) = ucpd.split_pd_phy(&mut ucpd_resources.rx_dma, &mut ucpd_resources.tx_dma, cc_sel);
 
         let driver = UcpdSinkDriver::new(pd_phy);
-        let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(driver, Device {});
+        let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(
+            driver,
+            Device {
+                target_voltage: uom::si::f32::ElectricPotential::new::<uom::si::electric_potential::millivolt>(5000.),
+            },
+        );
         info!("Run sink");
 
         match select(sink.run(), wait_detached(&mut cc_phy)).await {
