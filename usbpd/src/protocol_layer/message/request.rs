@@ -114,7 +114,7 @@ bitfield!(
 );
 
 impl Pps {
-    pub fn to_bytes(self, buf: &mut [u8])  -> usize {
+    pub fn to_bytes(self, buf: &mut [u8]) -> usize {
         LittleEndian::write_u32(buf, self.0);
         4
     }
@@ -334,6 +334,8 @@ impl PowerSource {
         voltage: uom::si::f32::ElectricPotential,
         source_capabilities: &pdo::SourceCapabilities,
     ) -> Result<Self, Error> {
+        let voltage = voltage.round::<_20millivolts>();
+
         let selected = Self::find_pps_voltage(source_capabilities, voltage);
 
         if selected.is_none() {
@@ -365,7 +367,7 @@ impl PowerSource {
 
         Ok(Self::Pps(
             Pps(0)
-            .with_raw_output_voltage(raw_voltage)
+                .with_raw_output_voltage(raw_voltage)
                 .with_raw_operating_current(raw_current)
                 .with_object_position(object_position as u8)
                 .with_capability_mismatch(mismatch)
