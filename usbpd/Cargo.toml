@@ -20,6 +20,7 @@ uom = { version = "0.36.0", default-features = false, features = [
     "u8",
     "u16",
     "u32",
+    "f32",
 ] }
 futures = { version = "0.3.31", default-features = false }
 
