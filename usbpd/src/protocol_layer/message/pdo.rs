@@ -8,7 +8,7 @@ use super::PdoState;
 use super::_250milliwatts_mod::_250milliwatts;
 use super::_50milliamperes_mod::_50milliamperes;
 use super::_50millivolts_mod::_50millivolts;
-use super::cgs::{ElectricCurrent, ElectricPotential, Power};
+use super::units::{ElectricCurrent, ElectricPotential, Power};
 
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

@@ -7,8 +7,8 @@ use uom::si::{self};
 use super::_20millivolts_mod::_20millivolts;
 use super::_250milliwatts_mod::_250milliwatts;
 use super::_50milliamperes_mod::_50milliamperes;
-use super::cgs::{ElectricCurrent, ElectricPotential};
 use super::pdo::{self, Augmented};
+use super::units::{ElectricCurrent, ElectricPotential};
 
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
