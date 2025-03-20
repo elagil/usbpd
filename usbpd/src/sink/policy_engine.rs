@@ -302,6 +302,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     Either::Right((event, _)) => match event {
                         Event::RequestSourceCapabilities => State::EventRequestSourceCapabilities,
                         Event::RequestPower(power) => State::SelectCapability(power),
+                        Event::None => State::Ready,
                     },
                 }
             }

@@ -10,6 +10,8 @@ use crate::protocol_layer::message::request;
 /// Events that the device policy manager can send to the policy engine.
 #[derive(Debug)]
 pub enum Event {
+    /// Empty event.
+    None,
     /// Request source capabilities (again).
     RequestSourceCapabilities,
     /// Request a certain power level.
