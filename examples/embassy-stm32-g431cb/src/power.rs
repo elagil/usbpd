@@ -1,13 +1,15 @@
 //! Handles USB PD negotiation.
-use defmt::{info, warn, Format};
+use defmt::{error, info, warn, Format};
 use embassy_futures::select::{select, Either};
 use embassy_stm32::gpio::Output;
 use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
 use embassy_stm32::{bind_interrupts, peripherals};
-use embassy_time::{with_timeout, Duration, Ticker, Timer};
-use usbpd::protocol_layer::message::request::{CurrentRequest, PowerSource, VoltageRequest};
+use embassy_time::{with_timeout, Duration, Timer};
+use uom::si::electric_potential;
+use usbpd::protocol_layer::message::pdo::SourceCapabilities;
+use usbpd::protocol_layer::message::request::{self, CurrentRequest, VoltageRequest};
 use usbpd::protocol_layer::message::units::ElectricPotential;
-use usbpd::sink::device_policy_manager::DevicePolicyManager;
+use usbpd::sink::device_policy_manager::{DevicePolicyManager, Event};
 use usbpd::sink::policy_engine::Sink;
 use usbpd::timers::Timer as SinkTimer;
 use usbpd::Driver as SinkDriver;
@@ -121,40 +123,52 @@ struct Device {
     target_voltage: ElectricPotential,
 }
 
-impl DevicePolicyManager for Device {
-    async fn request(
-        &mut self,
-        source_capabilities: &usbpd::protocol_layer::message::pdo::SourceCapabilities,
-    ) -> PowerSource {
-        match PowerSource::new_pps(CurrentRequest::Highest, self.target_voltage, source_capabilities) {
-            Ok(req) => {
-                self.target_voltage += ElectricPotential::new::<uom::si::electric_potential::millivolt>(100);
-
-                defmt::info!(
-                    "request: {}. The next attempt will apply a voltage of {} mV, commencing after 5 seconds.",
-                    req,
-                    self.target_voltage.get::<uom::si::electric_potential::millivolt>()
-                );
-
-                req
-            }
-            Err(_) => {
-                defmt::error!("can not get request. fallback to fixed 5V");
-                PowerSource::new_fixed(CurrentRequest::Highest, VoltageRequest::Safe5V, source_capabilities).unwrap()
-            }
+impl Default for Device {
+    fn default() -> Self {
+        Self {
+            target_voltage: ElectricPotential::new::<electric_potential::volt>(5),
         }
     }
+}
 
-    async fn get_event(
-        &mut self,
-        _: &usbpd::protocol_layer::message::pdo::SourceCapabilities,
-    ) -> usbpd::sink::device_policy_manager::Event {
-        use usbpd::sink::device_policy_manager::Event;
+impl DevicePolicyManager for Device {
+    async fn request(&mut self, source_capabilities: &SourceCapabilities) -> request::PowerSource {
+        request::PowerSource::new_fixed(
+            request::CurrentRequest::Highest,
+            request::VoltageRequest::Safe5V,
+            source_capabilities,
+        )
+        .unwrap()
+    }
 
-        let mut keep_pps_alive_ticker = Ticker::every(Duration::from_millis(5000));
+    async fn get_event(&mut self, source_capabilities: &SourceCapabilities) -> Event {
+        // Periodically request another power level.
+        Timer::after_secs(5).await;
 
-        keep_pps_alive_ticker.next().await;
-        Event::RequestSourceCapabilities
+        let power_source = match request::PowerSource::new_pps(
+            request::CurrentRequest::Highest,
+            self.target_voltage,
+            source_capabilities,
+        ) {
+            Ok(power_source) => {
+                self.target_voltage += ElectricPotential::new::<electric_potential::millivolt>(100);
+                info!("Requesting {}", power_source,);
+
+                power_source
+            }
+            Err(_) => {
+                error!(
+                    "Cannot request {} mV - fall back to default voltage",
+                    self.target_voltage.get::<electric_potential::millivolt>()
+                );
+                self.target_voltage = ElectricPotential::new::<electric_potential::volt>(5);
+
+                request::PowerSource::new_fixed(CurrentRequest::Highest, VoltageRequest::Safe5V, source_capabilities)
+                    .unwrap()
+            }
+        };
+
+        Event::RequestPower(power_source)
     }
 }
 
@@ -191,12 +205,7 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
         let (mut cc_phy, pd_phy) = ucpd.split_pd_phy(&mut ucpd_resources.rx_dma, &mut ucpd_resources.tx_dma, cc_sel);
 
         let driver = UcpdSinkDriver::new(pd_phy);
-        let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(
-            driver,
-            Device {
-                target_voltage: ElectricPotential::new::<uom::si::electric_potential::millivolt>(5000),
-            },
-        );
+        let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(driver, Device::default());
         info!("Run sink");
 
         match select(sink.run(), wait_detached(&mut cc_phy)).await {
