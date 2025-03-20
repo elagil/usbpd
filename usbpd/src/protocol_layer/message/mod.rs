@@ -16,6 +16,36 @@ pub(crate) mod vdo;
 #[allow(missing_docs)]
 pub mod request;
 
+/// This module defines the CGS (centimeter-gram-second) unit system
+/// for use in the USB Power Delivery Protocol layer. These units are
+/// defined using the `uom` (units of measurement) library and are
+/// expressed as `u32` values for milliamps, millivolts, and microwatts.
+pub mod cgs {
+    ISQ!(
+        uom::si,
+        u32,
+        (millimeter, kilogram, second, milliampere, kelvin, mole, candela)
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use uom::si::{electric_current::milliampere, electric_potential::millivolt};
+
+    use super::_20millivolts_mod::_20millivolts;
+    use super::cgs;
+
+    #[test]
+    fn test_units() {
+        let current = cgs::ElectricCurrent::new::<milliampere>(123);
+        let potential = cgs::ElectricPotential::new::<millivolt>(4560);
+
+        assert_eq!(current.get::<milliampere>(), 123);
+        assert_eq!(potential.get::<millivolt>(), 4560);
+        assert_eq!(potential.get::<_20millivolts>(), 228);
+    }
+}
+
 use byteorder::{ByteOrder, LittleEndian};
 use header::{DataMessageType, Header, MessageType};
 use heapless::Vec;
@@ -96,9 +126,7 @@ impl Data {
             Self::PowerSourceRequest(request::PowerSource::FixedVariableSupply(data_object)) => {
                 data_object.to_bytes(payload)
             }
-            Self::PowerSourceRequest(request::PowerSource::Pps(data_object)) => {
-                data_object.to_bytes(payload)
-            }
+            Self::PowerSourceRequest(request::PowerSource::Pps(data_object)) => data_object.to_bytes(payload),
             Self::PowerSourceRequest(_) => unimplemented!(),
             Self::VendorDefined(_) => unimplemented!(),
         }

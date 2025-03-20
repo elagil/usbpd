@@ -37,7 +37,7 @@ heapless = { version = "0.8", default-features = false }
 static_cell = "2"
 micromath = "2.1.0"
 
-uom = { version = "0.36.0", default-features = false, features = ["si", "f32"] }
+uom = { version = "0.36.0", default-features = false, features = ["si"] }
 usbpd = { path = "../../usbpd", features = ["defmt"] }
 
 # cargo build/run

@@ -2,12 +2,12 @@
 use byteorder::{ByteOrder, LittleEndian};
 use proc_bitfield::bitfield;
 use uom::si::electric_current::{self, centiampere};
-use uom::si::f32::{ElectricCurrent, ElectricPotential};
 use uom::si::{self};
 
 use super::_20millivolts_mod::_20millivolts;
 use super::_250milliwatts_mod::_250milliwatts;
 use super::_50milliamperes_mod::_50milliamperes;
+use super::cgs::{ElectricCurrent, ElectricPotential};
 use super::pdo::{self, Augmented};
 
 bitfield! {
@@ -42,12 +42,12 @@ impl FixedVariableSupply {
         4
     }
 
-    pub fn operating_current(&self) -> si::u16::ElectricCurrent {
-        si::u16::ElectricCurrent::new::<centiampere>(self.raw_operating_current())
+    pub fn operating_current(&self) -> ElectricCurrent {
+        ElectricCurrent::new::<centiampere>(self.raw_operating_current().into())
     }
 
-    pub fn max_operating_current(&self) -> si::u16::ElectricCurrent {
-        si::u16::ElectricCurrent::new::<centiampere>(self.raw_max_operating_current())
+    pub fn max_operating_current(&self) -> ElectricCurrent {
+        ElectricCurrent::new::<centiampere>(self.raw_max_operating_current().into())
     }
 }
 
@@ -119,12 +119,12 @@ impl Pps {
         4
     }
 
-    pub fn output_voltage(&self) -> si::u16::ElectricPotential {
-        si::u16::ElectricPotential::new::<_20millivolts>(self.raw_output_voltage())
+    pub fn output_voltage(&self) -> ElectricPotential {
+        ElectricPotential::new::<_20millivolts>(self.raw_output_voltage().into())
     }
 
-    pub fn operating_current(&self) -> si::u16::ElectricCurrent {
-        si::u16::ElectricCurrent::new::<_50milliamperes>(self.raw_operating_current())
+    pub fn operating_current(&self) -> ElectricCurrent {
+        ElectricCurrent::new::<_50milliamperes>(self.raw_operating_current().into())
     }
 }
 
@@ -156,12 +156,12 @@ impl Avs {
         LittleEndian::write_u32(buf, self.0);
     }
 
-    pub fn output_voltage(&self) -> si::u16::ElectricPotential {
-        si::u16::ElectricPotential::new::<_20millivolts>(self.raw_output_voltage())
+    pub fn output_voltage(&self) -> ElectricPotential {
+        ElectricPotential::new::<_20millivolts>(self.raw_output_voltage().into())
     }
 
-    pub fn operating_current(&self) -> si::u16::ElectricCurrent {
-        si::u16::ElectricCurrent::new::<_50milliamperes>(self.raw_operating_current())
+    pub fn operating_current(&self) -> ElectricCurrent {
+        ElectricCurrent::new::<_50milliamperes>(self.raw_operating_current().into())
     }
 }
 
@@ -264,7 +264,7 @@ impl PowerSource {
     /// Reports the index of the found PDO, and the augmented supply instance, or `None` if there is no match to the request.
     fn find_pps_voltage(
         source_capabilities: &pdo::SourceCapabilities,
-        voltage: uom::si::f32::ElectricPotential,
+        voltage: ElectricPotential,
     ) -> Option<(usize, &pdo::Augmented)> {
         for (index, cap) in source_capabilities.pdos().iter().enumerate() {
             if let pdo::PowerDataObject::Augmented(augmented) = cap {
@@ -331,11 +331,9 @@ impl PowerSource {
     /// If no PDO is found that matches the request, an error is returned.
     pub fn new_pps(
         current_request: CurrentRequest,
-        voltage: uom::si::f32::ElectricPotential,
+        voltage: ElectricPotential,
         source_capabilities: &pdo::SourceCapabilities,
     ) -> Result<Self, Error> {
-        let voltage = voltage.round::<_20millivolts>();
-
         let selected = Self::find_pps_voltage(source_capabilities, voltage);
 
         if selected.is_none() {
