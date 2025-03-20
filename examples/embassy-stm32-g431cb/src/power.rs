@@ -1,5 +1,5 @@
 //! Handles USB PD negotiation.
-use defmt::{error, info, warn, Format};
+use defmt::{info, warn, Format};
 use embassy_futures::select::{select, Either};
 use embassy_stm32::gpio::Output;
 use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
@@ -119,20 +119,32 @@ impl SinkTimer for EmbassySinkTimer {
     }
 }
 
+/// Capabilities that are tested (cycled through each second).
+#[derive(Format)]
+enum TestCapabilities {
+    Safe5V,
+    Pps3V6,
+    Pps5V5,
+    Fixed9V,
+    Max,
+}
+
 struct Device {
-    target_voltage: ElectricPotential,
+    test_capabilities: TestCapabilities,
 }
 
 impl Default for Device {
     fn default() -> Self {
         Self {
-            target_voltage: ElectricPotential::new::<electric_potential::volt>(5),
+            test_capabilities: TestCapabilities::Safe5V,
         }
     }
 }
 
 impl DevicePolicyManager for Device {
     async fn request(&mut self, source_capabilities: &SourceCapabilities) -> request::PowerSource {
+        info!("Found capabilities: {}", source_capabilities);
+
         request::PowerSource::new_fixed(
             request::CurrentRequest::Highest,
             request::VoltageRequest::Safe5V,
@@ -143,32 +155,54 @@ impl DevicePolicyManager for Device {
 
     async fn get_event(&mut self, source_capabilities: &SourceCapabilities) -> Event {
         // Periodically request another power level.
-        Timer::after_secs(5).await;
+        Timer::after_secs(1).await;
 
-        let power_source = match request::PowerSource::new_pps(
-            request::CurrentRequest::Highest,
-            self.target_voltage,
-            source_capabilities,
-        ) {
-            Ok(power_source) => {
-                self.target_voltage += ElectricPotential::new::<electric_potential::millivolt>(100);
-                info!("Requesting {}", power_source,);
-
-                power_source
-            }
-            Err(_) => {
-                error!(
-                    "Cannot request {} mV - fall back to default voltage",
-                    self.target_voltage.get::<electric_potential::millivolt>()
-                );
-                self.target_voltage = ElectricPotential::new::<electric_potential::volt>(5);
-
-                request::PowerSource::new_fixed(CurrentRequest::Highest, VoltageRequest::Safe5V, source_capabilities)
-                    .unwrap()
-            }
+        info!("Test capabilities: {}", self.test_capabilities);
+        let (power_source, new_test_capabilities) = match self.test_capabilities {
+            TestCapabilities::Safe5V => (
+                request::PowerSource::new_fixed(CurrentRequest::Highest, VoltageRequest::Safe5V, source_capabilities),
+                TestCapabilities::Fixed9V,
+            ),
+            TestCapabilities::Fixed9V => (
+                request::PowerSource::new_fixed(
+                    CurrentRequest::Highest,
+                    VoltageRequest::Specific(ElectricPotential::new::<electric_potential::volt>(9)),
+                    source_capabilities,
+                ),
+                TestCapabilities::Pps3V6,
+            ),
+            TestCapabilities::Pps3V6 => (
+                request::PowerSource::new_pps(
+                    request::CurrentRequest::Highest,
+                    ElectricPotential::new::<electric_potential::millivolt>(3600),
+                    source_capabilities,
+                ),
+                TestCapabilities::Pps5V5,
+            ),
+            TestCapabilities::Pps5V5 => (
+                request::PowerSource::new_pps(
+                    request::CurrentRequest::Highest,
+                    ElectricPotential::new::<electric_potential::millivolt>(5500),
+                    source_capabilities,
+                ),
+                TestCapabilities::Max,
+            ),
+            TestCapabilities::Max => (
+                request::PowerSource::new_fixed(CurrentRequest::Highest, VoltageRequest::Highest, source_capabilities),
+                TestCapabilities::Safe5V,
+            ),
         };
 
-        Event::RequestPower(power_source)
+        let event = if let Ok(power_source) = power_source {
+            info!("Requesting power source {}", power_source);
+            Event::RequestPower(power_source)
+        } else {
+            warn!("Capabilities not available {}", self.test_capabilities);
+            Event::None
+        };
+
+        self.test_capabilities = new_test_capabilities;
+        event
     }
 }
 
