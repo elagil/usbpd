@@ -5,7 +5,7 @@ use embassy_stm32::gpio::Output;
 use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
 use embassy_stm32::{bind_interrupts, peripherals};
 use embassy_time::{with_timeout, Duration, Ticker, Timer};
-use micromath::F32Ext;
+use usbpd::protocol_layer::message::cgs::ElectricPotential;
 use usbpd::protocol_layer::message::request::{CurrentRequest, PowerSource, VoltageRequest};
 use usbpd::sink::device_policy_manager::DevicePolicyManager;
 use usbpd::sink::policy_engine::Sink;
@@ -118,7 +118,7 @@ impl SinkTimer for EmbassySinkTimer {
 }
 
 struct Device {
-    target_voltage: uom::si::f32::ElectricPotential,
+    target_voltage: ElectricPotential,
 }
 
 impl DevicePolicyManager for Device {
@@ -128,14 +128,12 @@ impl DevicePolicyManager for Device {
     ) -> PowerSource {
         match PowerSource::new_pps(CurrentRequest::Highest, self.target_voltage, source_capabilities) {
             Ok(req) => {
-                self.target_voltage += uom::si::f32::ElectricPotential::new::<uom::si::electric_potential::millivolt>(100.);
+                self.target_voltage += ElectricPotential::new::<uom::si::electric_potential::millivolt>(100);
 
                 defmt::info!(
                     "request: {}. The next attempt will apply a voltage of {} mV, commencing after 5 seconds.",
                     req,
-                    self.target_voltage
-                        .get::<uom::si::electric_potential::millivolt>()
-                        .round()
+                    self.target_voltage.get::<uom::si::electric_potential::millivolt>()
                 );
 
                 req
@@ -196,7 +194,7 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
         let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(
             driver,
             Device {
-                target_voltage: uom::si::f32::ElectricPotential::new::<uom::si::electric_potential::millivolt>(5000.),
+                target_voltage: ElectricPotential::new::<uom::si::electric_potential::millivolt>(5000),
             },
         );
         info!("Run sink");

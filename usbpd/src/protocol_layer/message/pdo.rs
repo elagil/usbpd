@@ -3,12 +3,12 @@ use proc_bitfield::bitfield;
 use uom::si::electric_current::centiampere;
 use uom::si::electric_potential::decivolt;
 use uom::si::power::watt;
-use uom::si::{self};
 
 use super::PdoState;
 use super::_250milliwatts_mod::_250milliwatts;
 use super::_50milliamperes_mod::_50milliamperes;
 use super::_50millivolts_mod::_50millivolts;
+use super::cgs::{ElectricCurrent, ElectricPotential, Power};
 
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -78,12 +78,12 @@ impl FixedSupply {
         Self(0)
     }
 
-    pub fn voltage(&self) -> si::f32::ElectricPotential {
-        si::f32::ElectricPotential::new::<_50millivolts>(self.raw_voltage().into())
+    pub fn voltage(&self) -> ElectricPotential {
+        ElectricPotential::new::<_50millivolts>(self.raw_voltage().into())
     }
 
-    pub fn max_current(&self) -> si::f32::ElectricCurrent {
-        si::f32::ElectricCurrent::new::<centiampere>(self.raw_max_current().into())
+    pub fn max_current(&self) -> ElectricCurrent {
+        ElectricCurrent::new::<centiampere>(self.raw_max_current().into())
     }
 }
 
@@ -103,16 +103,16 @@ bitfield! {
 }
 
 impl Battery {
-    pub fn max_voltage(&self) -> si::f32::ElectricPotential {
-        si::f32::ElectricPotential::new::<_50millivolts>(self.raw_max_voltage().into())
+    pub fn max_voltage(&self) -> ElectricPotential {
+        ElectricPotential::new::<_50millivolts>(self.raw_max_voltage().into())
     }
 
-    pub fn min_voltage(&self) -> si::f32::ElectricPotential {
-        si::f32::ElectricPotential::new::<_50millivolts>(self.raw_min_voltage().into())
+    pub fn min_voltage(&self) -> ElectricPotential {
+        ElectricPotential::new::<_50millivolts>(self.raw_min_voltage().into())
     }
 
-    pub fn max_power(&self) -> si::f32::Power {
-        si::f32::Power::new::<_250milliwatts>(self.raw_max_power().into())
+    pub fn max_power(&self) -> Power {
+        Power::new::<_250milliwatts>(self.raw_max_power().into())
     }
 }
 
@@ -132,16 +132,16 @@ bitfield! {
 }
 
 impl VariableSupply {
-    pub fn max_voltage(&self) -> si::f32::ElectricPotential {
-        si::f32::ElectricPotential::new::<_50millivolts>(self.raw_max_voltage().into())
+    pub fn max_voltage(&self) -> ElectricPotential {
+        ElectricPotential::new::<_50millivolts>(self.raw_max_voltage().into())
     }
 
-    pub fn min_voltage(&self) -> si::f32::ElectricPotential {
-        si::f32::ElectricPotential::new::<_50millivolts>(self.raw_min_voltage().into())
+    pub fn min_voltage(&self) -> ElectricPotential {
+        ElectricPotential::new::<_50millivolts>(self.raw_min_voltage().into())
     }
 
-    pub fn max_current(&self) -> si::f32::ElectricCurrent {
-        si::f32::ElectricCurrent::new::<centiampere>(self.raw_max_current().into())
+    pub fn max_current(&self) -> ElectricCurrent {
+        ElectricCurrent::new::<centiampere>(self.raw_max_current().into())
     }
 }
 
@@ -193,16 +193,16 @@ impl SprProgrammablePowerSupply {
         Self(0).with_kind(0b11).with_supply(0b00)
     }
 
-    pub fn max_voltage(&self) -> si::f32::ElectricPotential {
-        si::f32::ElectricPotential::new::<decivolt>(self.raw_max_voltage().into())
+    pub fn max_voltage(&self) -> ElectricPotential {
+        ElectricPotential::new::<decivolt>(self.raw_max_voltage().into())
     }
 
-    pub fn min_voltage(&self) -> si::f32::ElectricPotential {
-        si::f32::ElectricPotential::new::<decivolt>(self.raw_min_voltage().into())
+    pub fn min_voltage(&self) -> ElectricPotential {
+        ElectricPotential::new::<decivolt>(self.raw_min_voltage().into())
     }
 
-    pub fn max_current(&self) -> si::f32::ElectricCurrent {
-        si::f32::ElectricCurrent::new::<_50milliamperes>(self.raw_max_current().into())
+    pub fn max_current(&self) -> ElectricCurrent {
+        ElectricCurrent::new::<_50milliamperes>(self.raw_max_current().into())
     }
 }
 
@@ -225,16 +225,16 @@ bitfield! {
 }
 
 impl EprAdjustableVoltageSupply {
-    pub fn max_voltage(&self) -> si::f32::ElectricPotential {
-        si::f32::ElectricPotential::new::<decivolt>(self.raw_max_voltage().into())
+    pub fn max_voltage(&self) -> ElectricPotential {
+        ElectricPotential::new::<decivolt>(self.raw_max_voltage().into())
     }
 
-    pub fn min_voltage(&self) -> si::f32::ElectricPotential {
-        si::f32::ElectricPotential::new::<decivolt>(self.raw_min_voltage().into())
+    pub fn min_voltage(&self) -> ElectricPotential {
+        ElectricPotential::new::<decivolt>(self.raw_min_voltage().into())
     }
 
-    pub fn pd_power(&self) -> si::u8::Power {
-        si::u8::Power::new::<watt>(self.raw_pd_power())
+    pub fn pd_power(&self) -> Power {
+        Power::new::<watt>(self.raw_pd_power().into())
     }
 }
 
