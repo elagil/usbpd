@@ -1,6 +1,6 @@
 [package]
 name = "usbpd"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Adrian Figueroa <elagil@takanome.de>"]
 edition = "2021"
 description = "USB-PD library for `[no_std]`."
