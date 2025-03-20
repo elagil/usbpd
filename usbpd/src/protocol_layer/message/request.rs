@@ -267,15 +267,25 @@ impl PowerSource {
         voltage: ElectricPotential,
     ) -> Option<(usize, &pdo::Augmented)> {
         for (index, cap) in source_capabilities.pdos().iter().enumerate() {
-            if let pdo::PowerDataObject::Augmented(augmented) = cap {
-                if let Augmented::Spr(spr) = augmented {
+            let pdo::PowerDataObject::Augmented(augmented) = cap else {
+                trace!("Skip non-augmented PDO {}", cap);
+                continue;
+            };
+
+            // Handle EPR when supported.
+            match augmented {
+                Augmented::Spr(spr) => {
                     if spr.min_voltage() <= voltage && spr.max_voltage() >= voltage {
                         return Some((index, augmented));
+                    } else {
+                        trace!("Skip PDO, voltage out of range. {}", augmented);
                     }
                 }
-            }
+                _ => trace!("Skip PDO, only SPR is supported. {}", augmented),
+            };
         }
 
+        trace!("Could not find suitable PPS voltage");
         None
     }
 
