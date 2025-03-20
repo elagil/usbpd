@@ -13,9 +13,9 @@ These traits are
 
 ## Currently supported modes
 
-- SPR Sink with helpers for
-    - Fixed supply request
-    - Programmable Power Supply (PPS) request
+- SPR Sink with helpers for requesting
+    - A fixed supply
+    - A Programmable Power Supply (PPS)
 
 # Credit
 
