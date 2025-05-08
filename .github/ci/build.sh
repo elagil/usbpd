@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-for dir in usbpd examples/embassy-nucleo-h563zi examples/embassy-stm32-g431cb;
+for dir in usbpd usbpd-traits examples/embassy-nucleo-h563zi examples/embassy-stm32-g431cb;
 do
     pushd $dir
     cargo fmt
@@ -10,7 +10,7 @@ do
     popd
 done
 
-for dir in usbpd
+for dir in usbpd usbpd-traits
 do
     pushd $dir
     cargo clippy --features defmt -- -D warnings

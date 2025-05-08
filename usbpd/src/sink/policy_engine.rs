@@ -14,7 +14,8 @@ use crate::protocol_layer::message::{request, Data};
 use crate::protocol_layer::{Error as ProtocolError, ProtocolLayer};
 use crate::sink::device_policy_manager::Event;
 use crate::timers::{Timer, TimerType};
-use crate::{DataRole, Driver, PowerRole};
+use crate::{DataRole, PowerRole};
+use usbpd_traits::Driver;
 
 /// Sink capability
 ///

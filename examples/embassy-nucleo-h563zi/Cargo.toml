@@ -1,5 +1,5 @@
 [package]
-edition = "2021"
+edition = "2024"
 name = "usbpd-testing"
 version = "0.1.0"
 license = "MIT"
@@ -18,7 +18,6 @@ embassy-stm32 = { path = "../../embassy/embassy-stm32", features = [
 ] }
 embassy-sync = { path = "../../embassy/embassy-sync", features = ["defmt"] }
 embassy-executor = { path = "../../embassy/embassy-executor", features = [
-    "task-arena-size-32768",
     "arch-cortex-m",
     "executor-thread",
     "defmt",
@@ -50,10 +49,9 @@ critical-section = "1.1"
 embedded-storage = "0.3.1"
 static_cell = "2"
 
-uom = { version = "0.36.0", default-features = false, features = [
-    "si",
-] }
+uom = { version = "0.36.0", default-features = false, features = ["si"] }
 usbpd = { path = "../../usbpd", features = ["defmt"] }
+usbpd-traits = { path = "../../usbpd-traits", features = ["defmt"] }
 
 # cargo build/run
 [profile.dev]

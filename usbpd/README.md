@@ -2,14 +2,13 @@
 
 Modeled after the Universal Serial Bus Power Delivery Specification: USB PD R3.2 v1.1 (2024/10).
 
-The library therefore implements:
+The library implements:
 - A policy engine for each supported mode,
 - the protocol layer, and
-- traits for interfacing a user application.
+- the `DevicePolicyManager` trait, which allows a device user application to talk to the policy engine, and control it.
 
-These traits are
-- the `Driver` that provides methods to talk to the device's PHY, and
-- the `DevicePolicyManager`, which allows a device to talk to the policy engine, and control it.
+The library depends on the crate [`usbpd-traits`][https://crates.io/crates/usbpd], which provides traits for supporting
+USB PD PHYs.
 
 ## Currently supported modes
 
