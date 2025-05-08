@@ -5,7 +5,7 @@ use std::vec::Vec;
 use crate::protocol_layer::message::pdo::{Augmented, FixedSupply, PowerDataObject, SprProgrammablePowerSupply};
 use crate::sink::device_policy_manager::DevicePolicyManager as SinkDevicePolicyManager;
 use crate::timers::Timer;
-use crate::Driver;
+use usbpd_traits::Driver;
 
 /// A dummy sink device that implements the sink device policy manager.
 pub struct DummySinkDevice {}
@@ -52,14 +52,14 @@ impl<const N: usize> DummyDriver<N> {
 }
 
 impl<const N: usize> Driver for DummyDriver<N> {
-    async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, crate::DriverRxError> {
+    async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, usbpd_traits::DriverRxError> {
         let first = self.rx_vec.remove(0);
         buffer.copy_from_slice(&first);
 
         Ok(first.len())
     }
 
-    async fn transmit(&mut self, data: &[u8]) -> Result<(), crate::DriverTxError> {
+    async fn transmit(&mut self, data: &[u8]) -> Result<(), usbpd_traits::DriverTxError> {
         let mut vec = heapless::Vec::new();
         vec.extend_from_slice(data).unwrap();
         self.tx_vec.push(vec);
@@ -67,7 +67,7 @@ impl<const N: usize> Driver for DummyDriver<N> {
         Ok(())
     }
 
-    async fn transmit_hard_reset(&mut self) -> Result<(), crate::DriverTxError> {
+    async fn transmit_hard_reset(&mut self) -> Result<(), usbpd_traits::DriverTxError> {
         // Do nothing.
         Ok(())
     }
@@ -173,7 +173,7 @@ pub fn get_dummy_source_capabilities() -> Vec<PowerDataObject> {
 #[cfg(test)]
 mod tests {
     use crate::dummy::DummyDriver;
-    use crate::Driver;
+    use usbpd_traits::Driver;
 
     #[tokio::test]
     async fn test_receive() {
