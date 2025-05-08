@@ -1,8 +1,8 @@
 [package]
 name = "usbpd"
-version = "0.2.1"
+version = "1.0.0"
 authors = ["Adrian Figueroa <elagil@takanome.de>"]
-edition = "2021"
+edition = "2024"
 description = "USB-PD library for `[no_std]`."
 documentation = "https://docs.rs/usbpd"
 repository = "https://github.com/elagil/usbpd"
@@ -12,20 +12,18 @@ license = "MIT"
 keywords = ["no_std", "usb-pd", "embedded"]
 
 [dependencies]
+usbpd-traits = { version = "1.0.0", path = "../usbpd-traits" }
 proc-bitfield = "0.5.2"
 byteorder = { version = "1.5.0", default-features = false }
 heapless = "0.8.0"
-uom = { version = "0.36.0", default-features = false, features = [
-    "si",
-    "u32",
-] }
+uom = { version = "0.36.0", default-features = false, features = ["si", "u32"] }
 futures = { version = "0.3.31", default-features = false }
 
-defmt = { version = "0.3.6", optional = true }
+defmt = { version = "1.0.1", optional = true }
 log = { version = "0.4.25", optional = true }
 
 [dev-dependencies]
-tokio = { version = "1.43.0", features = ["rt", "macros"] }
+tokio = { version = "1.45.0", features = ["rt", "macros"] }
 
 [features]
 default = []

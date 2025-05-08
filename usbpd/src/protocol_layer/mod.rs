@@ -23,7 +23,8 @@ use message::{Data, Message};
 
 use crate::counters::{Counter, CounterType, Error as CounterError};
 use crate::timers::{Timer, TimerType};
-use crate::{Driver, DriverRxError, DriverTxError, PowerRole};
+use crate::PowerRole;
+use usbpd_traits::{Driver, DriverRxError, DriverTxError};
 
 /// The protocol layer does not support extended messages.
 ///
