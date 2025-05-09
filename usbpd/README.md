@@ -7,7 +7,7 @@ The library implements:
 - the protocol layer, and
 - the `DevicePolicyManager` trait, which allows a device user application to talk to the policy engine, and control it.
 
-The library depends on the crate [`usbpd-traits`][https://crates.io/crates/usbpd], which provides traits for supporting
+The library depends on the crate [usbpd-traits][https://crates.io/crates/usbpd], which provides traits for supporting
 USB PD PHYs.
 
 ## Currently supported modes
