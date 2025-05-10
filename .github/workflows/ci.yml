@@ -17,7 +17,7 @@ jobs:
         with:
           submodules: true
     
-      - run: rustup toolchain install nightly
+      - run: rustup toolchain install nightly -c rustfmt
 
       - name: Cache build
         uses: Swatinem/rust-cache@v2
