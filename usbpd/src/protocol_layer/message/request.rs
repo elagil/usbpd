@@ -5,8 +5,8 @@ use uom::si::electric_current::{self, centiampere};
 use uom::si::{self};
 
 use super::_20millivolts_mod::_20millivolts;
-use super::_250milliwatts_mod::_250milliwatts;
 use super::_50milliamperes_mod::_50milliamperes;
+use super::_250milliwatts_mod::_250milliwatts;
 use super::pdo::{self, Augmented};
 use super::units::{ElectricCurrent, ElectricPotential};
 

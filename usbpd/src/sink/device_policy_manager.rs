@@ -4,8 +4,7 @@
 //! or renegotiate the power contract.
 use core::future::Future;
 
-use crate::protocol_layer::message::pdo;
-use crate::protocol_layer::message::request;
+use crate::protocol_layer::message::{pdo, request};
 
 /// Events that the device policy manager can send to the policy engine.
 #[derive(Debug)]

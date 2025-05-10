@@ -30,7 +30,8 @@ pub mod units {
 
 #[cfg(test)]
 mod tests {
-    use uom::si::{electric_current::milliampere, electric_potential::millivolt};
+    use uom::si::electric_current::milliampere;
+    use uom::si::electric_potential::millivolt;
 
     use super::_20millivolts_mod::_20millivolts;
     use super::units;

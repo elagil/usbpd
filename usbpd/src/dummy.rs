@@ -2,10 +2,11 @@
 use std::future::pending;
 use std::vec::Vec;
 
+use usbpd_traits::Driver;
+
 use crate::protocol_layer::message::pdo::{Augmented, FixedSupply, PowerDataObject, SprProgrammablePowerSupply};
 use crate::sink::device_policy_manager::DevicePolicyManager as SinkDevicePolicyManager;
 use crate::timers::Timer;
-use usbpd_traits::Driver;
 
 /// A dummy sink device that implements the sink device policy manager.
 pub struct DummySinkDevice {}
@@ -172,8 +173,9 @@ pub fn get_dummy_source_capabilities() -> Vec<PowerDataObject> {
 
 #[cfg(test)]
 mod tests {
-    use crate::dummy::DummyDriver;
     use usbpd_traits::Driver;
+
+    use crate::dummy::DummyDriver;
 
     #[tokio::test]
     async fn test_receive() {

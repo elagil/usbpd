@@ -1,8 +1,9 @@
 //! Policy engine for the implementation of a sink.
 use core::marker::PhantomData;
 
-use futures::future::{select, Either};
+use futures::future::{Either, select};
 use futures::pin_mut;
+use usbpd_traits::Driver;
 
 use super::device_policy_manager::DevicePolicyManager;
 use crate::counters::{Counter, Error as CounterError};
@@ -10,12 +11,11 @@ use crate::protocol_layer::message::header::{
     ControlMessageType, DataMessageType, Header, MessageType, SpecificationRevision,
 };
 use crate::protocol_layer::message::pdo::SourceCapabilities;
-use crate::protocol_layer::message::{request, Data};
+use crate::protocol_layer::message::{Data, request};
 use crate::protocol_layer::{Error as ProtocolError, ProtocolLayer};
 use crate::sink::device_policy_manager::Event;
 use crate::timers::{Timer, TimerType};
 use crate::{DataRole, PowerRole};
-use usbpd_traits::Driver;
 
 /// Sink capability
 ///
@@ -416,9 +416,9 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
 mod tests {
     use super::Sink;
     use crate::counters::{Counter, CounterType};
-    use crate::dummy::{DummyDriver, DummySinkDevice, DummyTimer, DUMMY_CAPABILITIES};
-    use crate::protocol_layer::message::header::{ControlMessageType, DataMessageType, Header, MessageType};
+    use crate::dummy::{DUMMY_CAPABILITIES, DummyDriver, DummySinkDevice, DummyTimer};
     use crate::protocol_layer::message::Message;
+    use crate::protocol_layer::message::header::{ControlMessageType, DataMessageType, Header, MessageType};
     use crate::sink::policy_engine::State;
 
     fn get_policy_engine() -> Sink<DummyDriver<30>, DummyTimer, DummySinkDevice> {

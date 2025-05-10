@@ -15,16 +15,16 @@ pub mod message;
 use core::future::Future;
 use core::marker::PhantomData;
 
-use futures::future::{select, Either};
+use futures::future::{Either, select};
 use futures::pin_mut;
 use message::header::{ControlMessageType, DataMessageType, Header, MessageType};
 use message::request::{self};
 use message::{Data, Message};
+use usbpd_traits::{Driver, DriverRxError, DriverTxError};
 
+use crate::PowerRole;
 use crate::counters::{Counter, CounterType, Error as CounterError};
 use crate::timers::{Timer, TimerType};
-use crate::PowerRole;
-use usbpd_traits::{Driver, DriverRxError, DriverTxError};
 
 /// The protocol layer does not support extended messages.
 ///
@@ -459,11 +459,11 @@ mod tests {
 
     use core::iter::zip;
 
+    use super::ProtocolLayer;
+    use super::message::Data;
     use super::message::header::Header;
     use super::message::pdo::SourceCapabilities;
-    use super::message::Data;
-    use super::ProtocolLayer;
-    use crate::dummy::{get_dummy_source_capabilities, DummyDriver, DummyTimer, DUMMY_CAPABILITIES};
+    use crate::dummy::{DUMMY_CAPABILITIES, DummyDriver, DummyTimer, get_dummy_source_capabilities};
 
     fn get_protocol_layer() -> ProtocolLayer<DummyDriver<30>, DummyTimer> {
         ProtocolLayer::new(

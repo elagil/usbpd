@@ -4,10 +4,10 @@ use uom::si::electric_current::centiampere;
 use uom::si::electric_potential::decivolt;
 use uom::si::power::watt;
 
-use super::PdoState;
-use super::_250milliwatts_mod::_250milliwatts;
 use super::_50milliamperes_mod::_50milliamperes;
 use super::_50millivolts_mod::_50millivolts;
+use super::_250milliwatts_mod::_250milliwatts;
+use super::PdoState;
 use super::units::{ElectricCurrent, ElectricPotential, Power};
 
 #[derive(Clone, Copy, Debug)]
