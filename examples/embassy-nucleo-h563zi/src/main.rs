@@ -3,8 +3,8 @@
 
 use defmt::{info, unwrap};
 use embassy_executor::Spawner;
-use embassy_stm32::gpio::Output;
 use embassy_stm32::Config;
+use embassy_stm32::gpio::Output;
 use usbpd_testing::power::{self, UcpdResources};
 use {defmt_rtt as _, panic_probe as _};
 
