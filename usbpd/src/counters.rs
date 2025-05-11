@@ -69,11 +69,7 @@ impl Counter {
     pub fn increment(&mut self) -> Result<(), Error> {
         self.set(self.value + 1);
 
-        if self.value == 0 {
-            Err(Error::Exceeded)
-        } else {
-            Ok(())
-        }
+        if self.value == 0 { Err(Error::Exceeded) } else { Ok(()) }
     }
 
     /// Reset a counter value to zero.
