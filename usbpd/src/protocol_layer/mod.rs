@@ -354,10 +354,13 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                         // See spec, [6.7.1.2]
                         let is_retransmission = self.update_rx_message_counter(&message);
 
-                        if !matches!(
-                            message.header.message_type(),
-                            MessageType::Control(ControlMessageType::GoodCRC)
-                        ) {
+                        // If the PHY handles GoodCRC automatically, don't send one from software.
+                        if !DRIVER::HAS_AUTO_GOOD_CRC
+                            && !matches!(
+                                message.header.message_type(),
+                                MessageType::Control(ControlMessageType::GoodCRC)
+                            )
+                        {
                             self.transmit_good_crc().await?;
                         }
 
