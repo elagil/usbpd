@@ -29,6 +29,10 @@ pub enum DriverTxError {
 
 /// Driver trait, through which the protocol layer talks to the PHY.
 pub trait Driver {
+    /// If this is `true`, the protocol layer will not send its own
+    /// GoodCRC messages and will instead rely on the hardware.
+    const HAS_AUTO_GOOD_CRC: bool = false;
+
     /// Wait for availability of VBus voltage.
     fn wait_for_vbus(&self) -> impl Future<Output = ()>;
 
