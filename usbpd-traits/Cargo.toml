@@ -1,6 +1,6 @@
 [package]
 name = "usbpd-traits"
-version = "1.0.0"
+version = "1.0.1"
 authors = ["Adrian Figueroa <elagil@takanome.de>"]
 edition = "2024"
 description = "USB-PD library traits."
