@@ -159,7 +159,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
 
                 // Attempt to recover protocol errors with a soft reset.
                 (_, error) => {
-                    error!("Protocol error {} in sink state transition", error);
+                    error!("Protocol error {:?} in sink state transition", error);
                     None
                 }
             };
@@ -170,7 +170,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
 
             Ok(())
         } else {
-            error!("Unrecoverable result {} in sink state transition", result);
+            error!("Unrecoverable result {:?} in sink state transition", result);
             result
         }
     }
@@ -186,7 +186,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
 
     async fn wait_for_source_capabilities(&mut self) -> Result<SourceCapabilities, Error> {
         let message = self.protocol_layer.wait_for_source_capabilities().await?;
-        trace!("Source capabilities: {}", message);
+        trace!("Source capabilities: {:?}", message);
 
         let Some(Data::SourceCapabilities(capabilities)) = message.data else {
             unreachable!()
