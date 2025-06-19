@@ -233,7 +233,7 @@ impl Message {
                     return message;
                 }
                 let num_obj = message.header.num_objects();
-                trace!("VENDOR: {:?}, {:?}, {:x}", len, num_obj, payload);
+                trace!("VENDOR: {:?}, {:?}, {:?}", len, num_obj, payload);
 
                 let header = {
                     let raw = VDMHeaderRaw(LittleEndian::read_u32(&payload[..4]));

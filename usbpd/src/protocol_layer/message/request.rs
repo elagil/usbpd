@@ -268,7 +268,7 @@ impl PowerSource {
     ) -> Option<(usize, &pdo::Augmented)> {
         for (index, cap) in source_capabilities.pdos().iter().enumerate() {
             let pdo::PowerDataObject::Augmented(augmented) = cap else {
-                trace!("Skip non-augmented PDO {}", cap);
+                trace!("Skip non-augmented PDO {:?}", cap);
                 continue;
             };
 
@@ -278,10 +278,10 @@ impl PowerSource {
                     if spr.min_voltage() <= voltage && spr.max_voltage() >= voltage {
                         return Some((index, augmented));
                     } else {
-                        trace!("Skip PDO, voltage out of range. {}", augmented);
+                        trace!("Skip PDO, voltage out of range. {:?}", augmented);
                     }
                 }
-                _ => trace!("Skip PDO, only SPR is supported. {}", augmented),
+                _ => trace!("Skip PDO, only SPR is supported. {:?}", augmented),
             };
         }
 

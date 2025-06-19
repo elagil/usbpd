@@ -224,7 +224,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             MessageType::Control(ControlMessageType::GoodCRC)
         );
 
-        trace!("Transmit message: {}", message);
+        trace!("Transmit message: {:?}", message);
         self.counters.retry.reset();
 
         let mut buffer = Self::get_message_buffer();
@@ -287,14 +287,14 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
 
             match message.header.message_type() {
                 MessageType::Control(ControlMessageType::Reserved) | MessageType::Data(DataMessageType::Reserved) => {
-                    trace!("Unsupported message type in header: {}", message.header);
+                    trace!("Unsupported message type in header: {:?}", message.header);
                     return Err(RxError::UnsupportedMessage);
                 }
                 MessageType::Control(ControlMessageType::SoftReset) => return Err(RxError::SoftReset),
                 _ => (),
             }
 
-            trace!("Received message {}", message);
+            trace!("Received message {:?}", message);
             return Ok(message);
         }
     }
