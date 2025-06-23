@@ -16,7 +16,7 @@ usbpd-traits = { version = "1.0.0", path = "../usbpd-traits" }
 proc-bitfield = "0.5.2"
 byteorder = { version = "1.5.0", default-features = false }
 heapless = "0.8.0"
-uom = { version = "0.37.0", default-features = false, features = ["si", "u32"] }
+uom = { version = "0.36.0", default-features = false, features = ["si", "u32"] }
 futures = { version = "0.3.31", default-features = false }
 
 defmt = { version = "1.0.1", optional = true }
