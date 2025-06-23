@@ -5,7 +5,6 @@ version = "0.1.0"
 license = "MIT"
 
 [dependencies]
-# Change stm32h563zi to your chip name, if necessary.
 # FIXME: Use released versions, when embassy-stm32 contains required fix for STM32H5 UCPD
 embassy-stm32 = { path = "../../embassy/embassy-stm32", features = [
     "defmt",
@@ -30,8 +29,8 @@ embassy-time = { path = "../../embassy/embassy-time", features = [
 
 embassy-futures = { path = "../../embassy/embassy-futures" }
 
-defmt = "0.3"
-defmt-rtt = "0.4"
+defmt = "1.0.1"
+defmt-rtt = "1.0.0"
 
 cortex-m = { version = "0.7.6", features = [
     "inline-asm",
@@ -42,14 +41,13 @@ embedded-hal = "1.0.0"
 embedded-hal-async = { version = "1.0" }
 embedded-io-async = { version = "0.6.1" }
 embedded-nal-async = "0.8.0"
-panic-probe = { version = "0.3", features = ["print-defmt"] }
+panic-probe = { version = "1.0.0", features = ["print-defmt"] }
 heapless = { version = "0.8", default-features = false }
-rand_core = "0.6.3"
+rand_core = "0.9.3"
 critical-section = "1.1"
 embedded-storage = "0.3.1"
 static_cell = "2"
 
-uom = { version = "0.36.0", default-features = false, features = ["si"] }
 usbpd = { path = "../../usbpd", features = ["defmt"] }
 usbpd-traits = { path = "../../usbpd-traits", features = ["defmt"] }
 
