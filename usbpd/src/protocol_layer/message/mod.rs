@@ -2,7 +2,7 @@
 
 // FIXME: add documentation
 #[allow(missing_docs)]
-pub(crate) mod header;
+pub mod header;
 
 // FIXME: add documentation
 #[allow(missing_docs)]
@@ -10,7 +10,7 @@ pub mod pdo;
 
 // FIXME: add documentation
 #[allow(missing_docs)]
-pub(crate) mod vdo;
+pub mod vdo;
 
 // FIXME: add documentation
 #[allow(missing_docs)]
