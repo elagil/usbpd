@@ -1,8 +1,11 @@
 //! Definitions for a USB PD message header.
+use core::convert::TryFrom;
+
 use byteorder::{ByteOrder, LittleEndian};
 use proc_bitfield::bitfield;
 
 use crate::counters::Counter;
+use crate::protocol_layer::message::ParseError;
 use crate::{DataRole, PowerRole};
 
 bitfield! {
@@ -14,7 +17,7 @@ bitfield! {
         pub num_objects: u8 [get usize] @ 12..=14,
         pub message_id: u8 @ 9..=11,
         pub port_power_role: bool [get PowerRole, set PowerRole] @ 8,
-        pub spec_revision: u8 [get SpecificationRevision, set SpecificationRevision] @ 6..=7,
+        pub spec_revision: u8 [try_get SpecificationRevision, set SpecificationRevision] @ 6..=7,
         pub port_data_role: bool [get DataRole, set DataRole] @ 5,
         pub message_type_raw: u8 @ 0..=4,
     }
@@ -97,13 +100,14 @@ pub enum SpecificationRevision {
     R3_0,
 }
 
-impl From<u8> for SpecificationRevision {
-    fn from(value: u8) -> Self {
+impl TryFrom<u8> for SpecificationRevision {
+    type Error = ParseError;
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            0b00 => Self::R1_0,
-            0b01 => Self::R2_0,
-            0b10 => Self::R3_0,
-            _ => unimplemented!(),
+            0b00 => Ok(Self::R1_0),
+            0b01 => Ok(Self::R2_0),
+            0b10 => Ok(Self::R3_0),
+            _ => Err(ParseError::InvalidSpecificationRevision(value)),
         }
     }
 }
