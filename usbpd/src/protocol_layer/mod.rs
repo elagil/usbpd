@@ -286,7 +286,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                 Err(DriverRxError::HardReset) => return Err(RxError::HardReset),
             };
 
-            let message = Message::from_bytes(&buffer[..length]);
+            let message = Message::from_bytes(&buffer[..length])?;
 
             // Update specification revision, based on the received frame.
             self.default_header = self.default_header.with_spec_revision(message.header.spec_revision()?);

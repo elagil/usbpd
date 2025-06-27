@@ -174,8 +174,9 @@ impl Message {
     /// Parse a message from a slice of bytes, with a PDO state.
     ///
     /// FIXME: Is the state required/to spec?
-    pub fn from_bytes_with_state<P: PdoState>(data: &[u8], state: &P) -> Self {
-        let mut message = Self::new(Header::from_bytes(&data[..2]));
+    pub fn from_bytes_with_state<P: PdoState>(data: &[u8], state: &P) -> Result<Self, ParseError> {
+        let header = Header::from_bytes(&data[..2])?;
+        let mut message = Self::new(header);
         let payload = &data[2..];
 
         match message.header.message_type() {
@@ -211,7 +212,7 @@ impl Message {
             MessageType::Data(DataMessageType::Request) => {
                 if payload.len() != 4 {
                     message.data = Some(Data::Unknown);
-                    return message;
+                    return Ok(message);
                 }
                 let raw = request::RawDataObject(LittleEndian::read_u32(payload));
                 if let Some(t) = state.pdo_at_object_position(raw.object_position()) {
@@ -232,7 +233,7 @@ impl Message {
                 let len = payload.len();
                 if len < 4 {
                     message.data = Some(Data::Unknown);
-                    return message;
+                    return Ok(message);
                 }
                 let num_obj = message.header.num_objects();
                 trace!("VENDOR: {:?}, {:?}, {:?}", len, num_obj, payload);
@@ -271,11 +272,11 @@ impl Message {
             }
         };
 
-        message
+        Ok(message)
     }
 
     /// Parse a message from a slice of bytes.
-    pub fn from_bytes(data: &[u8]) -> Self {
+    pub fn from_bytes(data: &[u8]) -> Result<Self, ParseError> {
         Self::from_bytes_with_state(data, &())
     }
 }
