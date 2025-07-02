@@ -140,6 +140,7 @@ impl From<bool> for VDMType {
 
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum VDMHeader {
     Structured(VDMHeaderStructured),
     Unstructured(VDMHeaderUnstructured),
@@ -193,6 +194,7 @@ impl VDMHeaderRaw {
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub struct VDMHeaderStructured(pub u32): FromStorage, IntoStorage {
         /// VDM Standard or Vendor ID
         pub standard_or_vid: u16 @ 16..=31,
@@ -279,6 +281,7 @@ impl From<u8> for VDMVersionMinor {
 bitfield! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub struct VDMHeaderUnstructured(pub u32): FromStorage, IntoStorage {
         /// VDM Standard or Vendor ID
         pub standard_or_vid: u16 @ 16..=31,

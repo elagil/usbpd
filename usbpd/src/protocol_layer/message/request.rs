@@ -13,6 +13,7 @@ use super::units::{ElectricCurrent, ElectricPotential};
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub struct RawDataObject(pub u32): Debug, FromStorage, IntoStorage {
         /// Valid range 1..=14
         pub object_position: u8 @ 28..=31,
@@ -22,6 +23,7 @@ bitfield! {
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub struct FixedVariableSupply(pub u32): Debug, FromStorage, IntoStorage {
         /// Valid range 1..=14
         pub object_position: u8 @ 28..=31,
@@ -54,6 +56,7 @@ impl FixedVariableSupply {
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub struct Battery(pub u32): Debug, FromStorage, IntoStorage {
         /// Object position (0000b and 1110b…1111b are Reserved and Shall Not be used)
         pub object_position: u8 @ 28..=31,
@@ -93,6 +96,7 @@ impl Battery {
 bitfield!(
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub struct Pps(pub u32): Debug, FromStorage, IntoStorage {
         /// Object position (0000b and 1110b…1111b are Reserved and Shall Not be used)
         pub object_position: u8 @ 28..=31,
@@ -131,6 +135,7 @@ impl Pps {
 bitfield!(
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub struct Avs(pub u32): Debug, FromStorage, IntoStorage {
         /// Object position (0000b and 1110b…1111b are Reserved and Shall Not be used)
         pub object_position: u8 @ 28..=31,
@@ -168,6 +173,7 @@ impl Avs {
 /// Power requests towards the source.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[allow(unused)] // FIXME: Implement missing request types.
 pub enum PowerSource {
     FixedVariableSupply(FixedVariableSupply),

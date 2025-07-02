@@ -106,6 +106,7 @@ impl PdoState for () {
 /// Data that data messages can carry.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[allow(unused)] // FIXME: Implement or remove vendor defined data message support.
 pub enum Data {
     /// Source capability data.
@@ -137,6 +138,7 @@ impl Data {
 /// A USB PD message.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Message {
     /// The message header.
     pub header: Header,
