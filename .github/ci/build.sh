@@ -16,3 +16,9 @@ do
     cargo clippy --features defmt -- -D warnings
     popd
 done
+
+# Test building some feature combinations.
+pushd usbpd
+cargo build --features serde,log
+cargo build --features serde,defmt
+popd
