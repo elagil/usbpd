@@ -21,6 +21,9 @@ futures = { version = "0.3.31", default-features = false }
 
 defmt = { version = "1.0.1", optional = true }
 log = { version = "0.4.27", optional = true }
+serde = { version = "1.0.219", default-features = false, features = [
+    "derive",
+], optional = true }
 
 [dev-dependencies]
 tokio = { version = "1.45.1", features = ["rt", "macros"] }
@@ -30,3 +33,4 @@ default = []
 
 log = ["dep:log"]
 defmt = ["dep:defmt", "heapless/defmt-03"]
+serde = ["dep:serde", "heapless/serde"]

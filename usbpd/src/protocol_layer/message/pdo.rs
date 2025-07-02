@@ -22,6 +22,7 @@ pub enum Kind {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PowerDataObject {
     FixedSupply(FixedSupply),
     Battery(Battery),
@@ -33,6 +34,7 @@ pub enum PowerDataObject {
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub struct RawPowerDataObject(pub u32): Debug, FromStorage, IntoStorage {
         pub kind: u8 @ 30..=31,
     }
@@ -41,6 +43,7 @@ bitfield! {
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub struct FixedSupply(pub u32): Debug, FromStorage, IntoStorage {
         /// Fixed supply
         pub kind: u8 @ 30..=31,
@@ -90,6 +93,7 @@ impl FixedSupply {
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub struct Battery(pub u32): Debug, FromStorage, IntoStorage {
         /// Battery
         pub kind: u8 @ 30..=31,
@@ -119,6 +123,7 @@ impl Battery {
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub struct VariableSupply(pub u32): Debug, FromStorage, IntoStorage {
         /// Variable supply (non-battery)
         pub kind: u8 @ 30..=31,
@@ -147,6 +152,7 @@ impl VariableSupply {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Augmented {
     Spr(SprProgrammablePowerSupply),
     Epr(EprAdjustableVoltageSupply),
@@ -156,6 +162,7 @@ pub enum Augmented {
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub struct AugmentedRaw(pub u32): Debug, FromStorage, IntoStorage {
         /// Augmented power data object
         pub kind: u8 @ 30..=31,
@@ -167,6 +174,7 @@ bitfield! {
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub struct SprProgrammablePowerSupply(pub u32): Debug, FromStorage, IntoStorage {
         /// Augmented power data object
         pub kind: u8 @ 30..=31,
@@ -209,6 +217,7 @@ impl SprProgrammablePowerSupply {
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub struct EprAdjustableVoltageSupply(pub u32): Debug, FromStorage, IntoStorage {
         /// Augmented power data object
         pub kind: u8 @ 30..=31,
@@ -240,6 +249,7 @@ impl EprAdjustableVoltageSupply {
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SourceCapabilities(pub(crate) Vec<PowerDataObject, 8>);
 
 impl SourceCapabilities {

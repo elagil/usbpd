@@ -8,6 +8,7 @@ use crate::{DataRole, PowerRole};
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub struct Header(pub u16): Debug, FromStorage, IntoStorage {
         pub extended: bool @ 15,
         pub num_objects: u8 [get usize] @ 12..=14,
