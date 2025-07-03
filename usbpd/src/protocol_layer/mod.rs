@@ -62,7 +62,7 @@ enum RxError {
     /// An unsupported message was received.
     UnsupportedMessage,
     /// An unexpected message was received.
-    UnexpectedMessage,
+    ParseError,
 }
 
 impl From<RxError> for Error {
@@ -72,7 +72,7 @@ impl From<RxError> for Error {
             RxError::HardReset => Error::HardReset,
             RxError::ReceiveTimeout => Error::ReceiveTimeout,
             RxError::UnsupportedMessage => Error::UnsupportedMessage,
-            RxError::UnexpectedMessage => Error::UnexpectedMessage,
+            RxError::ParseError => Error::UnexpectedMessage,
         }
     }
 }
@@ -90,6 +90,12 @@ impl From<TxError> for Error {
         match value {
             TxError::HardReset => Error::HardReset,
         }
+    }
+}
+
+impl From<crate::protocol_layer::message::ParseError> for RxError {
+    fn from(_err: crate::protocol_layer::message::ParseError) -> Self {
+        RxError::ParseError
     }
 }
 
@@ -185,10 +191,10 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                     Ok(())
                 } else {
                     // Wrong transmitted message was acknowledged.
-                    Err(RxError::UnexpectedMessage)
+                    Err(RxError::ParseError)
                 }
             } else {
-                Err(RxError::UnexpectedMessage)
+                Err(RxError::ParseError)
             }
         };
 
@@ -280,10 +286,10 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                 Err(DriverRxError::HardReset) => return Err(RxError::HardReset),
             };
 
-            let message = Message::from_bytes(&buffer[..length]);
+            let message = Message::from_bytes(&buffer[..length])?;
 
             // Update specification revision, based on the received frame.
-            self.default_header = self.default_header.with_spec_revision(message.header.spec_revision());
+            self.default_header = self.default_header.with_spec_revision(message.header.spec_revision()?);
 
             match message.header.message_type() {
                 MessageType::Control(ControlMessageType::Reserved) | MessageType::Data(DataMessageType::Reserved) => {
@@ -375,7 +381,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                             Err(Error::UnexpectedMessage)
                         };
                     }
-                    Err(RxError::UnexpectedMessage) => unreachable!(),
+                    Err(RxError::ParseError) => unreachable!(),
                     Err(other) => return Err(other.into()),
                 }
             }
