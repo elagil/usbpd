@@ -110,7 +110,7 @@ impl TryFrom<u8> for SpecificationRevision {
             0b00 => Ok(Self::R1_0),
             0b01 => Ok(Self::R2_0),
             0b10 => Ok(Self::R3_0),
-            _ => Err(ParseError::InvalidSpecificationRevision(value)),
+            _ => Err(ParseError::UnsupportedSpecificationRevision(value)),
         }
     }
 }
