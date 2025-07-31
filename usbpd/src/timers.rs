@@ -72,7 +72,7 @@ impl TimerType {
             TimerType::SenderResponse => TIMER::after_millis(30),
             TimerType::SinkEPREnter => TIMER::after_millis(500),
             TimerType::SinkEPRKeepAlive => TIMER::after_millis(375),
-            TimerType::SinkPPSPeriodic => TIMER::after_millis(5000),
+            TimerType::SinkPPSPeriodic => TIMER::after_millis(5000), // Max. 10 s
             TimerType::SinkRequest => TIMER::after_millis(100),
             TimerType::SinkWaitCap => TIMER::after_millis(465),
             TimerType::SourceCapability => TIMER::after_millis(150),
