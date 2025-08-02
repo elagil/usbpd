@@ -45,6 +45,13 @@ pub trait DevicePolicyManager {
     /// The policy engine gets and evaluates device policy events when ready.
     ///
     /// By default, this is a future that never resolves.
+    ///
+    /// <div class="warning">
+    /// The function must be safe to cancel. To determine whether your own methods are cancellation safe,
+    /// look for the location of uses of .await. This is because when an asynchronous method is cancelled,
+    /// that always happens at an .await. If your function behaves correctly even if it is restarted while waiting
+    /// at an .await, then it is cancellation safe.
+    /// </div>
     fn get_event(&mut self, _source_capabilities: &pdo::SourceCapabilities) -> impl Future<Output = Event> {
         async { core::future::pending().await }
     }
