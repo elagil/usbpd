@@ -15,8 +15,7 @@ pub mod message;
 use core::future::Future;
 use core::marker::PhantomData;
 
-use futures::future::{Either, select};
-use futures::pin_mut;
+use embassy_futures::select::{Either, select};
 use message::header::{ControlMessageType, DataMessageType, Header, MessageType};
 use message::request::{self};
 use message::{Data, Message};
@@ -166,6 +165,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     async fn wait_for_good_crc(&mut self) -> Result<(), RxError> {
         trace!("Wait for GoodCrc");
 
+        let timeout_fut = Self::get_timer(TimerType::CRCReceive);
         let receive_fut = async {
             let message = self.receive_message_inner().await?;
 
@@ -192,13 +192,9 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             }
         };
 
-        let timeout_fut = Self::get_timer(TimerType::CRCReceive);
-        pin_mut!(timeout_fut);
-        pin_mut!(receive_fut);
-
         match select(timeout_fut, receive_fut).await {
-            Either::Left((_, _)) => Err(RxError::ReceiveTimeout),
-            Either::Right((receive_result, _)) => receive_result,
+            Either::First(_) => Err(RxError::ReceiveTimeout),
+            Either::Second(receive_result) => receive_result,
         }
     }
 
@@ -347,6 +343,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             assert_ne!(*message_type, MessageType::Control(ControlMessageType::GoodCRC));
         }
 
+        let timeout_fut = Self::get_timer(timer_type);
         let receive_fut = async {
             loop {
                 match self.receive_message_inner().await {
@@ -381,14 +378,9 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             }
         };
 
-        let timeout_fut = Self::get_timer(timer_type);
-
-        pin_mut!(timeout_fut);
-        pin_mut!(receive_fut);
-
         match select(timeout_fut, receive_fut).await {
-            Either::Left((_, _)) => Err(Error::ReceiveTimeout),
-            Either::Right((receive_result, _)) => receive_result,
+            Either::First(_) => Err(Error::ReceiveTimeout),
+            Either::Second(receive_result) => receive_result,
         }
     }
 

@@ -2,7 +2,6 @@
 use core::marker::PhantomData;
 
 use embassy_futures::select::{Either3, select3};
-use futures::pin_mut;
 use usbpd_traits::Driver;
 
 use super::device_policy_manager::DevicePolicyManager;
@@ -293,9 +292,8 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                         _ => core::future::pending().await,
                     }
                 };
-                pin_mut!(receive_fut, event_fut, pps_periodic_fut);
 
-                match select3(&mut receive_fut, &mut event_fut, &mut pps_periodic_fut).await {
+                match select3(receive_fut, event_fut, pps_periodic_fut).await {
                     // A message was received.
                     Either3::First(message) => {
                         let message = message?;
