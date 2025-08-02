@@ -4,7 +4,7 @@ use embassy_futures::select::{Either, select};
 use embassy_stm32::gpio::Output;
 use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
 use embassy_stm32::{bind_interrupts, peripherals};
-use embassy_time::{Duration, Timer, with_timeout};
+use embassy_time::{Duration, Ticker, Timer, with_timeout};
 use uom::si::electric_potential;
 use usbpd::protocol_layer::message::pdo::SourceCapabilities;
 use usbpd::protocol_layer::message::request::{self, CurrentRequest, VoltageRequest};
@@ -119,7 +119,7 @@ impl SinkTimer for EmbassySinkTimer {
     }
 }
 
-/// Capabilities that are tested (cycled through each second).
+/// Capabilities that are tested (cycled through).
 #[derive(Format)]
 enum TestCapabilities {
     Safe5V,
@@ -130,12 +130,14 @@ enum TestCapabilities {
 }
 
 struct Device {
+    ticker: Ticker,
     test_capabilities: TestCapabilities,
 }
 
 impl Default for Device {
     fn default() -> Self {
         Self {
+            ticker: Ticker::every(Duration::from_secs(8)),
             test_capabilities: TestCapabilities::Safe5V,
         }
     }
@@ -155,7 +157,7 @@ impl DevicePolicyManager for Device {
 
     async fn get_event(&mut self, source_capabilities: &SourceCapabilities) -> Event {
         // Periodically request another power level.
-        Timer::after_secs(1).await;
+        self.ticker.next().await;
 
         info!("Test capabilities: {}", self.test_capabilities);
         let (power_source, new_test_capabilities) = match self.test_capabilities {

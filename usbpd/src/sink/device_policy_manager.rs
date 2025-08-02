@@ -22,11 +22,13 @@ pub enum Event {
 /// This entity commands the policy engine and enforces device policy.
 pub trait DevicePolicyManager {
     /// Request a power source.
+    ///
+    /// Defaults to 5 V at maximum current.
     fn request(&mut self, source_capabilities: &pdo::SourceCapabilities) -> impl Future<Output = request::PowerSource> {
         async {
             request::PowerSource::new_fixed(
                 request::CurrentRequest::Highest,
-                request::VoltageRequest::Highest,
+                request::VoltageRequest::Safe5V,
                 source_capabilities,
             )
             .unwrap()

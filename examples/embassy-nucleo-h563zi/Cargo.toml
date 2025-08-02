@@ -48,6 +48,7 @@ critical-section = "1.1"
 embedded-storage = "0.3.1"
 static_cell = "2"
 
+uom = { version = "0.36.0", default-features = false, features = ["si"] }
 usbpd = { path = "../../usbpd", features = ["defmt"] }
 usbpd-traits = { path = "../../usbpd-traits", features = ["defmt"] }
 
