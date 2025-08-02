@@ -5,9 +5,11 @@ use embassy_futures::select::{Either, select};
 use embassy_stm32::gpio::Output;
 use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
 use embassy_stm32::{Peri, bind_interrupts, peripherals};
-use embassy_time::{Duration, Timer, with_timeout};
+use embassy_time::{Duration, Ticker, Timer, with_timeout};
+use uom::si::electric_potential;
 use usbpd::protocol_layer::message::pdo::SourceCapabilities;
-use usbpd::protocol_layer::message::request;
+use usbpd::protocol_layer::message::request::{self, CurrentRequest, VoltageRequest};
+use usbpd::protocol_layer::message::units::ElectricPotential;
 use usbpd::sink::device_policy_manager::{DevicePolicyManager, Event};
 use usbpd::sink::policy_engine::Sink;
 use usbpd::timers::Timer as SinkTimer;
@@ -120,36 +122,60 @@ impl SinkTimer for EmbassySinkTimer {
     }
 }
 
+/// Capabilities that are tested (cycled through).
+#[derive(Format)]
+enum TestCapabilities {
+    Safe5V,
+    Pps3V6,
+    Pps4V2,
+}
+
 struct Device<'d> {
+    ticker: Ticker,
+    test_capabilities: TestCapabilities,
     led: &'d mut Output<'static>,
 }
 
 impl DevicePolicyManager for Device<'_> {
-    async fn request(&mut self, source_capabilities: &SourceCapabilities) -> request::PowerSource {
-        request::PowerSource::new_fixed(
-            request::CurrentRequest::Highest,
-            request::VoltageRequest::Safe5V,
-            source_capabilities,
-        )
-        .unwrap()
-    }
-
-    async fn transition_power(&mut self, _accepted: &request::PowerSource) {
-        self.led.set_high();
-    }
-
     async fn get_event(&mut self, source_capabilities: &SourceCapabilities) -> Event {
         // Periodically request another power level.
-        Timer::after_secs(5).await;
+        self.ticker.next().await;
+        self.led.toggle();
 
-        Event::RequestPower(
-            request::PowerSource::new_fixed(
-                request::CurrentRequest::Highest,
-                request::VoltageRequest::Safe5V,
-                source_capabilities,
-            )
-            .unwrap(),
-        )
+        info!("Test capabilities: {}", self.test_capabilities);
+        let (power_source, new_test_capabilties) = match self.test_capabilities {
+            TestCapabilities::Safe5V => (
+                request::PowerSource::new_fixed(CurrentRequest::Highest, VoltageRequest::Safe5V, source_capabilities),
+                TestCapabilities::Pps3V6,
+            ),
+            TestCapabilities::Pps3V6 => (
+                request::PowerSource::new_pps(
+                    request::CurrentRequest::Highest,
+                    ElectricPotential::new::<electric_potential::millivolt>(3600),
+                    source_capabilities,
+                ),
+                TestCapabilities::Pps4V2,
+            ),
+            TestCapabilities::Pps4V2 => (
+                request::PowerSource::new_pps(
+                    request::CurrentRequest::Highest,
+                    ElectricPotential::new::<electric_potential::millivolt>(4200),
+                    source_capabilities,
+                ),
+                TestCapabilities::Safe5V,
+            ),
+        };
+
+        let event = if let Ok(power_source) = power_source {
+            info!("Requesting power source {}", power_source);
+            Event::RequestPower(power_source)
+        } else {
+            warn!("Capabilities not available {}", self.test_capabilities);
+            Event::None
+        };
+
+        self.test_capabilities = new_test_capabilties;
+        event
     }
 }
 
@@ -194,6 +220,8 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
 
         let driver = UcpdSinkDriver::new(pd_phy);
         let device = Device {
+            ticker: Ticker::every(Duration::from_secs(8)),
+            test_capabilities: TestCapabilities::Safe5V,
             led: &mut ucpd_resources.led_red,
         };
         let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(driver, device);

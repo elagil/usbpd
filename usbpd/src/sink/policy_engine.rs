@@ -1,7 +1,7 @@
 //! Policy engine for the implementation of a sink.
 use core::marker::PhantomData;
 
-use futures::future::{Either, select};
+use embassy_futures::select::{Either3, select3};
 use futures::pin_mut;
 use usbpd_traits::Driver;
 
@@ -283,24 +283,21 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 // - EPRKeepAlive on SinkEPRKeepAliveTimer timeout
                 self.contract = Contract::Explicit;
 
-                let pps_periodic_fut = match power_source {
-                    PowerSource::Pps(_) => TimerType::get_timer::<TIMER>(TimerType::SinkPPSPeriodic),
-                    _ => core::future::pending().await,
-                };
-                pin_mut!(pps_periodic_fut);
-
                 let receive_fut = self.protocol_layer.receive_message();
                 let event_fut = self
                     .device_policy_manager
                     .get_event(self.source_capabilities.as_ref().unwrap());
+                let pps_periodic_fut = async {
+                    match power_source {
+                        PowerSource::Pps(_) => TimerType::get_timer::<TIMER>(TimerType::SinkPPSPeriodic).await,
+                        _ => core::future::pending().await,
+                    }
+                };
+                pin_mut!(receive_fut, event_fut, pps_periodic_fut);
 
-                pin_mut!(receive_fut);
-                pin_mut!(event_fut);
-
-                // TODO: Use `select3` implementation from a suitable crate instead.
-                match select(receive_fut, select(event_fut, pps_periodic_fut)).await {
+                match select3(&mut receive_fut, &mut event_fut, &mut pps_periodic_fut).await {
                     // A message was received.
-                    Either::Left((message, _)) => {
+                    Either3::First(message) => {
                         let message = message?;
 
                         match message.header.message_type() {
@@ -314,16 +311,14 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                             _ => State::SendNotSupported(*power_source),
                         }
                     }
-                    Either::Right((either, _)) => match either {
-                        // Event from device policy manager.
-                        Either::Left((event, _)) => match event {
-                            Event::RequestSourceCapabilities => State::EventRequestSourceCapabilities,
-                            Event::RequestPower(power_source) => State::SelectCapability(power_source),
-                            Event::None => State::Ready(*power_source),
-                        },
-                        // PPS periodic timeout -> select capability again as keep-alive.
-                        Either::Right((_, _)) => State::SelectCapability(*power_source),
+                    // Event from device policy manager.
+                    Either3::Second(event) => match event {
+                        Event::RequestSourceCapabilities => State::EventRequestSourceCapabilities,
+                        Event::RequestPower(power_source) => State::SelectCapability(power_source),
+                        Event::None => State::Ready(*power_source),
                     },
+                    // PPS periodic timeout -> select capability again as keep-alive.
+                    Either3::Third(_) => State::SelectCapability(*power_source),
                 }
             }
             State::SendNotSupported(power_source) => {
