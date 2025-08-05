@@ -1,10 +1,19 @@
-//! USB PD library.
+//! # Library for USB PD
 //!
-//! Includes capabilities for implementing:
-//! - SPR sink
+//! Modeled after the Universal Serial Bus Power Delivery Specification: USB PD R3.2 v1.1 (2024/10).
 //!
-//! Provides a policy engine (depending on selected capability), protocol layer,
-//! and relevant traits for the user applation to implement.
+//! The library implements:
+//! - A policy engine for each supported mode,
+//! - the protocol layer, and
+//! - the `DevicePolicyManager` trait, which allows a device user application to talk to the policy engine, and control it.
+//!
+//! ## Currently supported modes
+//!
+//! - SPR Sink with helpers for requesting
+//! - A fixed supply
+//! - A Programmable Power Supply (PPS)
+//!
+
 #![cfg_attr(not(test), no_std)]
 #![warn(missing_docs)]
 
