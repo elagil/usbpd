@@ -61,7 +61,7 @@ enum RxError {
     /// An unsupported message was received.
     UnsupportedMessage,
     /// An unexpected message was received.
-    UnexpectedMessage,
+    ParseError,
 }
 
 impl From<RxError> for Error {
@@ -71,7 +71,7 @@ impl From<RxError> for Error {
             RxError::HardReset => Error::HardReset,
             RxError::ReceiveTimeout => Error::ReceiveTimeout,
             RxError::UnsupportedMessage => Error::UnsupportedMessage,
-            RxError::UnexpectedMessage => Error::UnexpectedMessage,
+            RxError::ParseError => Error::UnexpectedMessage,
         }
     }
 }
@@ -94,7 +94,7 @@ impl From<TxError> for Error {
 
 impl From<crate::protocol_layer::message::ParseError> for RxError {
     fn from(_err: crate::protocol_layer::message::ParseError) -> Self {
-        RxError::UnexpectedMessage // You can add a more specific variant if desired
+        RxError::ParseError
     }
 }
 
@@ -191,10 +191,10 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                     Ok(())
                 } else {
                     // Wrong transmitted message was acknowledged.
-                    Err(RxError::UnexpectedMessage)
+                    Err(RxError::ParseError)
                 }
             } else {
-                Err(RxError::UnexpectedMessage)
+                Err(RxError::ParseError)
             }
         };
 
@@ -378,7 +378,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                             Err(Error::UnexpectedMessage)
                         };
                     }
-                    Err(RxError::UnexpectedMessage) => unreachable!(),
+                    Err(RxError::ParseError) => unreachable!(),
                     Err(other) => return Err(other.into()),
                 }
             }
