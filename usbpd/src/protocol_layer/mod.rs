@@ -23,6 +23,7 @@ use usbpd_traits::{Driver, DriverRxError, DriverTxError};
 
 use crate::PowerRole;
 use crate::counters::{Counter, CounterType, Error as CounterError};
+use crate::protocol_layer::message::ParseError;
 use crate::timers::{Timer, TimerType};
 
 /// The protocol layer does not support extended messages.
@@ -31,71 +32,54 @@ use crate::timers::{Timer, TimerType};
 const MAX_MESSAGE_SIZE: usize = 30;
 
 /// Errors that can occur in the protocol layer.
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Error {
-    /// Port partner requested soft reset.
-    SoftReset,
-    /// Driver reported a hard reset.
-    HardReset,
-    /// A timeout during message reception.
-    ReceiveTimeout,
+pub enum ProtocolError {
+    /// An error occured during data reception.
+    #[error("RX error")]
+    RxError(#[from] RxError),
+    /// An error occured during data transmission.
+    #[error("TX error")]
+    TxError(#[from] TxError),
     /// Transmission failed after the maximum number of allowed retries.
-    TransmitRetriesExceeded,
-    /// An unsupported message was received.
-    UnsupportedMessage,
+    #[error("transmit retries (`{0}`) exceeded")]
+    TransmitRetriesExceeded(u8),
     /// An unexpected message was received.
+    #[error("unexpected message")]
     UnexpectedMessage,
 }
 
 /// Errors that can occur during reception of data.
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-enum RxError {
+pub enum RxError {
     /// Port partner requested soft reset.
+    #[error("soft reset")]
     SoftReset,
     /// Driver reported a hard reset.
+    #[error("hard reset")]
     HardReset,
     /// A timeout during message reception.
+    #[error("receive timeout")]
     ReceiveTimeout,
     /// An unsupported message was received.
+    #[error("unsupported message")]
     UnsupportedMessage,
-    /// An unexpected message was received.
-    ParseError,
-}
-
-impl From<RxError> for Error {
-    fn from(value: RxError) -> Self {
-        match value {
-            RxError::SoftReset => Error::SoftReset,
-            RxError::HardReset => Error::HardReset,
-            RxError::ReceiveTimeout => Error::ReceiveTimeout,
-            RxError::UnsupportedMessage => Error::UnsupportedMessage,
-            RxError::ParseError => Error::UnexpectedMessage,
-        }
-    }
+    /// A message parsing error occured.
+    #[error("parse error")]
+    ParseError(#[from] ParseError),
+    /// The received acknowledgement does not match the last transmitted message's ID.
+    #[error("wrong tx id `{0}` acknowledged")]
+    AcknowledgeMismatch(u8),
 }
 
 /// Errors that can occur during transmission of data.
-#[derive(Debug)]
+#[derive(thiserror::Error, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-enum TxError {
+pub enum TxError {
     /// Driver reported a hard reset.
+    #[error("hard reset")]
     HardReset,
-}
-
-impl From<TxError> for Error {
-    fn from(value: TxError) -> Self {
-        match value {
-            TxError::HardReset => Error::HardReset,
-        }
-    }
-}
-
-impl From<crate::protocol_layer::message::ParseError> for RxError {
-    fn from(_err: crate::protocol_layer::message::ParseError) -> Self {
-        RxError::ParseError
-    }
 }
 
 #[derive(Debug)]
@@ -190,11 +174,14 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                     _ = self.counters.tx_message.increment();
                     Ok(())
                 } else {
-                    // Wrong transmitted message was acknowledged.
-                    Err(RxError::ParseError)
+                    Err(RxError::AcknowledgeMismatch(message.header.message_id()))
                 }
             } else {
-                Err(RxError::ParseError)
+                if matches!(message.header.message_type(), MessageType::Control(_)) {
+                    Err(ParseError::InvalidControlMessageType(message.header.message_type_raw()).into())
+                } else {
+                    Err(ParseError::InvalidMessageType(message.header.message_type_raw()).into())
+                }
             }
         };
 
@@ -220,7 +207,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     ///
     // GoodCrc message transmission is handled separately.
     // See `transmit_good_crc()` instead.
-    pub async fn transmit(&mut self, message: Message) -> Result<(), Error> {
+    pub async fn transmit(&mut self, message: Message) -> Result<(), ProtocolError> {
         assert_ne!(
             message.header.message_type(),
             MessageType::Control(ControlMessageType::GoodCRC)
@@ -243,7 +230,9 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                         Ok(_) => {
                             // Retry transmission, until the retry counter is exceeded.
                         }
-                        Err(CounterError::Exceeded) => return Err(Error::TransmitRetriesExceeded),
+                        Err(CounterError::Exceeded) => {
+                            return Err(ProtocolError::TransmitRetriesExceeded(self.counters.retry.max_value()));
+                        }
                     },
                     Err(other) => return Err(other.into()),
                 },
@@ -253,7 +242,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     }
 
     /// Send a GoodCrc message to the port partner.
-    async fn transmit_good_crc(&mut self) -> Result<(), Error> {
+    async fn transmit_good_crc(&mut self) -> Result<(), ProtocolError> {
         trace!(
             "Transmit message GoodCrc for RX message count: {}",
             self.counters.rx_message.unwrap().value()
@@ -302,7 +291,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     }
 
     /// Receive a message.
-    pub async fn receive_message(&mut self) -> Result<Message, Error> {
+    pub async fn receive_message(&mut self) -> Result<Message, ProtocolError> {
         self.receive_message_inner().await.map_err(|err| err.into())
     }
 
@@ -342,7 +331,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         &mut self,
         message_types: &[MessageType],
         timer_type: TimerType,
-    ) -> Result<Message, Error> {
+    ) -> Result<Message, ProtocolError> {
         // GoodCrc message reception is handled separately.
         // See `wait_for_good_crc()` instead.
         for message_type in message_types {
@@ -375,17 +364,17 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                         return if message_types.contains(&message.header.message_type()) {
                             Ok(message)
                         } else {
-                            Err(Error::UnexpectedMessage)
+                            Err(ProtocolError::UnexpectedMessage)
                         };
                     }
-                    Err(RxError::ParseError) => unreachable!(),
+                    Err(RxError::ParseError(_)) => unreachable!(),
                     Err(other) => return Err(other.into()),
                 }
             }
         };
 
         match select(timeout_fut, receive_fut).await {
-            Either::First(_) => Err(Error::ReceiveTimeout),
+            Either::First(_) => Err(RxError::ReceiveTimeout.into()),
             Either::Second(receive_result) => receive_result,
         }
     }
@@ -393,7 +382,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     /// Perform a hard-reset procedure.
     ///
     // See spec, [6.7.1.1]
-    pub async fn hard_reset(&mut self) -> Result<(), Error> {
+    pub async fn hard_reset(&mut self) -> Result<(), ProtocolError> {
         self.counters.tx_message.reset();
         self.counters.retry.reset();
 
@@ -416,7 +405,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     }
 
     /// Wait for the source to provide its capabilities.
-    pub async fn wait_for_source_capabilities(&mut self) -> Result<Message, Error> {
+    pub async fn wait_for_source_capabilities(&mut self) -> Result<Message, ProtocolError> {
         self.receive_message_type(
             &[MessageType::Data(message::header::DataMessageType::SourceCapabilities)],
             TimerType::SinkWaitCap,
@@ -425,7 +414,10 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     }
 
     /// Transmit a control message of the provided type.
-    pub async fn transmit_control_message(&mut self, control_message_type: ControlMessageType) -> Result<(), Error> {
+    pub async fn transmit_control_message(
+        &mut self,
+        control_message_type: ControlMessageType,
+    ) -> Result<(), ProtocolError> {
         let message = Message::new(Header::new_control(
             self.default_header,
             self.counters.tx_message,
@@ -436,7 +428,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     }
 
     /// Request a certain power level from the source.
-    pub async fn request_power(&mut self, power_source_request: request::PowerSource) -> Result<(), Error> {
+    pub async fn request_power(&mut self, power_source_request: request::PowerSource) -> Result<(), ProtocolError> {
         // Only sinks can request from a supply.
         assert!(matches!(self.default_header.port_power_role(), PowerRole::Sink));
 

@@ -282,12 +282,13 @@ impl Message {
 }
 
 /// Errors that can occur during message/header parsing.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ParseError {
     /// The input buffer has an invalid length.
     /// * `expected` - The expected length.
     /// * `found` - The actual length found.
+    #[error("invalid input buffer length (expected {expected:?}, found {found:?})")]
     InvalidLength {
         /// The expected length.
         expected: usize,
@@ -295,13 +296,18 @@ pub enum ParseError {
         found: usize,
     },
     /// The specification revision field is not supported.
+    #[error("unsupported specification revision `{0}`")]
     UnsupportedSpecificationRevision(u8),
     /// An unknown or reserved message type was encountered.
+    #[error("unknown or reserved message type `{0}`")]
     InvalidMessageType(u8),
     /// An unknown or reserved data message type was encountered.
+    #[error("unknown or reserved data message type `{0}`")]
     InvalidDataMessageType(u8),
     /// An unknown or reserved control message type was encountered.
+    #[error("unknown or reserved control message type `{0}`")]
     InvalidControlMessageType(u8),
     /// Other parsing error with a message.
+    #[error("other parse error: {0}")]
     Other(&'static str),
 }
