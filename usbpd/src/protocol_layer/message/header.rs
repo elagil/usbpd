@@ -72,10 +72,17 @@ impl Header {
         )
     }
 
-    pub fn from_bytes(buf: &[u8]) -> Self {
-        assert!(buf.len() == 2);
-
-        Header(LittleEndian::read_u16(buf))
+    pub fn from_bytes(buf: &[u8]) -> Result<Self, ParseError> {
+        if buf.len() != 2 {
+            return Err(ParseError::InvalidLength {
+                expected: 2,
+                found: buf.len(),
+            });
+        }
+        let header = Header(LittleEndian::read_u16(buf));
+        // Validate spec_revision
+        header.spec_revision()?;
+        Ok(header)
     }
 
     pub fn to_bytes(self, buf: &mut [u8]) -> usize {
