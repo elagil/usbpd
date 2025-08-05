@@ -294,8 +294,8 @@ pub enum ParseError {
         /// The actual length found.
         found: usize,
     },
-    /// The specification revision field was invalid.
-    InvalidSpecificationRevision(u8),
+    /// The specification revision field is not supported.
+    UnsupportedSpecificationRevision(u8),
     /// An unknown or reserved message type was encountered.
     InvalidMessageType(u8),
     /// An unknown or reserved data message type was encountered.
