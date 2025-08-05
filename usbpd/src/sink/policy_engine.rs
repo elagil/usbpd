@@ -12,7 +12,7 @@ use crate::protocol_layer::message::header::{
 use crate::protocol_layer::message::pdo::SourceCapabilities;
 use crate::protocol_layer::message::request::PowerSource;
 use crate::protocol_layer::message::{Data, request};
-use crate::protocol_layer::{Error as ProtocolError, ProtocolLayer};
+use crate::protocol_layer::{ProtocolError, ProtocolLayer, RxError, TxError};
 use crate::sink::device_policy_manager::Event;
 use crate::timers::{Timer, TimerType};
 use crate::{DataRole, PowerRole};
@@ -127,10 +127,12 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
         if let Err(Error::Protocol(protocol_error)) = result {
             let new_state = match (&self.state, protocol_error) {
                 // Handle when hard reset is signaled by the driver itself.
-                (_, ProtocolError::HardReset) => Some(State::TransitionToDefault),
+                (_, ProtocolError::RxError(RxError::HardReset) | ProtocolError::TxError(TxError::HardReset)) => {
+                    Some(State::TransitionToDefault)
+                }
 
                 // Handle when soft reset is signaled by the driver itself.
-                (_, ProtocolError::SoftReset) => Some(State::SoftReset),
+                (_, ProtocolError::RxError(RxError::SoftReset)) => Some(State::SoftReset),
 
                 // Unexpected messages indicate a protocol error and demand a soft reset.
                 // See spec, [6.8.1]
@@ -141,24 +143,24 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 // Fall back to hard reset
                 // - after soft reset accept failed to be sent, or
                 // - after sending soft reset failed.
-                (State::SoftReset | State::SendSoftReset, ProtocolError::TransmitRetriesExceeded) => {
+                (State::SoftReset | State::SendSoftReset, ProtocolError::TransmitRetriesExceeded(_)) => {
                     Some(State::HardReset)
                 }
 
                 // See spec, [8.3.3.3.3]
-                (State::WaitForCapabilities, ProtocolError::ReceiveTimeout) => Some(State::HardReset),
+                (State::WaitForCapabilities, ProtocolError::RxError(RxError::ReceiveTimeout)) => Some(State::HardReset),
 
                 // See spec, [8.3.3.3.5]
-                (State::SelectCapability(_), ProtocolError::ReceiveTimeout) => Some(State::HardReset),
+                (State::SelectCapability(_), ProtocolError::RxError(RxError::ReceiveTimeout)) => Some(State::HardReset),
 
                 // See spec, [8.3.3.3.6]
                 (State::TransitionSink(_), _) => Some(State::HardReset),
 
-                (State::Ready(power_source), ProtocolError::UnsupportedMessage) => {
+                (State::Ready(power_source), ProtocolError::RxError(RxError::UnsupportedMessage)) => {
                     Some(State::SendNotSupported(*power_source))
                 }
 
-                (_, ProtocolError::TransmitRetriesExceeded) => Some(State::SendSoftReset),
+                (_, ProtocolError::TransmitRetriesExceeded(_)) => Some(State::SendSoftReset),
 
                 // Attempt to recover protocol errors with a soft reset.
                 (_, error) => {

@@ -46,6 +46,11 @@ impl Counter {
         Self { value: 0, max_value }
     }
 
+    /// The maximum allowed counter value.
+    pub fn max_value(&self) -> u8 {
+        self.max_value
+    }
+
     /// Create a new counter of a provided type from an initial value.
     pub fn new_from_value(counter_type: CounterType, value: u8) -> Self {
         let mut counter = Self::new(counter_type);
