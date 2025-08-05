@@ -471,7 +471,7 @@ mod tests {
         // `WaitForCapabilities` -> `EvaluateCapabilities`
         policy_engine.run_step().await.unwrap();
 
-        let good_crc = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data());
+        let good_crc = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
         assert!(matches!(
             good_crc.header.message_type(),
             MessageType::Control(ControlMessageType::GoodCRC)
@@ -489,7 +489,8 @@ mod tests {
         // `SelectCapability` -> `TransitionSink`
         policy_engine.run_step().await.unwrap();
 
-        let request_capabilities = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data());
+        let request_capabilities =
+            Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
         assert!(matches!(
             request_capabilities.header.message_type(),
             MessageType::Data(DataMessageType::Request)
@@ -503,7 +504,7 @@ mod tests {
 
         assert!(matches!(policy_engine.state, State::Ready(_)));
 
-        let good_crc = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data());
+        let good_crc = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
         assert!(matches!(
             good_crc.header.message_type(),
             MessageType::Control(ControlMessageType::GoodCRC)
