@@ -92,6 +92,12 @@ impl From<TxError> for Error {
     }
 }
 
+impl From<crate::protocol_layer::message::ParseError> for RxError {
+    fn from(_err: crate::protocol_layer::message::ParseError) -> Self {
+        RxError::UnexpectedMessage // You can add a more specific variant if desired
+    }
+}
+
 #[derive(Debug)]
 struct Counters {
     _busy: Counter,
@@ -279,7 +285,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             let message = Message::from_bytes(&buffer[..length]);
 
             // Update specification revision, based on the received frame.
-            self.default_header = self.default_header.with_spec_revision(message.header.spec_revision());
+            self.default_header = self.default_header.with_spec_revision(message.header.spec_revision()?);
 
             match message.header.message_type() {
                 MessageType::Control(ControlMessageType::Reserved) | MessageType::Data(DataMessageType::Reserved) => {
