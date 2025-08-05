@@ -176,12 +176,10 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                 } else {
                     Err(RxError::AcknowledgeMismatch(message.header.message_id()))
                 }
+            } else if matches!(message.header.message_type(), MessageType::Control(_)) {
+                Err(ParseError::InvalidControlMessageType(message.header.message_type_raw()).into())
             } else {
-                if matches!(message.header.message_type(), MessageType::Control(_)) {
-                    Err(ParseError::InvalidControlMessageType(message.header.message_type_raw()).into())
-                } else {
-                    Err(ParseError::InvalidMessageType(message.header.message_type_raw()).into())
-                }
+                Err(ParseError::InvalidMessageType(message.header.message_type_raw()).into())
             }
         };
 
