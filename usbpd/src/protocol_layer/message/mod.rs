@@ -279,3 +279,28 @@ impl Message {
         Self::from_bytes_with_state(data, &())
     }
 }
+
+/// Errors that can occur during message/header parsing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ParseError {
+    /// The input buffer has an invalid length.
+    /// * `expected` - The expected length.
+    /// * `found` - The actual length found.
+    InvalidLength {
+        /// The expected length.
+        expected: usize,
+        /// The actual length found.
+        found: usize,
+    },
+    /// The specification revision field was invalid.
+    InvalidSpecificationRevision(u8),
+    /// An unknown or reserved message type was encountered.
+    InvalidMessageType(u8),
+    /// An unknown or reserved data message type was encountered.
+    InvalidDataMessageType(u8),
+    /// An unknown or reserved control message type was encountered.
+    InvalidControlMessageType(u8),
+    /// Other parsing error with a message.
+    Other(&'static str),
+}
