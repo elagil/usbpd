@@ -231,7 +231,7 @@ impl PowerSource {
     /// Find the highest fixed voltage that can be found in the source capabilities.
     ///
     /// Reports the index of the found PDO, and the fixed supply instance, or `None` if there is no fixed supply PDO.
-    pub fn find_highest_fixed_voltage(source_capabilities: &pdo::SourceCapabilities) -> Option<FixedSupply> {
+    pub fn find_highest_fixed_voltage(source_capabilities: &pdo::SourceCapabilities) -> Option<FixedSupply<'_>> {
         let mut selected_pdo = None;
 
         for (index, cap) in source_capabilities.pdos().iter().enumerate() {
@@ -258,7 +258,7 @@ impl PowerSource {
     pub fn find_specific_fixed_voltage(
         source_capabilities: &pdo::SourceCapabilities,
         voltage: ElectricPotential,
-    ) -> Option<FixedSupply> {
+    ) -> Option<FixedSupply<'_>> {
         for (index, cap) in source_capabilities.pdos().iter().enumerate() {
             if let pdo::PowerDataObject::FixedSupply(fixed_supply) = cap {
                 if fixed_supply.voltage() == voltage {
@@ -277,7 +277,7 @@ impl PowerSource {
     pub fn find_pps_voltage(
         source_capabilities: &pdo::SourceCapabilities,
         voltage: ElectricPotential,
-    ) -> Option<AugmentedSupply> {
+    ) -> Option<AugmentedSupply<'_>> {
         for (index, cap) in source_capabilities.pdos().iter().enumerate() {
             let pdo::PowerDataObject::AugmentedSupply(augmented) = cap else {
                 trace!("Skip non-augmented PDO {:?}", cap);
