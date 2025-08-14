@@ -25,9 +25,9 @@ pub enum Kind {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PowerDataObject {
     FixedSupply(FixedSupply),
-    Battery(Battery),
+    BatterySupply(BatterySupply),
     VariableSupply(VariableSupply),
-    Augmented(Augmented),
+    AugmentedSupply(AugmentedSupply),
     Unknown(RawPowerDataObject),
 }
 
@@ -94,7 +94,7 @@ bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-    pub struct Battery(pub u32): Debug, FromStorage, IntoStorage {
+    pub struct BatterySupply(pub u32): Debug, FromStorage, IntoStorage {
         /// Battery
         pub kind: u8 @ 30..=31,
         /// Maximum Voltage in 50 mV units
@@ -106,7 +106,7 @@ bitfield! {
     }
 }
 
-impl Battery {
+impl BatterySupply {
     pub fn max_voltage(&self) -> ElectricPotential {
         ElectricPotential::new::<_50millivolts>(self.raw_max_voltage().into())
     }
@@ -153,7 +153,7 @@ impl VariableSupply {
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum Augmented {
+pub enum AugmentedSupply {
     Spr(SprProgrammablePowerSupply),
     Epr(EprAdjustableVoltageSupply),
     Unknown(u32),
@@ -308,12 +308,12 @@ impl PdoState for SourceCapabilities {
             .get(position.saturating_sub(1) as usize)
             .and_then(|pdo| match pdo {
                 PowerDataObject::FixedSupply(_) => Some(Kind::FixedSupply),
-                PowerDataObject::Battery(_) => Some(Kind::Battery),
+                PowerDataObject::BatterySupply(_) => Some(Kind::Battery),
                 PowerDataObject::VariableSupply(_) => Some(Kind::VariableSupply),
-                PowerDataObject::Augmented(augmented) => match augmented {
-                    Augmented::Spr(_) => Some(Kind::Pps),
-                    Augmented::Epr(_) => Some(Kind::Avs),
-                    Augmented::Unknown(_) => None,
+                PowerDataObject::AugmentedSupply(augmented) => match augmented {
+                    AugmentedSupply::Spr(_) => Some(Kind::Pps),
+                    AugmentedSupply::Epr(_) => Some(Kind::Avs),
+                    AugmentedSupply::Unknown(_) => None,
                 },
                 PowerDataObject::Unknown(_) => None,
             })
