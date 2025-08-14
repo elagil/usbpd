@@ -212,10 +212,10 @@ pub enum CurrentRequest {
 }
 
 /// A fixed supply PDO, alongside its index in the PDO table.
-pub struct FixedSupply<'d>(pub &'d pdo::FixedSupply, usize);
+pub struct IndexedFixedSupply<'d>(pub &'d pdo::FixedSupply, usize);
 
-/// An augmented supply PDO, alongside its index in the PDO table.
-pub struct AugmentedSupply<'d>(pub &'d pdo::AugmentedSupply, usize);
+/// An augmented PDO, alongside its index in the PDO table.
+pub struct IndexedAugmented<'d>(pub &'d pdo::Augmented, usize);
 
 impl PowerSource {
     pub fn object_position(&self) -> u8 {
@@ -231,16 +231,16 @@ impl PowerSource {
     /// Find the highest fixed voltage that can be found in the source capabilities.
     ///
     /// Reports the index of the found PDO, and the fixed supply instance, or `None` if there is no fixed supply PDO.
-    pub fn find_highest_fixed_voltage(source_capabilities: &pdo::SourceCapabilities) -> Option<FixedSupply<'_>> {
+    pub fn find_highest_fixed_voltage(source_capabilities: &pdo::SourceCapabilities) -> Option<IndexedFixedSupply<'_>> {
         let mut selected_pdo = None;
 
         for (index, cap) in source_capabilities.pdos().iter().enumerate() {
             if let pdo::PowerDataObject::FixedSupply(fixed_supply) = cap {
                 selected_pdo = match selected_pdo {
-                    None => Some(FixedSupply(fixed_supply, index)),
+                    None => Some(IndexedFixedSupply(fixed_supply, index)),
                     Some(ref x) => {
                         if fixed_supply.voltage() > x.0.voltage() {
-                            Some(FixedSupply(fixed_supply, index))
+                            Some(IndexedFixedSupply(fixed_supply, index))
                         } else {
                             selected_pdo
                         }
@@ -258,12 +258,12 @@ impl PowerSource {
     pub fn find_specific_fixed_voltage(
         source_capabilities: &pdo::SourceCapabilities,
         voltage: ElectricPotential,
-    ) -> Option<FixedSupply<'_>> {
+    ) -> Option<IndexedFixedSupply<'_>> {
         for (index, cap) in source_capabilities.pdos().iter().enumerate() {
             if let pdo::PowerDataObject::FixedSupply(fixed_supply) = cap
                 && (fixed_supply.voltage() == voltage)
             {
-                return Some(FixedSupply(fixed_supply, index));
+                return Some(IndexedFixedSupply(fixed_supply, index));
             }
         }
 
@@ -277,18 +277,18 @@ impl PowerSource {
     pub fn find_pps_voltage(
         source_capabilities: &pdo::SourceCapabilities,
         voltage: ElectricPotential,
-    ) -> Option<AugmentedSupply<'_>> {
+    ) -> Option<IndexedAugmented<'_>> {
         for (index, cap) in source_capabilities.pdos().iter().enumerate() {
-            let pdo::PowerDataObject::AugmentedSupply(augmented) = cap else {
+            let pdo::PowerDataObject::Augmented(augmented) = cap else {
                 trace!("Skip non-augmented PDO {:?}", cap);
                 continue;
             };
 
             // Handle EPR when supported.
             match augmented {
-                pdo::AugmentedSupply::Spr(spr) => {
+                pdo::Augmented::Spr(spr) => {
                     if spr.min_voltage() <= voltage && spr.max_voltage() >= voltage {
-                        return Some(AugmentedSupply(augmented, index));
+                        return Some(IndexedAugmented(augmented, index));
                     } else {
                         trace!("Skip PDO, voltage out of range. {:?}", augmented);
                     }
@@ -307,8 +307,8 @@ impl PowerSource {
     ///
     /// * `supply` - The combination of fixed supply PDO and its index in the PDO table.
     /// * `current_request` - The desired current level.
-    pub fn new_fixed_specific(supply: FixedSupply, current_request: CurrentRequest) -> Result<Self, Error> {
-        let FixedSupply(pdo, index) = supply;
+    pub fn new_fixed_specific(supply: IndexedFixedSupply, current_request: CurrentRequest) -> Result<Self, Error> {
+        let IndexedFixedSupply(pdo, index) = supply;
 
         let (current, mismatch) = match current_request {
             CurrentRequest::Highest => (pdo.max_current(), false),
@@ -345,7 +345,9 @@ impl PowerSource {
         source_capabilities: &pdo::SourceCapabilities,
     ) -> Result<Self, Error> {
         let selected = match voltage_request {
-            VoltageRequest::Safe5V => source_capabilities.vsafe_5v().map(|supply| FixedSupply(supply, 0)),
+            VoltageRequest::Safe5V => source_capabilities
+                .vsafe_5v()
+                .map(|supply| IndexedFixedSupply(supply, 0)),
             VoltageRequest::Highest => Self::find_highest_fixed_voltage(source_capabilities),
             VoltageRequest::Specific(x) => Self::find_specific_fixed_voltage(source_capabilities, x),
         };
@@ -372,9 +374,9 @@ impl PowerSource {
             return Err(Error::VoltageMismatch);
         }
 
-        let AugmentedSupply(pdo, index) = selected.unwrap();
+        let IndexedAugmented(pdo, index) = selected.unwrap();
         let max_current = match pdo {
-            pdo::AugmentedSupply::Spr(spr) => spr.max_current(),
+            pdo::Augmented::Spr(spr) => spr.max_current(),
             _ => unreachable!(),
         };
 
