@@ -189,15 +189,15 @@ impl Message {
                         .map(|buf| RawPowerDataObject(LittleEndian::read_u32(buf)))
                         .map(|pdo| match pdo.kind() {
                             0b00 => PowerDataObject::FixedSupply(pdo::FixedSupply(pdo.0)),
-                            0b01 => PowerDataObject::Battery(pdo::Battery(pdo.0)),
+                            0b01 => PowerDataObject::BatterySupply(pdo::BatterySupply(pdo.0)),
                             0b10 => PowerDataObject::VariableSupply(pdo::VariableSupply(pdo.0)),
-                            0b11 => PowerDataObject::Augmented({
+                            0b11 => PowerDataObject::AugmentedSupply({
                                 match pdo::AugmentedRaw(pdo.0).supply() {
-                                    0b00 => pdo::Augmented::Spr(pdo::SprProgrammablePowerSupply(pdo.0)),
-                                    0b01 => pdo::Augmented::Epr(pdo::EprAdjustableVoltageSupply(pdo.0)),
+                                    0b00 => pdo::AugmentedSupply::Spr(pdo::SprProgrammablePowerSupply(pdo.0)),
+                                    0b01 => pdo::AugmentedSupply::Epr(pdo::EprAdjustableVoltageSupply(pdo.0)),
                                     x => {
                                         warn!("Unknown AugmentedPowerDataObject supply {}", x);
-                                        pdo::Augmented::Unknown(pdo.0)
+                                        pdo::AugmentedSupply::Unknown(pdo.0)
                                     }
                                 }
                             }),
