@@ -4,7 +4,7 @@ use std::vec::Vec;
 
 use usbpd_traits::Driver;
 
-use crate::protocol_layer::message::pdo::{AugmentedSupply, FixedSupply, PowerDataObject, SprProgrammablePowerSupply};
+use crate::protocol_layer::message::pdo::{Augmented, FixedSupply, PowerDataObject, SprProgrammablePowerSupply};
 use crate::sink::device_policy_manager::DevicePolicyManager as SinkDevicePolicyManager;
 use crate::timers::Timer;
 
@@ -144,7 +144,7 @@ pub fn get_dummy_source_capabilities() -> Vec<PowerDataObject> {
         FixedSupply::new().with_raw_voltage(400).with_raw_max_current(225),
     ));
 
-    pdos.push(PowerDataObject::AugmentedSupply(AugmentedSupply::Spr(
+    pdos.push(PowerDataObject::Augmented(Augmented::Spr(
         SprProgrammablePowerSupply::new()
             .with_raw_max_current(100)
             .with_raw_min_voltage(33)
@@ -152,7 +152,7 @@ pub fn get_dummy_source_capabilities() -> Vec<PowerDataObject> {
             .with_pps_power_limited(true),
     )));
 
-    pdos.push(PowerDataObject::AugmentedSupply(AugmentedSupply::Spr(
+    pdos.push(PowerDataObject::Augmented(Augmented::Spr(
         SprProgrammablePowerSupply::new()
             .with_raw_max_current(60)
             .with_raw_min_voltage(33)
@@ -160,7 +160,7 @@ pub fn get_dummy_source_capabilities() -> Vec<PowerDataObject> {
             .with_pps_power_limited(true),
     )));
 
-    pdos.push(PowerDataObject::AugmentedSupply(AugmentedSupply::Spr(
+    pdos.push(PowerDataObject::Augmented(Augmented::Spr(
         SprProgrammablePowerSupply::new()
             .with_raw_max_current(45)
             .with_raw_min_voltage(33)
