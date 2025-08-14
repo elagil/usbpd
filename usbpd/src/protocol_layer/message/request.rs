@@ -260,10 +260,10 @@ impl PowerSource {
         voltage: ElectricPotential,
     ) -> Option<FixedSupply<'_>> {
         for (index, cap) in source_capabilities.pdos().iter().enumerate() {
-            if let pdo::PowerDataObject::FixedSupply(fixed_supply) = cap {
-                if fixed_supply.voltage() == voltage {
-                    return Some(FixedSupply(fixed_supply, index));
-                }
+            if let pdo::PowerDataObject::FixedSupply(fixed_supply) = cap
+                && (fixed_supply.voltage() == voltage)
+            {
+                return Some(FixedSupply(fixed_supply, index));
             }
         }
 
