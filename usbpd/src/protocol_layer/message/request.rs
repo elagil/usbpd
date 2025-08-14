@@ -212,10 +212,10 @@ pub enum CurrentRequest {
 }
 
 /// A fixed supply PDO, alongside its index in the PDO table.
-pub struct FixedSupply<'d>(&'d pdo::FixedSupply, usize);
+pub struct FixedSupply<'d>(pub &'d pdo::FixedSupply, usize);
 
 /// An augmented supply PDO, alongside its index in the PDO table.
-pub struct AugmentedSupply<'d>(&'d pdo::AugmentedSupply, usize);
+pub struct AugmentedSupply<'d>(pub &'d pdo::AugmentedSupply, usize);
 
 impl PowerSource {
     pub fn object_position(&self) -> u8 {
