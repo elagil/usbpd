@@ -11,8 +11,10 @@ use crate::protocol_layer::message::{pdo, request};
 pub enum Event {
     /// Empty event.
     None,
-    /// Request source capabilities (again).
-    RequestSourceCapabilities,
+    /// Request SPR source capabilities.
+    RequestSprSourceCapabilities,
+    /// Request EPR source capabilities.
+    RequestEprSourceCapabilities,
     /// Request a certain power level.
     RequestPower(request::PowerSource),
 }

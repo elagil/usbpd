@@ -16,7 +16,7 @@ use core::future::Future;
 use core::marker::PhantomData;
 
 use embassy_futures::select::{Either, select};
-use message::header::{ControlMessageType, DataMessageType, Header, MessageType};
+use message::header::{ControlMessageType, DataMessageType, ExtendedControlMessageType, Header, MessageType};
 use message::request::{self};
 use message::{Data, Message};
 use usbpd_traits::{Driver, DriverRxError, DriverTxError};
@@ -412,14 +412,25 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     }
 
     /// Transmit a control message of the provided type.
-    pub async fn transmit_control_message(
-        &mut self,
-        control_message_type: ControlMessageType,
-    ) -> Result<(), ProtocolError> {
+    pub async fn transmit_control_message(&mut self, message_type: ControlMessageType) -> Result<(), ProtocolError> {
         let message = Message::new(Header::new_control(
             self.default_header,
             self.counters.tx_message,
-            control_message_type,
+            message_type,
+        ));
+
+        self.transmit(message).await
+    }
+
+    /// Transmit an extended control message of the provided type.
+    pub async fn transmit_extended_control_message(
+        &mut self,
+        message_type: ExtendedControlMessageType,
+    ) -> Result<(), ProtocolError> {
+        let message = Message::new(Header::new_extended_control(
+            self.default_header,
+            self.counters.tx_message,
+            message_type,
         ));
 
         self.transmit(message).await

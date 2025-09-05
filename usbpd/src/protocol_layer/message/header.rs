@@ -46,27 +46,32 @@ impl Header {
             .with_message_id(message_id.value())
             .with_message_type_raw(match message_type {
                 MessageType::Control(x) => x as u8,
+                MessageType::ExtendedControl(x) => x as u8,
                 MessageType::Data(x) => x as u8,
             })
             .with_num_objects(num_objects)
             .with_extended(extended)
     }
 
-    pub fn new_control(template: Self, message_id: Counter, control_message_type: ControlMessageType) -> Self {
+    pub fn new_control(template: Self, message_id: Counter, message_type: ControlMessageType) -> Self {
+        Self::new(template, message_id, MessageType::Control(message_type), 0, false)
+    }
+
+    pub fn new_extended_control(template: Self, message_id: Counter, message_type: ExtendedControlMessageType) -> Self {
         Self::new(
             template,
             message_id,
-            MessageType::Control(control_message_type),
+            MessageType::ExtendedControl(message_type),
             0,
             false,
         )
     }
 
-    pub fn new_data(template: Self, message_id: Counter, data_message_type: DataMessageType, num_objects: u8) -> Self {
+    pub fn new_data(template: Self, message_id: Counter, message_type: DataMessageType, num_objects: u8) -> Self {
         Self::new(
             template,
             message_id,
-            MessageType::Data(data_message_type),
+            MessageType::Data(message_type),
             num_objects,
             false,
         )
@@ -88,7 +93,11 @@ impl Header {
 
     pub fn message_type(&self) -> MessageType {
         if self.num_objects() == 0 {
-            MessageType::Control(self.message_type_raw().into())
+            if self.extended() {
+                MessageType::ExtendedControl(self.message_type_raw().into())
+            } else {
+                MessageType::Control(self.message_type_raw().into())
+            }
         } else {
             MessageType::Data(self.message_type_raw().into())
         }
@@ -129,6 +138,7 @@ impl From<SpecificationRevision> for u8 {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum MessageType {
     Control(ControlMessageType),
+    ExtendedControl(ExtendedControlMessageType),
     Data(DataMessageType),
 }
 
@@ -189,6 +199,28 @@ impl From<u8> for ControlMessageType {
             0b1_0110 => Self::GetSinkCapExtended,
             0b1_0111 => Self::GetSourceInfo,
             0b1_1000 => Self::GetRevision,
+            _ => Self::Reserved,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ExtendedControlMessageType {
+    EprGetSourceCap = 0b001,
+    EprGetSinkCap = 0b010,
+    EprKeepAlive = 0b011,
+    EprKeepAliveAck = 0b100,
+    Reserved,
+}
+
+impl From<u8> for ExtendedControlMessageType {
+    fn from(value: u8) -> Self {
+        match value {
+            0b001 => Self::EprGetSourceCap,
+            0b010 => Self::EprGetSinkCap,
+            0b011 => Self::EprKeepAlive,
+            0b100 => Self::EprKeepAliveAck,
             _ => Self::Reserved,
         }
     }
