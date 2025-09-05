@@ -7,7 +7,7 @@ use usbpd_traits::Driver;
 use super::device_policy_manager::DevicePolicyManager;
 use crate::counters::{Counter, Error as CounterError};
 use crate::protocol_layer::message::header::{
-    ControlMessageType, DataMessageType, Header, MessageType, SpecificationRevision,
+    ControlMessageType, DataMessageType, ExtendedControlMessageType, Header, MessageType, SpecificationRevision,
 };
 use crate::protocol_layer::message::pdo::SourceCapabilities;
 use crate::protocol_layer::message::request::PowerSource;
@@ -18,9 +18,8 @@ use crate::timers::{Timer, TimerType};
 use crate::{DataRole, PowerRole};
 
 /// Sink capability
-///
-/// FIXME: Support EPR.
-enum _Mode {
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Mode {
     /// The classic mode of PD operation where explicit contracts are negotiaged using SPR (A)PDOs.
     Spr,
     /// A Power Delivery mode of operation where maximum allowable voltage is 48V.
@@ -54,11 +53,8 @@ enum State {
     HardReset,
     TransitionToDefault,
     GiveSinkCap(request::PowerSource),
-    _GetSourceCap,                       // FIXME: no EPR support
-    _EPRKeepAlive(request::PowerSource), // FIXME: no EPR support
-
-    // States for reacting to DPM events
-    EventRequestSourceCapabilities,
+    GetSourceCap(Mode),
+    EPRKeepAlive(request::PowerSource),
 }
 
 /// Implementation of the sink policy engine.
@@ -70,7 +66,7 @@ pub struct Sink<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> {
     contract: Contract,
     hard_reset_counter: Counter,
     source_capabilities: Option<SourceCapabilities>,
-
+    mode: Mode,
     state: State,
 
     _timer: PhantomData<TIMER>,
@@ -107,7 +103,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
             contract: Default::default(),
             hard_reset_counter: Counter::new(crate::counters::CounterType::HardReset),
             source_capabilities: None,
-
+            mode: Mode::Spr,
             _timer: PhantomData,
         }
     }
@@ -125,45 +121,52 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
         }
 
         if let Err(Error::Protocol(protocol_error)) = result {
-            let new_state = match (&self.state, protocol_error) {
+            let new_state = match (&self.mode, &self.state, protocol_error) {
                 // Handle when hard reset is signaled by the driver itself.
-                (_, ProtocolError::RxError(RxError::HardReset) | ProtocolError::TxError(TxError::HardReset)) => {
+                (_, _, ProtocolError::RxError(RxError::HardReset) | ProtocolError::TxError(TxError::HardReset)) => {
                     Some(State::TransitionToDefault)
                 }
 
                 // Handle when soft reset is signaled by the driver itself.
-                (_, ProtocolError::RxError(RxError::SoftReset)) => Some(State::SoftReset),
+                (_, _, ProtocolError::RxError(RxError::SoftReset)) => Some(State::SoftReset),
 
                 // Unexpected messages indicate a protocol error and demand a soft reset.
                 // See spec, [6.8.1]
-                (_, ProtocolError::UnexpectedMessage) => Some(State::SendSoftReset),
+                (_, _, ProtocolError::UnexpectedMessage) => Some(State::SendSoftReset),
 
                 // FIXME: Unexpected message in power transition -> hard reset?
+                // FIXME: Source cap. message not requested by get_source_caps
+                // FIXME: EPR mode and EPR source cap. message with EPR PDO in positions 1..7
+                // (Mode::Epr, _, _) => Some(State::HardReset),
 
                 // Fall back to hard reset
                 // - after soft reset accept failed to be sent, or
                 // - after sending soft reset failed.
-                (State::SoftReset | State::SendSoftReset, ProtocolError::TransmitRetriesExceeded(_)) => {
+                (_, State::SoftReset | State::SendSoftReset, ProtocolError::TransmitRetriesExceeded(_)) => {
                     Some(State::HardReset)
                 }
 
                 // See spec, [8.3.3.3.3]
-                (State::WaitForCapabilities, ProtocolError::RxError(RxError::ReceiveTimeout)) => Some(State::HardReset),
+                (_, State::WaitForCapabilities, ProtocolError::RxError(RxError::ReceiveTimeout)) => {
+                    Some(State::HardReset)
+                }
 
                 // See spec, [8.3.3.3.5]
-                (State::SelectCapability(_), ProtocolError::RxError(RxError::ReceiveTimeout)) => Some(State::HardReset),
+                (_, State::SelectCapability(_), ProtocolError::RxError(RxError::ReceiveTimeout)) => {
+                    Some(State::HardReset)
+                }
 
                 // See spec, [8.3.3.3.6]
-                (State::TransitionSink(_), _) => Some(State::HardReset),
+                (_, State::TransitionSink(_), _) => Some(State::HardReset),
 
-                (State::Ready(power_source), ProtocolError::RxError(RxError::UnsupportedMessage)) => {
+                (_, State::Ready(power_source), ProtocolError::RxError(RxError::UnsupportedMessage)) => {
                     Some(State::SendNotSupported(*power_source))
                 }
 
-                (_, ProtocolError::TransmitRetriesExceeded(_)) => Some(State::SendSoftReset),
+                (_, _, ProtocolError::TransmitRetriesExceeded(_)) => Some(State::SendSoftReset),
 
                 // Attempt to recover protocol errors with a soft reset.
-                (_, error) => {
+                (_, _, error) => {
                     error!("Protocol error {:?} in sink state transition", error);
                     None
                 }
@@ -313,7 +316,8 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     }
                     // Event from device policy manager.
                     Either3::Second(event) => match event {
-                        Event::RequestSourceCapabilities => State::EventRequestSourceCapabilities,
+                        Event::RequestSprSourceCapabilities => State::GetSourceCap(Mode::Spr),
+                        Event::RequestEprSourceCapabilities => State::GetSourceCap(Mode::Epr),
                         Event::RequestPower(power_source) => State::SelectCapability(power_source),
                         Event::None => State::Ready(*power_source),
                     },
@@ -389,21 +393,33 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
 
                 State::Ready(*power_source)
             }
-            State::_GetSourceCap => {
-                // Commonly used for switching between EPR and SPR mode.
-                // FIXME: EPR is not supported.
+            State::GetSourceCap(requested_mode) => {
+                // Commonly used for switching between EPR and SPR mode, depending on requested mode.
+                match requested_mode {
+                    Mode::Spr => {
+                        self.protocol_layer
+                            .transmit_control_message(ControlMessageType::GetSourceCap)
+                            .await?;
+                    }
+                    Mode::Epr => {
+                        self.protocol_layer
+                            .transmit_extended_control_message(ExtendedControlMessageType::EprGetSourceCap)
+                            .await?;
+                    }
+                };
 
-                self.protocol_layer
-                    .transmit_control_message(ControlMessageType::GetSourceCap)
-                    .await?;
-
-                // Return to `Ready` state instead, when
-                // - in EPR mode, and SPR capabilities requested, or
-                // - in SPR mode, and EPR capabilities requested.
-                // In other words, in case of a switch.
+                // FIXME: Deviation from the spec, see [8.3.3.3.12]
+                // The device policy manager is informed about the new source caps, regardless of the mode.
+                // The spec suggests that, on mode switch (SPR, EPR), the device policy manager must be informed of
+                // the new capabilities, then the policy engine returns to the "Ready" state.
+                //
+                // Instead, this implementation evaluates and stores the new source capabilities, during which
+                // the device policy manager is informed about the new source caps and has to react. Thus,
+                // this implementation FORCES a new request from the device policy manager after getting
+                // new source capabilities. This is not to spec.
                 State::EvaluateCapabilities(self.wait_for_source_capabilities().await?)
             }
-            State::_EPRKeepAlive(power_source) => {
+            State::EPRKeepAlive(power_source) => {
                 // Entry: Send EPRKeepAlive Message
                 // Entry: Init. and run SenderReponseTimer
                 // Transition to
@@ -411,12 +427,6 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 // - HardReset on SenderResponseTimerTimeout
 
                 State::Ready(*power_source)
-            }
-            State::EventRequestSourceCapabilities => {
-                self.protocol_layer
-                    .transmit_control_message(ControlMessageType::GetSourceCap)
-                    .await?;
-                State::WaitForCapabilities
             }
         };
 
