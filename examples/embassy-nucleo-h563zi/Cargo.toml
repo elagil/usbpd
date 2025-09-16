@@ -26,7 +26,6 @@ embassy-time = { path = "../../embassy/embassy-time", features = [
     "defmt-timestamp-uptime",
     "tick-hz-32_768",
 ] }
-
 embassy-futures = { path = "../../embassy/embassy-futures" }
 
 defmt = "1.0.1"
