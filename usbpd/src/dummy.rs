@@ -4,7 +4,9 @@ use std::vec::Vec;
 
 use usbpd_traits::Driver;
 
-use crate::protocol_layer::message::pdo::{Augmented, FixedSupply, PowerDataObject, SprProgrammablePowerSupply};
+use crate::protocol_layer::message::source_capabilities::{
+    Augmented, FixedSupply, PowerDataObject, SprProgrammablePowerSupply,
+};
 use crate::sink::device_policy_manager::DevicePolicyManager as SinkDevicePolicyManager;
 use crate::timers::Timer;
 

@@ -9,8 +9,8 @@ use crate::counters::{Counter, Error as CounterError};
 use crate::protocol_layer::message::header::{
     ControlMessageType, DataMessageType, ExtendedControlMessageType, Header, MessageType, SpecificationRevision,
 };
-use crate::protocol_layer::message::pdo::SourceCapabilities;
 use crate::protocol_layer::message::request::PowerSource;
+use crate::protocol_layer::message::source_capabilities::SourceCapabilities;
 use crate::protocol_layer::message::{Data, request};
 use crate::protocol_layer::{ProtocolError, ProtocolLayer, RxError, TxError};
 use crate::sink::device_policy_manager::Event;
@@ -53,8 +53,14 @@ enum State {
     HardReset,
     TransitionToDefault,
     GiveSinkCap(request::PowerSource),
-    GetSourceCap(Mode),
-    EPRKeepAlive(request::PowerSource),
+    GetSourceCap(Mode, request::PowerSource),
+
+    // EPR states
+    _EprSendEntry,
+    _EprSendExit,
+    _EprEntryWaitForResponse,
+    _EprExitReceived,
+    _EprKeepAlive(request::PowerSource),
 }
 
 /// Implementation of the sink policy engine.
@@ -89,6 +95,7 @@ impl From<ProtocolError> for Error {
 }
 
 impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER, DPM> {
+    /// Create a fresh protocol layer with initial state.
     fn new_protocol_layer(driver: DRIVER) -> ProtocolLayer<DRIVER, TIMER> {
         let header = Header::new_template(DataRole::Ufp, PowerRole::Sink, SpecificationRevision::R3_0);
         ProtocolLayer::new(driver, header)
@@ -192,8 +199,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
         }
     }
 
-    async fn wait_for_source_capabilities(&mut self) -> Result<SourceCapabilities, Error> {
-        let message = self.protocol_layer.wait_for_source_capabilities().await?;
+    async fn wait_for_source_capabilities(
+        protocol_layer: &mut ProtocolLayer<DRIVER, TIMER>,
+    ) -> Result<SourceCapabilities, Error> {
+        let message = protocol_layer.wait_for_source_capabilities().await?;
         trace!("Source capabilities: {:?}", message);
 
         let Some(Data::SourceCapabilities(capabilities)) = message.data else {
@@ -217,7 +226,9 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
 
                 State::WaitForCapabilities
             }
-            State::WaitForCapabilities => State::EvaluateCapabilities(self.wait_for_source_capabilities().await?),
+            State::WaitForCapabilities => {
+                State::EvaluateCapabilities(Self::wait_for_source_capabilities(&mut self.protocol_layer).await?)
+            }
             State::EvaluateCapabilities(capabilities) => {
                 // Sink now knows that it is attached.
                 // FIXME: No clone? Size is 72 bytes.
@@ -316,8 +327,8 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     }
                     // Event from device policy manager.
                     Either3::Second(event) => match event {
-                        Event::RequestSprSourceCapabilities => State::GetSourceCap(Mode::Spr),
-                        Event::RequestEprSourceCapabilities => State::GetSourceCap(Mode::Epr),
+                        Event::RequestSprSourceCapabilities => State::GetSourceCap(Mode::Spr, *power_source),
+                        Event::RequestEprSourceCapabilities => State::GetSourceCap(Mode::Epr, *power_source),
                         Event::RequestPower(power_source) => State::SelectCapability(power_source),
                         Event::None => State::Ready(*power_source),
                     },
@@ -393,7 +404,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
 
                 State::Ready(*power_source)
             }
-            State::GetSourceCap(requested_mode) => {
+            State::GetSourceCap(requested_mode, power_source) => {
                 // Commonly used for switching between EPR and SPR mode, depending on requested mode.
                 match requested_mode {
                     Mode::Spr => {
@@ -408,25 +419,22 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     }
                 };
 
-                // FIXME: Deviation from the spec, see [8.3.3.3.12]
-                // The device policy manager is informed about the new source caps, regardless of the mode.
-                // The spec suggests that, on mode switch (SPR, EPR), the device policy manager must be informed of
-                // the new capabilities, then the policy engine returns to the "Ready" state.
-                //
-                // Instead, this implementation evaluates and stores the new source capabilities, during which
-                // the device policy manager is informed about the new source caps and has to react. Thus,
-                // this implementation FORCES a new request from the device policy manager after getting
-                // new source capabilities. This is not to spec.
-                State::EvaluateCapabilities(self.wait_for_source_capabilities().await?)
+                let caps = Self::wait_for_source_capabilities(&mut self.protocol_layer).await?;
+                self.device_policy_manager.inform(&caps).await;
+
+                State::Ready(*power_source)
             }
-            State::EPRKeepAlive(power_source) => {
+            State::_EprSendEntry => unimplemented!(),
+            State::_EprEntryWaitForResponse => unimplemented!(),
+            State::_EprSendExit => unimplemented!(),
+            State::_EprExitReceived => unimplemented!(),
+            State::_EprKeepAlive(_power_source) => {
                 // Entry: Send EPRKeepAlive Message
                 // Entry: Init. and run SenderReponseTimer
                 // Transition to
                 // - Ready on EPRKeepAliveAck message
                 // - HardReset on SenderResponseTimerTimeout
-
-                State::Ready(*power_source)
+                unimplemented!();
             }
         };
 

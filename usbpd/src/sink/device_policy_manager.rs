@@ -4,7 +4,7 @@
 //! or renegotiate the power contract.
 use core::future::Future;
 
-use crate::protocol_layer::message::{pdo, request};
+use crate::protocol_layer::message::{request, source_capabilities};
 
 /// Events that the device policy manager can send to the policy engine.
 #[derive(Debug)]
@@ -14,6 +14,8 @@ pub enum Event {
     /// Request SPR source capabilities.
     RequestSprSourceCapabilities,
     /// Request EPR source capabilities.
+    ///
+    /// See [8.3.3.8.1]
     RequestEprSourceCapabilities,
     /// Request a certain power level.
     RequestPower(request::PowerSource),
@@ -23,10 +25,18 @@ pub enum Event {
 ///
 /// This entity commands the policy engine and enforces device policy.
 pub trait DevicePolicyManager {
+    /// Inform the device about source capabilities, e.g. after a request.
+    fn inform(&mut self, _source_capabilities: &source_capabilities::SourceCapabilities) -> impl Future<Output = ()> {
+        async {}
+    }
+
     /// Request a power source.
     ///
     /// Defaults to 5 V at maximum current.
-    fn request(&mut self, source_capabilities: &pdo::SourceCapabilities) -> impl Future<Output = request::PowerSource> {
+    fn request(
+        &mut self,
+        source_capabilities: &source_capabilities::SourceCapabilities,
+    ) -> impl Future<Output = request::PowerSource> {
         async {
             request::PowerSource::new_fixed(
                 request::CurrentRequest::Highest,
@@ -54,7 +64,10 @@ pub trait DevicePolicyManager {
     /// that always happens at an .await. If your function behaves correctly even if it is restarted while waiting
     /// at an .await, then it is cancellation safe.
     /// </div>
-    fn get_event(&mut self, _source_capabilities: &pdo::SourceCapabilities) -> impl Future<Output = Event> {
+    fn get_event(
+        &mut self,
+        _source_capabilities: &source_capabilities::SourceCapabilities,
+    ) -> impl Future<Output = Event> {
         async { core::future::pending().await }
     }
 }
