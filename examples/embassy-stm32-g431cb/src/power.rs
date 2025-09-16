@@ -3,7 +3,7 @@ use defmt::{Format, info, warn};
 use embassy_futures::select::{Either, select};
 use embassy_stm32::gpio::Output;
 use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
-use embassy_stm32::{bind_interrupts, peripherals};
+use embassy_stm32::{Peri, bind_interrupts, peripherals};
 use embassy_time::{Duration, Ticker, Timer, with_timeout};
 use uom::si::electric_potential;
 use usbpd::protocol_layer::message::request::{self, CurrentRequest, VoltageRequest};
@@ -20,11 +20,11 @@ bind_interrupts!(struct Irqs {
 });
 
 pub struct UcpdResources {
-    pub ucpd: peripherals::UCPD1,
-    pub pin_cc1: peripherals::PB6,
-    pub pin_cc2: peripherals::PB4,
-    pub rx_dma: peripherals::DMA1_CH1,
-    pub tx_dma: peripherals::DMA1_CH2,
+    pub ucpd: Peri<'static, peripherals::UCPD1>,
+    pub pin_cc1: Peri<'static, peripherals::PB6>,
+    pub pin_cc2: Peri<'static, peripherals::PB4>,
+    pub rx_dma: Peri<'static, peripherals::DMA1_CH1>,
+    pub tx_dma: Peri<'static, peripherals::DMA1_CH2>,
     pub tcpp01_m12_ndb: Output<'static>,
 }
 
@@ -213,10 +213,10 @@ impl DevicePolicyManager for Device {
 pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
     loop {
         let mut ucpd = Ucpd::new(
-            &mut ucpd_resources.ucpd,
+            ucpd_resources.ucpd.reborrow(),
             Irqs {},
-            &mut ucpd_resources.pin_cc1,
-            &mut ucpd_resources.pin_cc2,
+            ucpd_resources.pin_cc1.reborrow(),
+            ucpd_resources.pin_cc2.reborrow(),
             Default::default(),
         );
 
@@ -238,7 +238,11 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
             }
             CableOrientation::DebugAccessoryMode => panic!("No PD communication in DAM"),
         };
-        let (mut cc_phy, pd_phy) = ucpd.split_pd_phy(&mut ucpd_resources.rx_dma, &mut ucpd_resources.tx_dma, cc_sel);
+        let (mut cc_phy, pd_phy) = ucpd.split_pd_phy(
+            ucpd_resources.rx_dma.reborrow(),
+            ucpd_resources.tx_dma.reborrow(),
+            cc_sel,
+        );
 
         let driver = UcpdSinkDriver::new(pd_phy);
         let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(driver, Device::default());
