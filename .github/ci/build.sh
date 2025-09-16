@@ -1,11 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
+export RUSTFLAGS="-D warnings"
+
 for dir in usbpd usbpd-traits examples/embassy-nucleo-h563zi examples/embassy-stm32-g431cb;
 do
     pushd $dir
     cargo +nightly fmt --check
-    cargo clippy -- -D warnings
+    cargo clippy
     cargo build --release
     popd
 done
@@ -13,7 +15,7 @@ done
 for dir in usbpd usbpd-traits
 do
     pushd $dir
-    cargo clippy --features defmt -- -D warnings
+    cargo clippy --features defmt
     popd
 done
 

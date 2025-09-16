@@ -26,6 +26,6 @@ async fn main(spawner: Spawner) {
             tx_dma: p.DMA1_CH2,
             tcpp01_m12_ndb,
         };
-        unwrap!(spawner.spawn(power::ucpd_task(ucpd_resources)));
+        spawner.spawn(unwrap!(power::ucpd_task(ucpd_resources)));
     }
 }

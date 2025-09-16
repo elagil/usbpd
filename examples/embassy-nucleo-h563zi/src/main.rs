@@ -32,6 +32,6 @@ async fn main(spawner: Spawner) {
             led_yellow,
             led_red,
         };
-        unwrap!(spawner.spawn(power::ucpd_task(ucpd_resources)));
+        spawner.spawn(unwrap!(power::ucpd_task(ucpd_resources)));
     }
 }
