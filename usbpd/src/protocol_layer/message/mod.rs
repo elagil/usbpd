@@ -6,11 +6,15 @@ pub mod header;
 
 // FIXME: add documentation
 #[allow(missing_docs)]
-pub mod pdo;
+pub mod source_capabilities;
 
 // FIXME: add documentation
 #[allow(missing_docs)]
-pub mod vdo;
+pub mod epr_mode;
+
+// FIXME: add documentation
+#[allow(missing_docs)]
+pub mod vendor_defined;
 
 // FIXME: add documentation
 #[allow(missing_docs)]
@@ -50,8 +54,6 @@ mod tests {
 use byteorder::{ByteOrder, LittleEndian};
 use header::{DataMessageType, Header, MessageType};
 use heapless::Vec;
-use pdo::{PowerDataObject, RawPowerDataObject, SourceCapabilities};
-use vdo::{VDMHeader, VDMHeaderRaw, VDMHeaderStructured, VDMHeaderUnstructured, VDMType};
 
 pub(super) mod _50milliamperes_mod {
     unit! {
@@ -94,27 +96,32 @@ pub(super) mod _250milliwatts_mod {
 /// FIXME: Required?
 pub trait PdoState {
     /// FIXME: Required?
-    fn pdo_at_object_position(&self, position: u8) -> Option<pdo::Kind>;
+    fn pdo_at_object_position(&self, position: u8) -> Option<source_capabilities::Kind>;
 }
 
 impl PdoState for () {
-    fn pdo_at_object_position(&self, _position: u8) -> Option<pdo::Kind> {
+    fn pdo_at_object_position(&self, _position: u8) -> Option<source_capabilities::Kind> {
         None
     }
 }
 
 /// Data that data messages can carry.
+///
+/// TODO: Add missing types as per [6.4].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[allow(unused)] // FIXME: Implement or remove vendor defined data message support.
+#[allow(unused)]
 pub enum Data {
     /// Source capability data.
-    SourceCapabilities(SourceCapabilities),
+    SourceCapabilities(source_capabilities::SourceCapabilities),
     /// Request for a power level from the source.
-    PowerSourceRequest(request::PowerSource),
+    Request(request::PowerSource),
+    /// Used to enter, acknowledge or exit EPR mode.
+    EprMode(epr_mode::EprModeDataObject),
     /// Vendor defined.
-    VendorDefined((VDMHeader, Vec<u32, 7>)), // TODO: Unused, and incomplete
+    VendorDefined((vendor_defined::VdmHeader, Vec<u32, 7>)), // TODO: Unused, and incomplete
     /// Unknown data type.
     Unknown,
 }
@@ -125,11 +132,10 @@ impl Data {
         match self {
             Self::Unknown => 0,
             Self::SourceCapabilities(_) => unimplemented!(),
-            Self::PowerSourceRequest(request::PowerSource::FixedVariableSupply(data_object)) => {
-                data_object.to_bytes(payload)
-            }
-            Self::PowerSourceRequest(request::PowerSource::Pps(data_object)) => data_object.to_bytes(payload),
-            Self::PowerSourceRequest(_) => unimplemented!(),
+            Self::Request(request::PowerSource::FixedVariableSupply(data_object)) => data_object.to_bytes(payload),
+            Self::Request(request::PowerSource::Pps(data_object)) => data_object.to_bytes(payload),
+            Self::Request(_) => unimplemented!(),
+            Self::EprMode(_) => unimplemented!(),
             Self::VendorDefined(_) => unimplemented!(),
         }
     }
@@ -181,29 +187,38 @@ impl Message {
 
         match message.header.message_type() {
             MessageType::Control(_) => (),
+            MessageType::ExtendedControl(_) => (),
             MessageType::Data(DataMessageType::SourceCapabilities) => {
-                message.data = Some(Data::SourceCapabilities(SourceCapabilities(
+                message.data = Some(Data::SourceCapabilities(source_capabilities::SourceCapabilities(
                     payload
                         .chunks_exact(4)
                         .take(message.header.num_objects())
-                        .map(|buf| RawPowerDataObject(LittleEndian::read_u32(buf)))
+                        .map(|buf| source_capabilities::RawPowerDataObject(LittleEndian::read_u32(buf)))
                         .map(|pdo| match pdo.kind() {
-                            0b00 => PowerDataObject::FixedSupply(pdo::FixedSupply(pdo.0)),
-                            0b01 => PowerDataObject::Battery(pdo::Battery(pdo.0)),
-                            0b10 => PowerDataObject::VariableSupply(pdo::VariableSupply(pdo.0)),
-                            0b11 => PowerDataObject::Augmented({
-                                match pdo::AugmentedRaw(pdo.0).supply() {
-                                    0b00 => pdo::Augmented::Spr(pdo::SprProgrammablePowerSupply(pdo.0)),
-                                    0b01 => pdo::Augmented::Epr(pdo::EprAdjustableVoltageSupply(pdo.0)),
+                            0b00 => source_capabilities::PowerDataObject::FixedSupply(
+                                source_capabilities::FixedSupply(pdo.0),
+                            ),
+                            0b01 => source_capabilities::PowerDataObject::Battery(source_capabilities::Battery(pdo.0)),
+                            0b10 => source_capabilities::PowerDataObject::VariableSupply(
+                                source_capabilities::VariableSupply(pdo.0),
+                            ),
+                            0b11 => source_capabilities::PowerDataObject::Augmented({
+                                match source_capabilities::AugmentedRaw(pdo.0).supply() {
+                                    0b00 => source_capabilities::Augmented::Spr(
+                                        source_capabilities::SprProgrammablePowerSupply(pdo.0),
+                                    ),
+                                    0b01 => source_capabilities::Augmented::Epr(
+                                        source_capabilities::EprAdjustableVoltageSupply(pdo.0),
+                                    ),
                                     x => {
                                         warn!("Unknown AugmentedPowerDataObject supply {}", x);
-                                        pdo::Augmented::Unknown(pdo.0)
+                                        source_capabilities::Augmented::Unknown(pdo.0)
                                     }
                                 }
                             }),
                             _ => {
                                 warn!("Unknown PowerDataObject kind");
-                                PowerDataObject::Unknown(pdo)
+                                source_capabilities::PowerDataObject::Unknown(pdo)
                             }
                         })
                         .collect(),
@@ -216,16 +231,16 @@ impl Message {
                 }
                 let raw = request::RawDataObject(LittleEndian::read_u32(payload));
                 if let Some(t) = state.pdo_at_object_position(raw.object_position()) {
-                    message.data = Some(Data::PowerSourceRequest(match t {
-                        pdo::Kind::FixedSupply | pdo::Kind::VariableSupply => {
+                    message.data = Some(Data::Request(match t {
+                        source_capabilities::Kind::FixedSupply | source_capabilities::Kind::VariableSupply => {
                             request::PowerSource::FixedVariableSupply(request::FixedVariableSupply(raw.0))
                         }
-                        pdo::Kind::Battery => request::PowerSource::Battery(request::Battery(raw.0)),
-                        pdo::Kind::Pps => request::PowerSource::Pps(request::Pps(raw.0)),
-                        pdo::Kind::Avs => request::PowerSource::Avs(request::Avs(raw.0)),
+                        source_capabilities::Kind::Battery => request::PowerSource::Battery(request::Battery(raw.0)),
+                        source_capabilities::Kind::Pps => request::PowerSource::Pps(request::Pps(raw.0)),
+                        source_capabilities::Kind::Avs => request::PowerSource::Avs(request::Avs(raw.0)),
                     }));
                 } else {
-                    message.data = Some(Data::PowerSourceRequest(request::PowerSource::Unknown(raw)));
+                    message.data = Some(Data::Request(request::PowerSource::Unknown(raw)));
                 }
             }
             MessageType::Data(DataMessageType::VendorDefined) => {
@@ -239,10 +254,14 @@ impl Message {
                 trace!("VENDOR: {:?}, {:?}, {:?}", len, num_obj, payload);
 
                 let header = {
-                    let raw = VDMHeaderRaw(LittleEndian::read_u32(&payload[..4]));
+                    let raw = vendor_defined::VdmHeaderRaw(LittleEndian::read_u32(&payload[..4]));
                     match raw.vdm_type() {
-                        VDMType::Unstructured => VDMHeader::Unstructured(VDMHeaderUnstructured(raw.0)),
-                        VDMType::Structured => VDMHeader::Structured(VDMHeaderStructured(raw.0)),
+                        vendor_defined::VdmType::Unstructured => {
+                            vendor_defined::VdmHeader::Unstructured(vendor_defined::VdmHeaderUnstructured(raw.0))
+                        }
+                        vendor_defined::VdmType::Structured => {
+                            vendor_defined::VdmHeader::Structured(vendor_defined::VdmHeaderStructured(raw.0))
+                        }
                     }
                 };
 

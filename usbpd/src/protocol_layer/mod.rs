@@ -436,6 +436,23 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         self.transmit(message).await
     }
 
+    /// Transmit a data message of the provided type.
+    pub async fn _transmit_data_message(
+        &mut self,
+        message_type: DataMessageType,
+        _data: Data,
+        num_objects: u8,
+    ) -> Result<(), ProtocolError> {
+        let message = Message::new(Header::new_data(
+            self.default_header,
+            self.counters.tx_message,
+            message_type,
+            num_objects,
+        ));
+
+        self.transmit(message).await
+    }
+
     /// Request a certain power level from the source.
     pub async fn request_power(&mut self, power_source_request: request::PowerSource) -> Result<(), ProtocolError> {
         // Only sinks can request from a supply.
@@ -448,11 +465,8 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             1,
         );
 
-        self.transmit(Message::new_with_data(
-            header,
-            Data::PowerSourceRequest(power_source_request),
-        ))
-        .await
+        self.transmit(Message::new_with_data(header, Data::Request(power_source_request)))
+            .await
     }
 }
 
@@ -464,7 +478,7 @@ mod tests {
     use super::ProtocolLayer;
     use super::message::Data;
     use super::message::header::Header;
-    use super::message::pdo::SourceCapabilities;
+    use super::message::source_capabilities::SourceCapabilities;
     use crate::dummy::{DUMMY_CAPABILITIES, DummyDriver, DummyTimer, get_dummy_source_capabilities};
 
     fn get_protocol_layer() -> ProtocolLayer<DummyDriver<30>, DummyTimer> {

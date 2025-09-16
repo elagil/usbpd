@@ -4,8 +4,8 @@ use proc_bitfield::bitfield;
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VendorDataObject {
-    VDMHeader(VDMHeader),
-    IDHeader(VDMIdentityHeader),
+    VdmHeader(VdmHeader),
+    IDHeader(VdmIdentityHeader),
     CertStat(CertStatVDO),
     Product(ProductVDO),
     UFPType(UFPTypeVDO),
@@ -14,7 +14,7 @@ pub enum VendorDataObject {
 impl VendorDataObject {
     pub fn to_bytes(self, buf: &mut [u8]) {
         match self {
-            VendorDataObject::VDMHeader(header) => header.to_bytes(buf),
+            VendorDataObject::VdmHeader(header) => header.to_bytes(buf),
             VendorDataObject::IDHeader(header) => header.to_bytes(buf),
             VendorDataObject::CertStat(header) => header.to_bytes(buf),
             VendorDataObject::Product(header) => header.to_bytes(buf),
@@ -26,7 +26,7 @@ impl VendorDataObject {
 impl From<VendorDataObject> for u32 {
     fn from(value: VendorDataObject) -> Self {
         match value {
-            VendorDataObject::VDMHeader(header) => header.into(),
+            VendorDataObject::VdmHeader(header) => header.into(),
             VendorDataObject::IDHeader(header) => header.into(),
             VendorDataObject::CertStat(header) => header.into(),
             VendorDataObject::Product(header) => header.into(),
@@ -37,32 +37,32 @@ impl From<VendorDataObject> for u32 {
 
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum VDMCommandType {
+pub enum VdmCommandType {
     InitiatorREQ,
     ResponderACK,
     ResponderNAK,
     ResponderBSY,
 }
 
-impl From<VDMCommandType> for u8 {
-    fn from(value: VDMCommandType) -> Self {
+impl From<VdmCommandType> for u8 {
+    fn from(value: VdmCommandType) -> Self {
         match value {
-            VDMCommandType::InitiatorREQ => 0,
-            VDMCommandType::ResponderACK => 1,
-            VDMCommandType::ResponderNAK => 2,
-            VDMCommandType::ResponderBSY => 3,
+            VdmCommandType::InitiatorREQ => 0,
+            VdmCommandType::ResponderACK => 1,
+            VdmCommandType::ResponderNAK => 2,
+            VdmCommandType::ResponderBSY => 3,
         }
     }
 }
 
-impl From<u8> for VDMCommandType {
+impl From<u8> for VdmCommandType {
     fn from(value: u8) -> Self {
         match value {
-            0 => VDMCommandType::InitiatorREQ,
-            1 => VDMCommandType::ResponderACK,
-            2 => VDMCommandType::ResponderNAK,
-            3 => VDMCommandType::ResponderBSY,
-            _ => panic!("Cannot convert {} to VDMCommandType", value), /* Illegal values shall
+            0 => VdmCommandType::InitiatorREQ,
+            1 => VdmCommandType::ResponderACK,
+            2 => VdmCommandType::ResponderNAK,
+            3 => VdmCommandType::ResponderBSY,
+            _ => panic!("Cannot convert {} to VdmCommandType", value), /* Illegal values shall
                                                                         * panic. */
         }
     }
@@ -70,7 +70,7 @@ impl From<u8> for VDMCommandType {
 
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum VDMCommand {
+pub enum VdmCommand {
     DiscoverIdentity,
     DiscoverSVIDS,
     DiscoverModes,
@@ -81,59 +81,59 @@ pub enum VDMCommand {
     DisplayPortConfig,
 }
 
-impl From<VDMCommand> for u8 {
-    fn from(value: VDMCommand) -> Self {
+impl From<VdmCommand> for u8 {
+    fn from(value: VdmCommand) -> Self {
         match value {
-            VDMCommand::DiscoverIdentity => 0x1,
-            VDMCommand::DiscoverSVIDS => 0x2,
-            VDMCommand::DiscoverModes => 0x3,
-            VDMCommand::EnterMode => 0x4,
-            VDMCommand::ExitMode => 0x5,
-            VDMCommand::Attention => 0x6,
-            VDMCommand::DisplayPortStatus => 0x10,
-            VDMCommand::DisplayPortConfig => 0x11,
+            VdmCommand::DiscoverIdentity => 0x1,
+            VdmCommand::DiscoverSVIDS => 0x2,
+            VdmCommand::DiscoverModes => 0x3,
+            VdmCommand::EnterMode => 0x4,
+            VdmCommand::ExitMode => 0x5,
+            VdmCommand::Attention => 0x6,
+            VdmCommand::DisplayPortStatus => 0x10,
+            VdmCommand::DisplayPortConfig => 0x11,
         }
     }
 }
 
-impl From<u8> for VDMCommand {
+impl From<u8> for VdmCommand {
     fn from(value: u8) -> Self {
         match value {
-            0x01 => VDMCommand::DiscoverIdentity,
-            0x02 => VDMCommand::DiscoverSVIDS,
-            0x03 => VDMCommand::DiscoverModes,
-            0x04 => VDMCommand::EnterMode,
-            0x05 => VDMCommand::ExitMode,
-            0x06 => VDMCommand::Attention,
-            0x10 => VDMCommand::DisplayPortStatus,
-            0x11 => VDMCommand::DisplayPortConfig,
+            0x01 => VdmCommand::DiscoverIdentity,
+            0x02 => VdmCommand::DiscoverSVIDS,
+            0x03 => VdmCommand::DiscoverModes,
+            0x04 => VdmCommand::EnterMode,
+            0x05 => VdmCommand::ExitMode,
+            0x06 => VdmCommand::Attention,
+            0x10 => VdmCommand::DisplayPortStatus,
+            0x11 => VdmCommand::DisplayPortConfig,
             // TODO: Find document that explains what 0x12-0x1f are (DP_SID??)
-            _ => panic!("Cannot convert {} to VDMCommand", value), // Illegal values shall panic.
+            _ => panic!("Cannot convert {} to VdmCommand", value), // Illegal values shall panic.
         }
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum VDMType {
+pub enum VdmType {
     Unstructured,
     Structured,
 }
 
-impl From<VDMType> for bool {
-    fn from(value: VDMType) -> Self {
+impl From<VdmType> for bool {
+    fn from(value: VdmType) -> Self {
         match value {
-            VDMType::Unstructured => false,
-            VDMType::Structured => true,
+            VdmType::Unstructured => false,
+            VdmType::Structured => true,
         }
     }
 }
 
-impl From<bool> for VDMType {
+impl From<bool> for VdmType {
     fn from(value: bool) -> Self {
         match value {
-            true => VDMType::Structured,
-            false => VDMType::Unstructured,
+            true => VdmType::Structured,
+            false => VdmType::Unstructured,
         }
     }
 }
@@ -141,35 +141,35 @@ impl From<bool> for VDMType {
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum VDMHeader {
-    Structured(VDMHeaderStructured),
-    Unstructured(VDMHeaderUnstructured),
+pub enum VdmHeader {
+    Structured(VdmHeaderStructured),
+    Unstructured(VdmHeaderUnstructured),
 }
 
-impl VDMHeader {
+impl VdmHeader {
     pub fn to_bytes(self, buf: &mut [u8]) {
         match self {
-            VDMHeader::Structured(header) => header.to_bytes(buf),
-            VDMHeader::Unstructured(header) => header.to_bytes(buf),
+            VdmHeader::Structured(header) => header.to_bytes(buf),
+            VdmHeader::Unstructured(header) => header.to_bytes(buf),
         }
     }
 }
 
-impl From<VDMHeader> for u32 {
-    fn from(value: VDMHeader) -> Self {
+impl From<VdmHeader> for u32 {
+    fn from(value: VdmHeader) -> Self {
         match value {
-            VDMHeader::Structured(header) => header.into(),
-            VDMHeader::Unstructured(header) => header.into(),
+            VdmHeader::Structured(header) => header.into(),
+            VdmHeader::Unstructured(header) => header.into(),
         }
     }
 }
 
-impl From<u32> for VDMHeader {
+impl From<u32> for VdmHeader {
     fn from(value: u32) -> Self {
-        let header = VDMHeaderRaw(value);
+        let header = VdmHeaderRaw(value);
         match header.vdm_type() {
-            VDMType::Structured => VDMHeader::Structured(VDMHeaderStructured(value)),
-            VDMType::Unstructured => VDMHeader::Unstructured(VDMHeaderUnstructured(value)),
+            VdmType::Structured => VdmHeader::Structured(VdmHeaderStructured(value)),
+            VdmType::Unstructured => VdmHeader::Unstructured(VdmHeaderUnstructured(value)),
         }
     }
 }
@@ -177,15 +177,15 @@ impl From<u32> for VDMHeader {
 bitfield! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub struct VDMHeaderRaw(pub u32): FromStorage, IntoStorage {
+    pub struct VdmHeaderRaw(pub u32): FromStorage, IntoStorage {
         /// VDM Standard or Vendor ID
         pub standard_or_vid: u16 @ 16..=31,
         /// VDM Type (Unstructured/Structured)
-        pub vdm_type: bool [VDMType] @ 15,
+        pub vdm_type: bool [VdmType] @ 15,
     }
 }
 
-impl VDMHeaderRaw {
+impl VdmHeaderRaw {
     pub fn to_bytes(self, buf: &mut [u8]) {
         LittleEndian::write_u32(buf, self.0);
     }
@@ -195,84 +195,84 @@ bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-    pub struct VDMHeaderStructured(pub u32): FromStorage, IntoStorage {
+    pub struct VdmHeaderStructured(pub u32): FromStorage, IntoStorage {
         /// VDM Standard or Vendor ID
         pub standard_or_vid: u16 @ 16..=31,
         /// VDM Type (Unstructured/Structured)
-        pub vdm_type: bool [VDMType] @ 15,
-        /// Structured VDM Version
+        pub vdm_type: bool [VdmType] @ 15,
+        /// Structured VDM version, major
         pub vdm_version_major: u8 @ 13..=14,
+        /// Structured VDM version, minor
         pub vdm_version_minor: u8 @ 11..=12,
         /// Object Position
         pub object_position: u8 @ 8..=10,
         /// Command Type
-        pub command_type: u8 [VDMCommandType] @ 6..=7,
+        pub command_type: u8 [VdmCommandType] @ 6..=7,
         /// Command
-        pub command: u8 [VDMCommand] @ 0..=4,
+        pub command: u8 [VdmCommand] @ 0..=4,
     }
 }
 
-impl VDMHeaderStructured {
+impl VdmHeaderStructured {
     pub fn to_bytes(self, buf: &mut [u8]) {
         LittleEndian::write_u32(buf, self.0);
     }
 }
 
-impl Default for VDMHeaderStructured {
+impl Default for VdmHeaderStructured {
     fn default() -> Self {
-        VDMHeaderStructured(0).with_vdm_type(VDMType::Structured)
+        VdmHeaderStructured(0).with_vdm_type(VdmType::Structured)
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum VDMVersionMajor {
+pub enum VdmVersionMajor {
     Version10,
     Version2x,
 }
 
-impl From<VDMVersionMajor> for u8 {
-    fn from(value: VDMVersionMajor) -> Self {
+impl From<VdmVersionMajor> for u8 {
+    fn from(value: VdmVersionMajor) -> Self {
         match value {
-            VDMVersionMajor::Version10 => 0b00,
-            VDMVersionMajor::Version2x => 0b01,
+            VdmVersionMajor::Version10 => 0b00,
+            VdmVersionMajor::Version2x => 0b01,
         }
     }
 }
 
-impl From<u8> for VDMVersionMajor {
+impl From<u8> for VdmVersionMajor {
     fn from(value: u8) -> Self {
         match value {
-            0b00 => VDMVersionMajor::Version10,
-            0b01 => VDMVersionMajor::Version2x,
-            _ => panic!("Cannot convert {} to VDMVersionMajor", value), /* Illegal values shall
-                                                                         * panic. */
+            0b00 => VdmVersionMajor::Version10,
+            0b01 => VdmVersionMajor::Version2x,
+            _ => panic!("Cannot convert {} to VdmVersionMajor", value), // Illegal values shall panic.
         }
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum VDMVersionMinor {
+pub enum VdmVersionMinor {
     Version20,
     Version21,
 }
 
-impl From<VDMVersionMinor> for u8 {
-    fn from(value: VDMVersionMinor) -> Self {
+impl From<VdmVersionMinor> for u8 {
+    fn from(value: VdmVersionMinor) -> Self {
         match value {
-            VDMVersionMinor::Version20 => 0b00,
-            VDMVersionMinor::Version21 => 0b01,
+            VdmVersionMinor::Version20 => 0b00,
+            VdmVersionMinor::Version21 => 0b01,
         }
     }
 }
 
-impl From<u8> for VDMVersionMinor {
+impl From<u8> for VdmVersionMinor {
     fn from(value: u8) -> Self {
         match value {
-            0b00 => VDMVersionMinor::Version20,
-            0b01 => VDMVersionMinor::Version21,
-            _ => panic!("Cannot convert {} to VDMVersionMinor", value), /* Illegal values shall
+            0b00 => VdmVersionMinor::Version20,
+            0b01 => VdmVersionMinor::Version21,
+            _ => panic!("Cannot convert {} to VdmVersionMinor", value), /* Illegal values shall
                                                                          * panic. */
         }
     }
@@ -282,17 +282,17 @@ bitfield! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-    pub struct VDMHeaderUnstructured(pub u32): FromStorage, IntoStorage {
-        /// VDM Standard or Vendor ID
+    pub struct VdmHeaderUnstructured(pub u32): FromStorage, IntoStorage {
+        /// Vdm Standard or Vendor ID
         pub standard_or_vid: u16 @ 16..=31,
-        /// VDM Type (Unstructured/Structured)
-        pub vdm_type: bool [VDMType] @ 15,
+        /// Vdm Type (Unstructured/Structured)
+        pub vdm_type: bool [VdmType] @ 15,
         /// Message defined
         pub data: u16 @ 0..=14
     }
 }
 
-impl VDMHeaderUnstructured {
+impl VdmHeaderUnstructured {
     pub fn to_bytes(self, buf: &mut [u8]) {
         LittleEndian::write_u32(buf, self.0);
     }
@@ -301,7 +301,7 @@ impl VDMHeaderUnstructured {
 bitfield! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    pub struct VDMIdentityHeader(pub u32): FromStorage, IntoStorage {
+    pub struct VdmIdentityHeader(pub u32): FromStorage, IntoStorage {
         /// Host data capable
         pub host_data: bool @ 31,
         /// Device data capable
@@ -319,7 +319,7 @@ bitfield! {
     }
 }
 
-impl VDMIdentityHeader {
+impl VdmIdentityHeader {
     pub fn to_bytes(self, buf: &mut [u8]) {
         LittleEndian::write_u32(buf, self.0);
     }
@@ -412,8 +412,7 @@ impl From<u8> for ConnectorType {
         match value {
             0b10 => ConnectorType::USBTypeCReceptacle,
             0b11 => ConnectorType::USBTypeCPlug,
-            _ => panic!("Cannot convert {} to ConnectorType", value), /* Illegal values shall
-                                                                       * panic. */
+            _ => panic!("Cannot convert {} to ConnectorType", value), // Illegal values shall panic.
         }
     }
 }
@@ -499,8 +498,7 @@ impl From<u8> for USBHighestSpeed {
             0b010 => USBHighestSpeed::USB32Gen2,
             0b011 => USBHighestSpeed::USB40Gen3,
             0b100 => USBHighestSpeed::USB40Gen4,
-            _ => panic!("Cannot convert {} to USBHighestSpeed", value), /* Illegal values shall
-                                                                         * panic. */
+            _ => panic!("Cannot convert {} to USBHighestSpeed", value), // Illegal values shall panic.
         }
     }
 }
@@ -564,8 +562,7 @@ impl From<u8> for UFPVDOVersion {
     fn from(value: u8) -> Self {
         match value {
             0b011 => UFPVDOVersion::Version1_3,
-            _ => panic!("Cannot convert {} to UFPVDOVersion", value), /* Illegal values shall
-                                                                       * panic. */
+            _ => panic!("Cannot convert {} to UFPVDOVersion", value), // Illegal values shall panic.
         }
     }
 }
