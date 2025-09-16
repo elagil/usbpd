@@ -33,5 +33,5 @@ tokio = { version = "1.47.1", features = ["rt", "macros"] }
 default = []
 
 log = ["dep:log"]
-defmt = ["dep:defmt", "heapless/defmt-03"]
+defmt = ["dep:defmt", "heapless/defmt"]
 serde = ["dep:serde", "heapless/serde"]
