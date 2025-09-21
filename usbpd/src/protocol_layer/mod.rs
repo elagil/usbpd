@@ -489,6 +489,7 @@ mod tests {
     use super::message::data::source_capabilities::SourceCapabilities;
     use super::message::header::Header;
     use crate::dummy::{DUMMY_CAPABILITIES, DummyDriver, DummyTimer, get_dummy_source_capabilities};
+    use crate::protocol_layer::message::Payload;
 
     fn get_protocol_layer() -> ProtocolLayer<DummyDriver<30>, DummyTimer> {
         ProtocolLayer::new(
@@ -508,7 +509,7 @@ mod tests {
         protocol_layer.driver.inject_received_data(&DUMMY_CAPABILITIES);
         let message = protocol_layer.receive_message().await.unwrap();
 
-        if let Some(Data::SourceCapabilities(SourceCapabilities(caps))) = message.payload {
+        if let Some(Payload::Data(Data::SourceCapabilities(SourceCapabilities(caps)))) = message.payload {
             for (cap, dummy_cap) in zip(caps, get_dummy_source_capabilities()) {
                 assert_eq!(cap, dummy_cap);
             }
