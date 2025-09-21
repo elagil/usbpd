@@ -4,7 +4,7 @@ use std::vec::Vec;
 
 use usbpd_traits::Driver;
 
-use crate::protocol_layer::message::source_capabilities::{
+use crate::protocol_layer::message::data::source_capabilities::{
     Augmented, FixedSupply, PowerDataObject, SprProgrammablePowerSupply,
 };
 use crate::sink::device_policy_manager::DevicePolicyManager as SinkDevicePolicyManager;

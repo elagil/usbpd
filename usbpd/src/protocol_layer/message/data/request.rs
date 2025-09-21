@@ -4,11 +4,11 @@ use proc_bitfield::bitfield;
 use uom::si::electric_current::{self, centiampere};
 use uom::si::{self};
 
-use super::_20millivolts_mod::_20millivolts;
-use super::_50milliamperes_mod::_50milliamperes;
-use super::_250milliwatts_mod::_250milliwatts;
 use super::source_capabilities;
-use super::units::{ElectricCurrent, ElectricPotential};
+use crate::_20millivolts_mod::_20millivolts;
+use crate::_50milliamperes_mod::_50milliamperes;
+use crate::_250milliwatts_mod::_250milliwatts;
+use crate::units::{ElectricCurrent, ElectricPotential};
 
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]

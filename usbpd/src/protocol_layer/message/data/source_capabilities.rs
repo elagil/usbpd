@@ -4,11 +4,11 @@ use uom::si::electric_current::centiampere;
 use uom::si::electric_potential::decivolt;
 use uom::si::power::watt;
 
-use super::_50milliamperes_mod::_50milliamperes;
-use super::_50millivolts_mod::_50millivolts;
-use super::_250milliwatts_mod::_250milliwatts;
 use super::PdoState;
-use super::units::{ElectricCurrent, ElectricPotential, Power};
+use crate::_50milliamperes_mod::_50milliamperes;
+use crate::_50millivolts_mod::_50millivolts;
+use crate::_250milliwatts_mod::_250milliwatts;
+use crate::units::{ElectricCurrent, ElectricPotential, Power};
 
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

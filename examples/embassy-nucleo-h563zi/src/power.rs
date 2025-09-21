@@ -7,12 +7,12 @@ use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
 use embassy_stm32::{Peri, bind_interrupts, peripherals};
 use embassy_time::{Duration, Ticker, Timer, with_timeout};
 use uom::si::electric_potential;
-use usbpd::protocol_layer::message::request::{self, CurrentRequest, VoltageRequest};
-use usbpd::protocol_layer::message::source_capabilities::SourceCapabilities;
-use usbpd::protocol_layer::message::units::ElectricPotential;
+use usbpd::protocol_layer::message::data::request::{self, CurrentRequest, VoltageRequest};
+use usbpd::protocol_layer::message::data::source_capabilities::SourceCapabilities;
 use usbpd::sink::device_policy_manager::{DevicePolicyManager, Event};
 use usbpd::sink::policy_engine::Sink;
 use usbpd::timers::Timer as SinkTimer;
+use usbpd::units::ElectricPotential;
 use usbpd_traits::Driver as SinkDriver;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -128,21 +128,31 @@ enum TestCapabilities {
     Safe5V,
     Pps3V6,
     Pps4V2,
+    RequestEprSourceCapabilities,
 }
 
 struct Device<'d> {
     ticker: Ticker,
     test_capabilities: TestCapabilities,
     led: &'d mut Output<'static>,
+    source_capabilities: Option<SourceCapabilities>,
 }
 
 impl DevicePolicyManager for Device<'_> {
+    async fn inform(&mut self, source_capabilities: &SourceCapabilities) {
+        info!("New caps received {}", source_capabilities);
+
+        self.source_capabilities = Some(source_capabilities.clone());
+    }
+
     async fn get_event(&mut self, source_capabilities: &SourceCapabilities) -> Event {
         // Periodically request another power level.
         self.ticker.next().await;
         self.led.toggle();
+        self.source_capabilities = Some(source_capabilities.clone());
 
         info!("Test capabilities: {}", self.test_capabilities);
+
         let (power_source, new_test_capabilties) = match self.test_capabilities {
             TestCapabilities::Safe5V => (
                 request::PowerSource::new_fixed(CurrentRequest::Highest, VoltageRequest::Safe5V, source_capabilities),
@@ -162,8 +172,12 @@ impl DevicePolicyManager for Device<'_> {
                     ElectricPotential::new::<electric_potential::millivolt>(4200),
                     source_capabilities,
                 ),
-                TestCapabilities::Safe5V,
+                TestCapabilities::RequestEprSourceCapabilities,
             ),
+            TestCapabilities::RequestEprSourceCapabilities => {
+                self.test_capabilities = TestCapabilities::Safe5V;
+                return Event::RequestEprSourceCapabilities;
+            }
         };
 
         let event = if let Ok(power_source) = power_source {
@@ -220,7 +234,8 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
 
         let driver = UcpdSinkDriver::new(pd_phy);
         let device = Device {
-            ticker: Ticker::every(Duration::from_secs(8)),
+            source_capabilities: None,
+            ticker: Ticker::every(Duration::from_secs(3)),
             test_capabilities: TestCapabilities::Safe5V,
             led: &mut ucpd_resources.led_red,
         };

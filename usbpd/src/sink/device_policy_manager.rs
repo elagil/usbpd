@@ -4,7 +4,7 @@
 //! or renegotiate the power contract.
 use core::future::Future;
 
-use crate::protocol_layer::message::{request, source_capabilities};
+use crate::protocol_layer::message::data::{request, source_capabilities};
 
 /// Events that the device policy manager can send to the policy engine.
 #[derive(Debug)]

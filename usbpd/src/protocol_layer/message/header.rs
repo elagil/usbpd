@@ -46,7 +46,7 @@ impl Header {
             .with_message_id(message_id.value())
             .with_message_type_raw(match message_type {
                 MessageType::Control(x) => x as u8,
-                MessageType::ExtendedControl(x) => x as u8,
+                MessageType::Extended(x) => x as u8,
                 MessageType::Data(x) => x as u8,
             })
             .with_num_objects(num_objects)
@@ -57,16 +57,6 @@ impl Header {
         Self::new(template, message_id, MessageType::Control(message_type), 0, false)
     }
 
-    pub fn new_extended_control(template: Self, message_id: Counter, message_type: ExtendedControlMessageType) -> Self {
-        Self::new(
-            template,
-            message_id,
-            MessageType::ExtendedControl(message_type),
-            0,
-            false,
-        )
-    }
-
     pub fn new_data(template: Self, message_id: Counter, message_type: DataMessageType, num_objects: u8) -> Self {
         Self::new(
             template,
@@ -74,6 +64,21 @@ impl Header {
             MessageType::Data(message_type),
             num_objects,
             false,
+        )
+    }
+
+    pub fn new_extended(
+        template: Self,
+        message_id: Counter,
+        extended_message_type: ExtendedMessageType,
+        num_objects: u8,
+    ) -> Self {
+        Self::new(
+            template,
+            message_id,
+            MessageType::Extended(extended_message_type),
+            num_objects,
+            true,
         )
     }
 
@@ -94,7 +99,7 @@ impl Header {
     pub fn message_type(&self) -> MessageType {
         if self.num_objects() == 0 {
             if self.extended() {
-                MessageType::ExtendedControl(self.message_type_raw().into())
+                MessageType::Extended(self.message_type_raw().into())
             } else {
                 MessageType::Control(self.message_type_raw().into())
             }
@@ -138,8 +143,8 @@ impl From<SpecificationRevision> for u8 {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum MessageType {
     Control(ControlMessageType),
-    ExtendedControl(ExtendedControlMessageType),
     Data(DataMessageType),
+    Extended(ExtendedMessageType),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -264,4 +269,56 @@ impl From<u8> for DataMessageType {
             _ => Self::Reserved,
         }
     }
+}
+
+impl From<u8> for ExtendedMessageType {
+    fn from(value: u8) -> Self {
+        match value {
+            0b0_0001 => Self::SourceCapabilitiesExtended,
+            0b0_0010 => Self::Status,
+            0b0_0011 => Self::GetBatteryCap,
+            0b0_0100 => Self::GetBatteryStatus,
+            0b0_0101 => Self::BatteryCapabilities,
+            0b0_0110 => Self::GetManufacturerInfo,
+            0b0_0111 => Self::ManufacturerInfo,
+            0b0_1000 => Self::SecurityRequest,
+            0b0_1001 => Self::SecurityResponse,
+            0b0_1010 => Self::FirmwareUpdateRequest,
+            0b0_1011 => Self::FirmwareUpdateResponse,
+            0b0_1100 => Self::PpsStatus,
+            0b0_1101 => Self::CountryInfo,
+            0b0_1110 => Self::CountryCodes,
+            0b0_1111 => Self::SinkCapabilitiesExtended,
+            0b1_0000 => Self::ExtendedControl,
+            0b1_0001 => Self::EprSourceCapabilities,
+            0b1_0010 => Self::EprSinkCapabilities,
+            0b1_1110 => Self::VendorDefinedExtended,
+            _ => Self::Reserved,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ExtendedMessageType {
+    SourceCapabilitiesExtended = 0b0_0001,
+    Status = 0b0_0010,
+    GetBatteryCap = 0b0_0011,
+    GetBatteryStatus = 0b0_0100,
+    BatteryCapabilities = 0b0_0101,
+    GetManufacturerInfo = 0b0_0110,
+    ManufacturerInfo = 0b0_0111,
+    SecurityRequest = 0b0_1000,
+    SecurityResponse = 0b0_1001,
+    FirmwareUpdateRequest = 0b0_1010,
+    FirmwareUpdateResponse = 0b0_1011,
+    PpsStatus = 0b0_1100,
+    CountryInfo = 0b0_1101,
+    CountryCodes = 0b0_1110,
+    SinkCapabilitiesExtended = 0b0_1111,
+    ExtendedControl = 0b1_0000,
+    EprSourceCapabilities = 0b1_0001,
+    EprSinkCapabilities = 0b1_0010,
+    VendorDefinedExtended = 0b1_1110,
+    Reserved,
 }

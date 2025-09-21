@@ -6,12 +6,13 @@ use usbpd_traits::Driver;
 
 use super::device_policy_manager::DevicePolicyManager;
 use crate::counters::{Counter, Error as CounterError};
+use crate::protocol_layer::message::Payload;
+use crate::protocol_layer::message::data::request::PowerSource;
+use crate::protocol_layer::message::data::source_capabilities::SourceCapabilities;
+use crate::protocol_layer::message::data::{Data, request};
 use crate::protocol_layer::message::header::{
     ControlMessageType, DataMessageType, ExtendedControlMessageType, Header, MessageType, SpecificationRevision,
 };
-use crate::protocol_layer::message::request::PowerSource;
-use crate::protocol_layer::message::source_capabilities::SourceCapabilities;
-use crate::protocol_layer::message::{Data, request};
 use crate::protocol_layer::{ProtocolError, ProtocolLayer, RxError, TxError};
 use crate::sink::device_policy_manager::Event;
 use crate::timers::{Timer, TimerType};
@@ -205,7 +206,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
         let message = protocol_layer.wait_for_source_capabilities().await?;
         trace!("Source capabilities: {:?}", message);
 
-        let Some(Data::SourceCapabilities(capabilities)) = message.data else {
+        let Some(Payload::Data(Data::SourceCapabilities(capabilities))) = message.payload else {
             unreachable!()
         };
 
@@ -316,7 +317,8 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
 
                         match message.header.message_type() {
                             MessageType::Data(DataMessageType::SourceCapabilities) => {
-                                let Some(Data::SourceCapabilities(capabilities)) = message.data else {
+                                let Some(Payload::Data(Data::SourceCapabilities(capabilities))) = message.payload
+                                else {
                                     unreachable!()
                                 };
                                 State::EvaluateCapabilities(capabilities)
