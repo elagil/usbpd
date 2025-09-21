@@ -16,14 +16,17 @@ use core::future::Future;
 use core::marker::PhantomData;
 
 use embassy_futures::select::{Either, select};
-use message::header::{ControlMessageType, DataMessageType, ExtendedControlMessageType, Header, MessageType};
-use message::request::{self};
-use message::{Data, Message};
+use message::Message;
+use message::data::{Data, request};
+use message::header::{ControlMessageType, DataMessageType, ExtendedMessageType, Header, MessageType};
 use usbpd_traits::{Driver, DriverRxError, DriverTxError};
 
 use crate::PowerRole;
 use crate::counters::{Counter, CounterType, Error as CounterError};
-use crate::protocol_layer::message::ParseError;
+use crate::protocol_layer::message::data::epr_mode::EprModeDataObject;
+use crate::protocol_layer::message::extended::Extended;
+use crate::protocol_layer::message::header::ExtendedControlMessageType;
+use crate::protocol_layer::message::{ParseError, Payload};
 use crate::timers::{Timer, TimerType};
 
 /// The protocol layer does not support extended messages.
@@ -427,11 +430,17 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         &mut self,
         message_type: ExtendedControlMessageType,
     ) -> Result<(), ProtocolError> {
-        let message = Message::new(Header::new_extended_control(
+        let mut message = Message::new(Header::new_extended(
             self.default_header,
             self.counters.tx_message,
-            message_type,
+            ExtendedMessageType::ExtendedControl,
+            1,
         ));
+
+        // FIXME: Put useful data.
+        message.payload = Some(Payload::Extended(Extended::ExtendedControl));
+
+        let _epr_mdo = EprModeDataObject::new().with_action(message_type as u8);
 
         self.transmit(message).await
     }
@@ -476,9 +485,9 @@ mod tests {
     use core::iter::zip;
 
     use super::ProtocolLayer;
-    use super::message::Data;
+    use super::message::data::Data;
+    use super::message::data::source_capabilities::SourceCapabilities;
     use super::message::header::Header;
-    use super::message::source_capabilities::SourceCapabilities;
     use crate::dummy::{DUMMY_CAPABILITIES, DummyDriver, DummyTimer, get_dummy_source_capabilities};
 
     fn get_protocol_layer() -> ProtocolLayer<DummyDriver<30>, DummyTimer> {
@@ -499,7 +508,7 @@ mod tests {
         protocol_layer.driver.inject_received_data(&DUMMY_CAPABILITIES);
         let message = protocol_layer.receive_message().await.unwrap();
 
-        if let Some(Data::SourceCapabilities(SourceCapabilities(caps))) = message.data {
+        if let Some(Data::SourceCapabilities(SourceCapabilities(caps))) = message.payload {
             for (cap, dummy_cap) in zip(caps, get_dummy_source_capabilities()) {
                 assert_eq!(cap, dummy_cap);
             }

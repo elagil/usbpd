@@ -6,12 +6,12 @@ use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
 use embassy_stm32::{Peri, bind_interrupts, peripherals};
 use embassy_time::{Duration, Ticker, Timer, with_timeout};
 use uom::si::electric_potential;
-use usbpd::protocol_layer::message::request::{self, CurrentRequest, VoltageRequest};
-use usbpd::protocol_layer::message::source_capabilities::SourceCapabilities;
-use usbpd::protocol_layer::message::units::ElectricPotential;
+use usbpd::protocol_layer::message::data::request::{self, CurrentRequest, VoltageRequest};
+use usbpd::protocol_layer::message::data::source_capabilities::SourceCapabilities;
 use usbpd::sink::device_policy_manager::{DevicePolicyManager, Event};
 use usbpd::sink::policy_engine::Sink;
 use usbpd::timers::Timer as SinkTimer;
+use usbpd::units::ElectricPotential;
 use usbpd_traits::Driver as SinkDriver;
 use {defmt_rtt as _, panic_probe as _};
 
