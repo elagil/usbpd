@@ -4,7 +4,8 @@
 use byteorder::{ByteOrder, LittleEndian};
 use heapless::Vec;
 
-use crate::protocol_layer::message::{Payload, header::DataMessageType};
+use crate::protocol_layer::message::Payload;
+use crate::protocol_layer::message::header::DataMessageType;
 
 /// PDO State.
 ///
