@@ -1,4 +1,4 @@
-//! Definitions of request message content.
+//! Definitions of request data message content.
 use byteorder::{ByteOrder, LittleEndian};
 use proc_bitfield::bitfield;
 use uom::si::electric_current::{self, centiampere};

@@ -128,26 +128,26 @@ pub const DUMMY_CAPABILITIES: [u8; 30] = [
 pub fn get_dummy_source_capabilities() -> Vec<PowerDataObject> {
     let mut pdos: Vec<PowerDataObject> = Vec::new();
     pdos.push(PowerDataObject::FixedSupply(
-        FixedSupply::new()
+        FixedSupply::default()
             .with_raw_voltage(100)
             .with_raw_max_current(300)
             .with_unconstrained_power(true),
     ));
 
     pdos.push(PowerDataObject::FixedSupply(
-        FixedSupply::new().with_raw_voltage(180).with_raw_max_current(300),
+        FixedSupply::default().with_raw_voltage(180).with_raw_max_current(300),
     ));
 
     pdos.push(PowerDataObject::FixedSupply(
-        FixedSupply::new().with_raw_voltage(300).with_raw_max_current(300),
+        FixedSupply::default().with_raw_voltage(300).with_raw_max_current(300),
     ));
 
     pdos.push(PowerDataObject::FixedSupply(
-        FixedSupply::new().with_raw_voltage(400).with_raw_max_current(225),
+        FixedSupply::default().with_raw_voltage(400).with_raw_max_current(225),
     ));
 
     pdos.push(PowerDataObject::Augmented(Augmented::Spr(
-        SprProgrammablePowerSupply::new()
+        SprProgrammablePowerSupply::default()
             .with_raw_max_current(100)
             .with_raw_min_voltage(33)
             .with_raw_max_voltage(110)
@@ -155,7 +155,7 @@ pub fn get_dummy_source_capabilities() -> Vec<PowerDataObject> {
     )));
 
     pdos.push(PowerDataObject::Augmented(Augmented::Spr(
-        SprProgrammablePowerSupply::new()
+        SprProgrammablePowerSupply::default()
             .with_raw_max_current(60)
             .with_raw_min_voltage(33)
             .with_raw_max_voltage(160)
@@ -163,7 +163,7 @@ pub fn get_dummy_source_capabilities() -> Vec<PowerDataObject> {
     )));
 
     pdos.push(PowerDataObject::Augmented(Augmented::Spr(
-        SprProgrammablePowerSupply::new()
+        SprProgrammablePowerSupply::default()
             .with_raw_max_current(45)
             .with_raw_min_voltage(33)
             .with_raw_max_voltage(210)

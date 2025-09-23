@@ -25,7 +25,6 @@ use crate::PowerRole;
 use crate::counters::{Counter, CounterType, Error as CounterError};
 use crate::protocol_layer::message::data::epr_mode::EprModeDataObject;
 use crate::protocol_layer::message::extended::Extended;
-use crate::protocol_layer::message::header::ExtendedControlMessageType;
 use crate::protocol_layer::message::{ParseError, Payload};
 use crate::timers::{Timer, TimerType};
 
@@ -425,25 +424,25 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         self.transmit(message).await
     }
 
-    /// Transmit an extended control message of the provided type.
-    pub async fn transmit_extended_control_message(
-        &mut self,
-        message_type: ExtendedControlMessageType,
-    ) -> Result<(), ProtocolError> {
-        let mut message = Message::new(Header::new_extended(
-            self.default_header,
-            self.counters.tx_message,
-            ExtendedMessageType::ExtendedControl,
-            1,
-        ));
+    // /// Transmit an extended control message of the provided type.
+    // pub async fn transmit_extended_control_message(
+    //     &mut self,
+    //     message_type: ExtendedControlMessageType,
+    // ) -> Result<(), ProtocolError> {
+    //     let mut message = Message::new(Header::new_extended(
+    //         self.default_header,
+    //         self.counters.tx_message,
+    //         ExtendedMessageType::ExtendedControl,
+    //         1,
+    //     ));
 
-        // FIXME: Put useful data.
-        message.payload = Some(Payload::Extended(Extended::ExtendedControl));
+    //     // FIXME: Put useful data.
+    //     message.payload = Some(Payload::Extended(Extended::ExtendedControl));
 
-        let _epr_mdo = EprModeDataObject::new().with_action(message_type as u8);
+    //     let _epr_mdo = EprModeDataObject::new().with_action(message_type as u8);
 
-        self.transmit(message).await
-    }
+    //     self.transmit(message).await
+    // }
 
     /// Transmit a data message of the provided type.
     pub async fn _transmit_data_message(

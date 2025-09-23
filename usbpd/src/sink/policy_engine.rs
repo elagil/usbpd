@@ -11,7 +11,7 @@ use crate::protocol_layer::message::data::request::PowerSource;
 use crate::protocol_layer::message::data::source_capabilities::SourceCapabilities;
 use crate::protocol_layer::message::data::{Data, request};
 use crate::protocol_layer::message::header::{
-    ControlMessageType, DataMessageType, ExtendedControlMessageType, Header, MessageType, SpecificationRevision,
+    ControlMessageType, DataMessageType, Header, MessageType, SpecificationRevision,
 };
 use crate::protocol_layer::{ProtocolError, ProtocolLayer, RxError, TxError};
 use crate::sink::device_policy_manager::Event;
@@ -415,9 +415,9 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                             .await?;
                     }
                     Mode::Epr => {
-                        self.protocol_layer
-                            .transmit_extended_control_message(ExtendedControlMessageType::EprGetSourceCap)
-                            .await?;
+                        // self.protocol_layer
+                        //     .transmit_extended_control_message(ExtendedControlMessageType::EprGetSourceCap)
+                        //     .await?;
                     }
                 };
 

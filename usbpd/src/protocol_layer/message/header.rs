@@ -211,28 +211,6 @@ impl From<u8> for ControlMessageType {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum ExtendedControlMessageType {
-    EprGetSourceCap = 0b001,
-    EprGetSinkCap = 0b010,
-    EprKeepAlive = 0b011,
-    EprKeepAliveAck = 0b100,
-    Reserved,
-}
-
-impl From<u8> for ExtendedControlMessageType {
-    fn from(value: u8) -> Self {
-        match value {
-            0b001 => Self::EprGetSourceCap,
-            0b010 => Self::EprGetSinkCap,
-            0b011 => Self::EprKeepAlive,
-            0b100 => Self::EprKeepAliveAck,
-            _ => Self::Reserved,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DataMessageType {
     SourceCapabilities = 0b0_0001,
     Request = 0b0_0010,
