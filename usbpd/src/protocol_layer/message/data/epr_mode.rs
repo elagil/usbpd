@@ -1,37 +1,21 @@
-// use byteorder::{ByteOrder, LittleEndian};
+//! Definitions of EPR mode data message content.
+//!
+//! See [6.4.10].
 use proc_bitfield::bitfield;
 
-bitfield! {
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-    pub struct EprModeDataObject(pub u32): Debug, FromStorage, IntoStorage {
-        /// Action
-        pub action: u8 @ 24..=31,
-        /// Data
-        pub data: u8 @ 16..=23,
-    }
-}
-
-impl Default for EprModeDataObject {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl EprModeDataObject {
-    pub fn new() -> Self {
-        Self(0)
-    }
-}
-
+/// Possible actions, encoded in the EPR mode data object.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Action {
+    /// Enter EPR mode.
     Enter,
+    /// Entering EPR mode was acknowledged.
     EnterAcknowledged,
+    /// Entering EPR mode succeeded.
     EnterSucceeded,
+    /// Entering EPR mode failed.
     EnterFailed,
+    /// Exit EPR mode.
     Exit,
 }
 
@@ -60,14 +44,44 @@ impl From<u8> for Action {
     }
 }
 
+bitfield! {
+    /// The EPR mode data object that encodes an action, as well as corresponding payload data.
+    ///
+    /// See [Table 6.50].
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    pub struct EprModeDataObject(pub u32): Debug, FromStorage, IntoStorage {
+        /// Action to perform with regard to EPR mode (e.g. enter).
+        pub action: u8 [Action] @ 24..=31,
+        /// Payload data that is attached to an [`Self::action`]
+        pub data: u8 @ 16..=23,
+    }
+}
+
+impl Default for EprModeDataObject {
+    fn default() -> Self {
+        Self(0)
+    }
+}
+
+/// Causes for failing to enter EPR mode.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DataEnterFailed {
+    /// Unknown cause.
     UnknownCause,
+    /// The cable is not EPR capable.
     CableNotEprCapable,
+    /// The source failed to become the Vconn source.
     SourceFailedToBecomeVconnSource,
+    /// The "EPR capable" bit is not set in RDO.
     EprCapableBitNotSetInRdo,
+    /// The source is unable to enter EPR mode.
+    ///
+    /// The sink may retry entering EPR mode after receiving this [`Action::EnterFailed`] response.
     SourceUnableToEnterEprMode,
+    /// The "EPR capable" bit is not set in PDO.
     EprCapableBitNotSetInPdo,
 }
 

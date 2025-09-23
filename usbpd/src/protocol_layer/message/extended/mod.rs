@@ -2,6 +2,8 @@
 //!
 //! See [6.5].
 
+pub mod extended_control;
+
 /// Types of extended messages.
 ///
 /// TODO: Add missing types as per [6.5] and [Table 6.53].

@@ -1,3 +1,4 @@
+//! Definitions of source capabilities data message content.
 use heapless::Vec;
 use proc_bitfield::bitfield;
 use uom::si::electric_current::centiampere;
@@ -10,37 +11,54 @@ use crate::_50millivolts_mod::_50millivolts;
 use crate::_250milliwatts_mod::_250milliwatts;
 use crate::units::{ElectricCurrent, ElectricPotential, Power};
 
+/// Kinds of supplies that can be reported within source capabilities.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Kind {
+    /// Fixed voltage supply.
     FixedSupply,
+    /// Battery supply.
     Battery,
+    /// Variable voltage supply.
     VariableSupply,
+    /// Programmable power supply.
     Pps,
+    /// Augmented voltage source.
     Avs,
 }
 
+/// A power data object holds information about one type of source capability.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PowerDataObject {
+    /// Fixed voltage supply.
     FixedSupply(FixedSupply),
+    /// Battery supply.
     Battery(Battery),
+    /// Variable voltage supply.
     VariableSupply(VariableSupply),
+    /// Augmented supply.
     Augmented(Augmented),
+    /// Unknown kind of power data object.
     Unknown(RawPowerDataObject),
 }
 
 bitfield! {
+    /// A raw power data object.
+    ///
+    /// Used as a fallback for encoding unknown source types.
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub struct RawPowerDataObject(pub u32): Debug, FromStorage, IntoStorage {
+        /// The kind of power data object.
         pub kind: u8 @ 30..=31,
     }
 }
 
 bitfield! {
+    /// A fixed voltage supply PDO.
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -72,15 +90,11 @@ bitfield! {
 
 impl Default for FixedSupply {
     fn default() -> Self {
-        Self::new()
+        Self(0)
     }
 }
 
 impl FixedSupply {
-    pub fn new() -> Self {
-        Self(0)
-    }
-
     pub fn voltage(&self) -> ElectricPotential {
         ElectricPotential::new::<_50millivolts>(self.raw_voltage().into())
     }
@@ -192,15 +206,11 @@ bitfield! {
 
 impl Default for SprProgrammablePowerSupply {
     fn default() -> Self {
-        Self::new()
+        Self(0).with_kind(0b11).with_supply(0b00)
     }
 }
 
 impl SprProgrammablePowerSupply {
-    pub fn new() -> Self {
-        Self(0).with_kind(0b11).with_supply(0b00)
-    }
-
     pub fn max_voltage(&self) -> ElectricPotential {
         ElectricPotential::new::<decivolt>(self.raw_max_voltage().into())
     }

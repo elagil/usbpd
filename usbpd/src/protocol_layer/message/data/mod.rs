@@ -7,6 +7,20 @@ use heapless::Vec;
 use crate::protocol_layer::message::Payload;
 use crate::protocol_layer::message::header::DataMessageType;
 
+// FIXME: add documentation
+#[allow(missing_docs)]
+pub mod source_capabilities;
+
+pub mod epr_mode;
+
+// FIXME: add documentation
+#[allow(missing_docs)]
+pub mod vendor_defined;
+
+// FIXME: add documentation
+#[allow(missing_docs)]
+pub mod request;
+
 /// PDO State.
 ///
 /// FIXME: Required?
@@ -170,19 +184,3 @@ impl Data {
         }
     }
 }
-
-// FIXME: add documentation
-#[allow(missing_docs)]
-pub mod source_capabilities;
-
-// FIXME: add documentation
-#[allow(missing_docs)]
-pub mod epr_mode;
-
-// FIXME: add documentation
-#[allow(missing_docs)]
-pub mod vendor_defined;
-
-// FIXME: add documentation
-#[allow(missing_docs)]
-pub mod request;

@@ -1,3 +1,4 @@
+//! Definitions of vendor defined data message content.
 use byteorder::{ByteOrder, LittleEndian};
 use proc_bitfield::bitfield;
 
@@ -221,7 +222,7 @@ impl VdmHeaderStructured {
 
 impl Default for VdmHeaderStructured {
     fn default() -> Self {
-        VdmHeaderStructured(0).with_vdm_type(VdmType::Structured)
+        Self(0).with_vdm_type(VdmType::Structured)
     }
 }
 
