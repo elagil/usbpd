@@ -260,7 +260,7 @@ impl EprAdjustableVoltageSupply {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SourceCapabilities(pub(crate) Vec<PowerDataObject, 8>);
+pub struct SourceCapabilities(pub(crate) Vec<PowerDataObject, 16>);
 
 impl SourceCapabilities {
     pub fn vsafe_5v(&self) -> Option<&FixedSupply> {
@@ -339,5 +339,30 @@ impl PdoState for Option<SourceCapabilities> {
 impl PdoState for Option<&SourceCapabilities> {
     fn pdo_at_object_position(&self, position: u8) -> Option<Kind> {
         self.and_then(|s| s.pdo_at_object_position(position))
+    }
+}
+
+/// Parse a raw PDO into a typed power data object.
+///
+/// Decodes the PDO type bits and constructs the appropriate variant.
+/// Supports SPR (Fixed, Battery, Variable, PPS) and EPR (AVS) PDO types.
+pub fn parse_raw_pdo(raw: u32) -> PowerDataObject {
+    let pdo = RawPowerDataObject(raw);
+    match pdo.kind() {
+        0b00 => PowerDataObject::FixedSupply(FixedSupply(raw)),
+        0b01 => PowerDataObject::Battery(Battery(raw)),
+        0b10 => PowerDataObject::VariableSupply(VariableSupply(raw)),
+        0b11 => PowerDataObject::Augmented(match AugmentedRaw(raw).supply() {
+            0b00 => Augmented::Spr(SprProgrammablePowerSupply(raw)),
+            0b01 => Augmented::Epr(EprAdjustableVoltageSupply(raw)),
+            x => {
+                warn!("Unknown AugmentedPowerDataObject supply {}", x);
+                Augmented::Unknown(raw)
+            }
+        }),
+        _ => {
+            warn!("Unknown PowerDataObject kind");
+            PowerDataObject::Unknown(pdo)
+        }
     }
 }

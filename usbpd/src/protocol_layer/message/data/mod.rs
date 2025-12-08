@@ -1,11 +1,16 @@
 //! Definitions and implementations of data messages.
 //!
 //! See [6.4].
+use core::mem::size_of;
+
 use byteorder::{ByteOrder, LittleEndian};
 use heapless::Vec;
 
 use crate::protocol_layer::message::Payload;
 use crate::protocol_layer::message::header::DataMessageType;
+
+/// Size of a Power Data Object in bytes.
+const PDO_SIZE: usize = size_of::<u32>();
 
 // FIXME: add documentation
 #[allow(missing_docs)]
@@ -68,36 +73,9 @@ impl Data {
         message.payload = Some(Payload::Data(match message_type {
             DataMessageType::SourceCapabilities => Data::SourceCapabilities(source_capabilities::SourceCapabilities(
                 payload
-                    .chunks_exact(4)
+                    .chunks_exact(PDO_SIZE)
                     .take(message.header.num_objects())
-                    .map(|buf| source_capabilities::RawPowerDataObject(LittleEndian::read_u32(buf)))
-                    .map(|pdo| match pdo.kind() {
-                        0b00 => {
-                            source_capabilities::PowerDataObject::FixedSupply(source_capabilities::FixedSupply(pdo.0))
-                        }
-                        0b01 => source_capabilities::PowerDataObject::Battery(source_capabilities::Battery(pdo.0)),
-                        0b10 => source_capabilities::PowerDataObject::VariableSupply(
-                            source_capabilities::VariableSupply(pdo.0),
-                        ),
-                        0b11 => source_capabilities::PowerDataObject::Augmented({
-                            match source_capabilities::AugmentedRaw(pdo.0).supply() {
-                                0b00 => source_capabilities::Augmented::Spr(
-                                    source_capabilities::SprProgrammablePowerSupply(pdo.0),
-                                ),
-                                0b01 => source_capabilities::Augmented::Epr(
-                                    source_capabilities::EprAdjustableVoltageSupply(pdo.0),
-                                ),
-                                x => {
-                                    warn!("Unknown AugmentedPowerDataObject supply {}", x);
-                                    source_capabilities::Augmented::Unknown(pdo.0)
-                                }
-                            }
-                        }),
-                        _ => {
-                            warn!("Unknown PowerDataObject kind");
-                            source_capabilities::PowerDataObject::Unknown(pdo)
-                        }
-                    })
+                    .map(|buf| source_capabilities::parse_raw_pdo(LittleEndian::read_u32(buf)))
                     .collect(),
             )),
             DataMessageType::Request => {
@@ -121,16 +99,41 @@ impl Data {
                     }
                 }
             }
+            DataMessageType::EprRequest => {
+                let num_objects = message.header.num_objects();
+                trace!("EprRequest: num_objects={}, len={}", num_objects, len);
+                // Per USB PD 3.x Section 6.4.9, EPR_Request always has 2 data objects
+                if num_objects == 2 && len >= 2 * PDO_SIZE {
+                    let rdo = LittleEndian::read_u32(&payload[..PDO_SIZE]);
+                    let raw_pdo = LittleEndian::read_u32(&payload[PDO_SIZE..2 * PDO_SIZE]);
+                    trace!("EprRequest: rdo=0x{:08X}, pdo=0x{:08X}", rdo, raw_pdo);
+
+                    // Parse the PDO (second object) using the standard PDO parser
+                    let pdo = source_capabilities::parse_raw_pdo(raw_pdo);
+
+                    Data::Request(request::PowerSource::EprRequest { rdo, pdo })
+                } else {
+                    warn!("Invalid EPR_Request: expected 2 data objects, got {}", num_objects);
+                    Data::Unknown
+                }
+            }
+            DataMessageType::EprMode => {
+                if len != PDO_SIZE {
+                    Data::Unknown
+                } else {
+                    Data::EprMode(epr_mode::EprModeDataObject(LittleEndian::read_u32(payload)))
+                }
+            }
             DataMessageType::VendorDefined => {
                 // Keep for now...
-                if len < 4 {
+                if len < PDO_SIZE {
                     Data::Unknown
                 } else {
                     let num_obj = message.header.num_objects();
                     trace!("VENDOR: {:?}, {:?}, {:?}", len, num_obj, payload);
 
                     let header = {
-                        let raw = vendor_defined::VdmHeaderRaw(LittleEndian::read_u32(&payload[..4]));
+                        let raw = vendor_defined::VdmHeaderRaw(LittleEndian::read_u32(&payload[..PDO_SIZE]));
                         match raw.vdm_type() {
                             vendor_defined::VdmType::Unstructured => {
                                 vendor_defined::VdmHeader::Unstructured(vendor_defined::VdmHeaderUnstructured(raw.0))
@@ -141,8 +144,8 @@ impl Data {
                         }
                     };
 
-                    let data = payload[4..]
-                        .chunks_exact(4)
+                    let data = payload[PDO_SIZE..]
+                        .chunks_exact(PDO_SIZE)
                         .take(7)
                         .map(LittleEndian::read_u32)
                         .collect::<Vec<u32, 7>>();
@@ -178,8 +181,30 @@ impl Data {
             Self::SourceCapabilities(_) => unimplemented!(),
             Self::Request(request::PowerSource::FixedVariableSupply(data_object)) => data_object.to_bytes(payload),
             Self::Request(request::PowerSource::Pps(data_object)) => data_object.to_bytes(payload),
+            Self::Request(request::PowerSource::Avs(data_object)) => data_object.to_bytes(payload),
+            Self::Request(request::PowerSource::EprRequest { rdo, pdo }) => {
+                // Write RDO (raw u32)
+                LittleEndian::write_u32(payload, *rdo);
+                // Write PDO copy as raw u32
+                let raw_pdo = match pdo {
+                    source_capabilities::PowerDataObject::FixedSupply(p) => p.0,
+                    source_capabilities::PowerDataObject::Battery(p) => p.0,
+                    source_capabilities::PowerDataObject::VariableSupply(p) => p.0,
+                    source_capabilities::PowerDataObject::Augmented(a) => match a {
+                        source_capabilities::Augmented::Spr(p) => p.0,
+                        source_capabilities::Augmented::Epr(p) => p.0,
+                        source_capabilities::Augmented::Unknown(p) => *p,
+                    },
+                    source_capabilities::PowerDataObject::Unknown(p) => p.0,
+                };
+                LittleEndian::write_u32(&mut payload[PDO_SIZE..], raw_pdo);
+                2 * PDO_SIZE
+            }
             Self::Request(_) => unimplemented!(),
-            Self::EprMode(epr_mode::EprModeDataObject(_data_object)) => unimplemented!(),
+            Self::EprMode(epr_mode::EprModeDataObject(data_object)) => {
+                LittleEndian::write_u32(payload, *data_object);
+                PDO_SIZE
+            }
             Self::VendorDefined(_) => unimplemented!(),
         }
     }

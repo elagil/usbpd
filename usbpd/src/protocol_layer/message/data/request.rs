@@ -157,8 +157,9 @@ bitfield!(
 );
 
 impl Avs {
-    pub fn to_bytes(self, buf: &mut [u8]) {
+    pub fn to_bytes(self, buf: &mut [u8]) -> usize {
         LittleEndian::write_u32(buf, self.0);
+        4
     }
 
     pub fn output_voltage(&self) -> ElectricPotential {
@@ -180,6 +181,14 @@ pub enum PowerSource {
     Battery(Battery),
     Pps(Pps),
     Avs(Avs),
+    /// EPR Request: RDO + copy of requested PDO for source verification.
+    /// Per USB PD 3.x Section 6.4.9, EPR_Request always has 2 data objects.
+    EprRequest {
+        /// The raw Request Data Object (format depends on PDO type being requested)
+        rdo: u32,
+        /// Copy of the PDO being requested (for source verification)
+        pdo: source_capabilities::PowerDataObject,
+    },
     Unknown(RawDataObject),
 }
 
@@ -224,7 +233,26 @@ impl PowerSource {
             PowerSource::Battery(p) => p.object_position(),
             PowerSource::Pps(p) => p.object_position(),
             PowerSource::Avs(p) => p.object_position(),
+            PowerSource::EprRequest { rdo, .. } => RawDataObject(*rdo).object_position(),
             PowerSource::Unknown(p) => p.object_position(),
+        }
+    }
+
+    /// Determine the data message type to use for this request.
+    pub fn message_type(&self) -> crate::protocol_layer::message::header::DataMessageType {
+        match self {
+            PowerSource::EprRequest { .. } => {
+                crate::protocol_layer::message::header::DataMessageType::EprRequest
+            }
+            _ => crate::protocol_layer::message::header::DataMessageType::Request,
+        }
+    }
+
+    /// Number of data objects required to encode this request.
+    pub fn num_objects(&self) -> u8 {
+        match self {
+            PowerSource::EprRequest { .. } => 2,
+            _ => 1,
         }
     }
 
@@ -272,11 +300,13 @@ impl PowerSource {
         None
     }
 
-    /// Find a suitable PDO for a Programmable Power Supply (PPS) by evaluating the provided voltage
+    /// Find a suitable Augmented PDO (PPS or AVS) by evaluating the provided voltage
     /// request against the source capabilities.
     ///
+    /// This searches both SPR PPS and EPR AVS PDOs for a matching voltage range.
+    ///
     /// Reports the index of the found PDO, and the augmented supply instance, or `None` if there is no match to the request.
-    pub fn find_pps_voltage(
+    pub fn find_augmented_pdo(
         source_capabilities: &source_capabilities::SourceCapabilities,
         voltage: ElectricPotential,
     ) -> Option<IndexedAugmented<'_>> {
@@ -286,7 +316,6 @@ impl PowerSource {
                 continue;
             };
 
-            // Handle EPR when supported.
             match augmented {
                 source_capabilities::Augmented::Spr(spr) => {
                     if spr.min_voltage() <= voltage && spr.max_voltage() >= voltage {
@@ -295,11 +324,18 @@ impl PowerSource {
                         trace!("Skip PDO, voltage out of range. {:?}", augmented);
                     }
                 }
-                _ => trace!("Skip PDO, only SPR is supported. {:?}", augmented),
+                source_capabilities::Augmented::Epr(avs) => {
+                    if avs.min_voltage() <= voltage && avs.max_voltage() >= voltage {
+                        return Some(IndexedAugmented(augmented, index));
+                    } else {
+                        trace!("Skip PDO, voltage out of range. {:?}", augmented);
+                    }
+                }
+                _ => trace!("Skip PDO, only SPR PPS and EPR AVS are supported. {:?}", augmented),
             };
         }
 
-        trace!("Could not find suitable PPS voltage");
+        trace!("Could not find suitable augmented PDO for voltage");
         None
     }
 
@@ -370,7 +406,7 @@ impl PowerSource {
         voltage: ElectricPotential,
         source_capabilities: &source_capabilities::SourceCapabilities,
     ) -> Result<Self, Error> {
-        let selected = Self::find_pps_voltage(source_capabilities, voltage);
+        let selected = Self::find_augmented_pdo(source_capabilities, voltage);
 
         if selected.is_none() {
             return Err(Error::VoltageMismatch);
@@ -379,7 +415,7 @@ impl PowerSource {
         let IndexedAugmented(pdo, index) = selected.unwrap();
         let max_current = match pdo {
             source_capabilities::Augmented::Spr(spr) => spr.max_current(),
-            _ => unreachable!(),
+            _ => return Err(Error::VoltageMismatch),
         };
 
         let (current, mismatch) = match current_request {
@@ -408,5 +444,62 @@ impl PowerSource {
                 .with_no_usb_suspend(true)
                 .with_usb_communications_capable(true),
         ))
+    }
+
+    /// Create a new EPR AVS request.
+    ///
+    /// Per USB PD 3.x Section 6.4.9, this creates an EPR_Request with an AVS RDO
+    /// and a copy of the requested PDO.
+    pub fn new_epr_avs(
+        current_request: CurrentRequest,
+        voltage: ElectricPotential,
+        source_capabilities: &source_capabilities::SourceCapabilities,
+    ) -> Result<Self, Error> {
+        let selected = Self::find_augmented_pdo(source_capabilities, voltage);
+
+        if selected.is_none() {
+            return Err(Error::VoltageMismatch);
+        }
+
+        let IndexedAugmented(pdo, index) = selected.unwrap();
+        let max_current = match pdo {
+            source_capabilities::Augmented::Epr(avs) => avs.pd_power() / voltage,
+            source_capabilities::Augmented::Spr(_) => return Err(Error::VoltageMismatch),
+            source_capabilities::Augmented::Unknown(_) => return Err(Error::VoltageMismatch),
+        };
+
+        let (current, mismatch) = match current_request {
+            CurrentRequest::Highest => (max_current, false),
+            CurrentRequest::Specific(x) => (x, x > max_current),
+        };
+
+        let mut raw_current = current.get::<_50milliamperes>() as u16;
+
+        if raw_current > 0x7f {
+            error!("Clamping invalid AVS current: {} mA", 50 * raw_current);
+            raw_current = 0x7f;
+        }
+
+        let raw_voltage = voltage.get::<_20millivolts>() as u16;
+
+        let object_position = index + 1;
+        assert!(object_position > 0b0000 && object_position <= 0b1110);
+
+        // Build AVS RDO (Table 6.26)
+        let rdo = Avs(0)
+            .with_raw_output_voltage(raw_voltage)
+            .with_raw_operating_current(raw_current)
+            .with_object_position(object_position as u8)
+            .with_capability_mismatch(mismatch)
+            .with_no_usb_suspend(true)
+            .with_unchunked_extended_messages_supported(true)
+            .with_usb_communications_capable(true)
+            .with_epr_mode_capable(true)
+            .0;
+
+        // Copy of the PDO being requested
+        let pdo_copy = source_capabilities::PowerDataObject::Augmented(pdo.clone());
+
+        Ok(Self::EprRequest { rdo, pdo: pdo_copy })
     }
 }

@@ -57,9 +57,10 @@ impl<const N: usize> DummyDriver<N> {
 impl<const N: usize> Driver for DummyDriver<N> {
     async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, usbpd_traits::DriverRxError> {
         let first = self.rx_vec.remove(0);
-        buffer.copy_from_slice(&first);
+        let len = first.len();
+        buffer[..len].copy_from_slice(&first);
 
-        Ok(first.len())
+        Ok(len)
     }
 
     async fn transmit(&mut self, data: &[u8]) -> Result<(), usbpd_traits::DriverTxError> {
