@@ -33,6 +33,12 @@ pub trait Driver {
     /// GoodCRC messages and will instead rely on the hardware.
     const HAS_AUTO_GOOD_CRC: bool = false;
 
+    /// If this is `true`, the hardware automatically retries transmission
+    /// when no GoodCRC is received. The protocol layer will skip its own
+    /// retry loop but still call wait_for_good_crc() to consume the GoodCRC
+    /// from the FIFO and validate the message ID.
+    const HAS_AUTO_RETRY: bool = false;
+
     /// Wait for availability of VBus voltage.
     fn wait_for_vbus(&self) -> impl Future<Output = ()>;
 
