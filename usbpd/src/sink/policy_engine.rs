@@ -10,6 +10,7 @@ use crate::protocol_layer::message::data::epr_mode::Action;
 use crate::protocol_layer::message::data::request::PowerSource;
 use crate::protocol_layer::message::data::source_capabilities::SourceCapabilities;
 use crate::protocol_layer::message::data::{Data, request};
+use crate::protocol_layer::message::extended::extended_control::ExtendedControlMessageType;
 use crate::protocol_layer::message::header::{
     ControlMessageType, DataMessageType, ExtendedMessageType, Header, MessageType, SpecificationRevision,
 };
@@ -54,7 +55,9 @@ enum State {
     SoftReset,
     HardReset,
     TransitionToDefault,
-    GiveSinkCap(request::PowerSource),
+    /// Give sink capabilities. The Mode indicates whether to send Sink_Capabilities (Spr)
+    /// or EPR_Sink_Capabilities (Epr) per spec 8.3.3.3.10.
+    GiveSinkCap(Mode, request::PowerSource),
     GetSourceCap(Mode, request::PowerSource),
 
     // EPR states
@@ -358,11 +361,15 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                                     message.payload
                                 {
                                     self.get_source_cap_pending = false;
-                                    State::EvaluateCapabilities(
-                                        crate::protocol_layer::message::data::source_capabilities::SourceCapabilities(
-                                            pdos,
-                                        ),
-                                    )
+                                    let caps = SourceCapabilities(pdos);
+
+                                    // Per spec 8.3.3.3.8: In EPR Mode, if EPR_Source_Capabilities
+                                    // contains an EPR (A)PDO in positions 1-7 → Hard Reset
+                                    if self.mode == Mode::Epr && caps.has_epr_pdo_in_spr_positions() {
+                                        State::HardReset
+                                    } else {
+                                        State::EvaluateCapabilities(caps)
+                                    }
                                 } else {
                                     unreachable!()
                                 }
@@ -371,7 +378,24 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                                 // Handle source exit notification.
                                 State::EprExitReceived
                             }
-                            MessageType::Control(ControlMessageType::GetSinkCap) => State::GiveSinkCap(*power_source),
+                            // Per spec 8.3.3.3.7: Get_Sink_Cap → GiveSinkCap (send Sink_Capabilities)
+                            MessageType::Control(ControlMessageType::GetSinkCap) => {
+                                State::GiveSinkCap(Mode::Spr, *power_source)
+                            }
+                            // Per spec 8.3.3.3.7: EPR_Get_Sink_Cap → GiveSinkCap (send EPR_Sink_Capabilities)
+                            MessageType::Extended(ExtendedMessageType::ExtendedControl) => {
+                                if let Some(Payload::Extended(extended::Extended::ExtendedControl(ctrl))) =
+                                    &message.payload
+                                {
+                                    if ctrl.message_type() == ExtendedControlMessageType::EprGetSinkCap {
+                                        State::GiveSinkCap(Mode::Epr, *power_source)
+                                    } else {
+                                        State::SendNotSupported(*power_source)
+                                    }
+                                } else {
+                                    State::SendNotSupported(*power_source)
+                                }
+                            }
                             _ => State::SendNotSupported(*power_source),
                         }
                     }
@@ -477,12 +501,19 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
 
                 State::Startup
             }
-            State::GiveSinkCap(power_source) => {
-                // Per USB PD Spec R3.2 Section 6.4.1.6:
-                // Sinks respond to Get_Sink_Cap messages with a Sink_Capabilities message
-                // containing PDOs describing what power levels the sink can operate at.
+            State::GiveSinkCap(response_mode, power_source) => {
+                // Per USB PD Spec R3.2 Section 8.3.3.3.10:
+                // - Send Sink_Capabilities when Get_Sink_Cap was received
+                // - Send EPR_Sink_Capabilities when EPR_Get_Sink_Cap was received
                 let sink_caps = self.device_policy_manager.sink_capabilities();
-                self.protocol_layer.transmit_sink_capabilities(sink_caps).await?;
+                match response_mode {
+                    Mode::Spr => {
+                        self.protocol_layer.transmit_sink_capabilities(sink_caps).await?;
+                    }
+                    Mode::Epr => {
+                        self.protocol_layer.transmit_epr_sink_capabilities(sink_caps).await?;
+                    }
+                }
 
                 State::Ready(*power_source)
             }
@@ -508,11 +539,42 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     }
                 };
 
-                let caps = Self::wait_for_source_capabilities(&mut self.protocol_layer).await?;
+                // Use protocol layer directly to get the full Message (not the helper that only returns SourceCapabilities)
+                let message = self.protocol_layer.wait_for_source_capabilities().await?;
                 self.get_source_cap_pending = false;
-                self.device_policy_manager.inform(&caps).await;
 
-                State::Ready(*power_source)
+                // Per spec 8.3.3.3.12:
+                // - In SPR mode + SPR caps requested + Source_Capabilities received → EvaluateCapabilities
+                // - In EPR mode + EPR caps requested + EPR_Source_Capabilities received → EvaluateCapabilities
+                // - Mode mismatch (e.g., EPR mode but SPR caps requested) → Ready
+                let received_spr = matches!(
+                    message.header.message_type(),
+                    MessageType::Data(DataMessageType::SourceCapabilities)
+                );
+                let received_epr = matches!(
+                    message.header.message_type(),
+                    MessageType::Extended(ExtendedMessageType::EprSourceCapabilities)
+                );
+
+                let mode_matches = (*requested_mode == Mode::Spr && self.mode == Mode::Spr && received_spr)
+                    || (*requested_mode == Mode::Epr && self.mode == Mode::Epr && received_epr);
+
+                // Extract capabilities from the message
+                let capabilities = match message.payload {
+                    Some(Payload::Data(Data::SourceCapabilities(caps))) => caps,
+                    Some(Payload::Extended(extended::Extended::EprSourceCapabilities(pdos))) => {
+                        SourceCapabilities(pdos)
+                    }
+                    _ => unreachable!(),
+                };
+
+                self.device_policy_manager.inform(&capabilities).await;
+
+                if mode_matches {
+                    State::EvaluateCapabilities(capabilities)
+                } else {
+                    State::Ready(*power_source)
+                }
             }
             State::EprModeEntry(power_source) => {
                 // Request entry into EPR mode.
@@ -545,9 +607,9 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                         self.mode = Mode::Epr;
                         State::EprWaitForCapabilities(*power_source)
                     }
-                    Action::EnterFailed => State::HardReset,
                     Action::Exit => State::EprExitReceived,
-                    _ => State::HardReset,
+                    // Per spec 8.3.3.26.2.1: EPR_Mode message not Enter Succeeded → Soft Reset
+                    _ => State::SendSoftReset,
                 }
             }
             State::EprEntryWaitForResponse(power_source) => {
@@ -570,9 +632,9 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                         self.mode = Mode::Epr;
                         State::EprWaitForCapabilities(*power_source)
                     }
-                    Action::EnterFailed => State::HardReset,
                     Action::Exit => State::EprExitReceived,
-                    _ => State::HardReset,
+                    // Per spec 8.3.3.26.2.2: EPR_Mode message not Enter Succeeded → Soft Reset
+                    _ => State::SendSoftReset,
                 }
             }
             State::EprWaitForCapabilities(_power_source) => {
