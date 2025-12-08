@@ -49,7 +49,9 @@ enum State {
     EvaluateCapabilities(SourceCapabilities),
     SelectCapability(request::PowerSource),
     TransitionSink(request::PowerSource),
-    Ready(request::PowerSource),
+    /// Ready state. The bool indicates if we entered due to receiving a Wait message,
+    /// which requires running SinkRequestTimer before allowing re-request.
+    Ready(request::PowerSource, bool),
     SendNotSupported(request::PowerSource),
     SendSoftReset,
     SoftReset,
@@ -176,7 +178,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 (_, _, ProtocolError::UnexpectedMessage) => Some(State::SendSoftReset),
 
                 // Per spec Table 6.72: Unsupported messages in Ready state get Not_Supported response.
-                (_, State::Ready(power_source), ProtocolError::RxError(RxError::UnsupportedMessage)) => {
+                (_, State::Ready(power_source, _), ProtocolError::RxError(RxError::UnsupportedMessage)) => {
                     Some(State::SendNotSupported(*power_source))
                 }
 
@@ -293,11 +295,13 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 match (self.contract, control_message_type) {
                     (_, ControlMessageType::Accept) => State::TransitionSink(*power_source),
                     (Contract::Safe5V, ControlMessageType::Wait | ControlMessageType::Reject) => {
-                        // TODO: If a `Wait` message is received, the sink may request again, after a timeout of `tSinkRequest`.
                         State::WaitForCapabilities
                     }
-                    (Contract::Explicit, ControlMessageType::Reject | ControlMessageType::Wait) => {
-                        State::Ready(*power_source)
+                    (Contract::Explicit, ControlMessageType::Reject) => State::Ready(*power_source, false),
+                    (Contract::Explicit, ControlMessageType::Wait) => {
+                        // Per spec 8.3.3.3.7: On entry to Ready as result of Wait,
+                        // initialize and run SinkRequestTimer.
+                        State::Ready(*power_source, true)
                     }
                     _ => unreachable!(),
                 }
@@ -315,18 +319,29 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
 
                 self.contract = Contract::TransitionToExplicit;
                 self.device_policy_manager.transition_power(power_source).await;
-                State::Ready(*power_source)
+                State::Ready(*power_source, false)
             }
-            State::Ready(power_source) => {
-                // TODO: Entry: Init. and run SinkRequestTimer(2) on receiving `Wait`
+            State::Ready(power_source, after_wait) => {
                 // TODO: Entry: Init. and run DiscoverIdentityTimer(4)
                 // TODO: Entry: Send GetSinkCap message if sink supports fast role swap
                 // TODO: Exit: If initiating an AMS, notify protocol layer
                 //
                 // Timers implemented:
+                // - SinkRequestTimer: Per spec 8.3.3.3.7, after receiving Wait, wait tSinkRequest
+                //   before allowing re-request. On timeout, transition to SelectCapability.
                 // - SinkPPSPeriodicTimer: triggers SelectCapability in SPR PPS mode
                 // - SinkEPRKeepAliveTimer: triggers EprKeepAlive in EPR mode
                 self.contract = Contract::Explicit;
+
+                // Per spec 6.6.4.1: SinkRequestTimer ensures minimum tSinkRequest (100ms) delay
+                // after receiving Wait before re-requesting. Timer is only active if we entered
+                // Ready due to a Wait message.
+                if *after_wait {
+                    TimerType::get_timer::<TIMER>(TimerType::SinkRequest).await;
+                    // Per spec 8.3.3.3.7: SinkRequestTimer timeout → SelectCapability
+                    self.state = State::SelectCapability(*power_source);
+                    return Ok(());
+                }
 
                 let receive_fut = self.protocol_layer.receive_message();
                 let event_fut = self
@@ -417,7 +432,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                         Event::EnterEprMode => State::EprModeEntry(*power_source),
                         Event::ExitEprMode => State::EprSendExit,
                         Event::RequestPower(power_source) => State::SelectCapability(power_source),
-                        Event::None => State::Ready(*power_source),
+                        Event::None => State::Ready(*power_source, false),
                     },
                     // PPS periodic timeout -> select capability again as keep-alive.
                     Either3::Third(timeout_source) => match timeout_source {
@@ -431,7 +446,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     .transmit_control_message(ControlMessageType::NotSupported)
                     .await?;
 
-                State::Ready(*power_source)
+                State::Ready(*power_source, false)
             }
             State::SendSoftReset => {
                 self.protocol_layer.reset();
@@ -526,7 +541,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     }
                 }
 
-                State::Ready(*power_source)
+                State::Ready(*power_source, false)
             }
             State::GetSourceCap(requested_mode, power_source) => {
                 // Commonly used for switching between EPR and SPR mode, depending on requested mode.
@@ -584,15 +599,20 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 if mode_matches {
                     State::EvaluateCapabilities(capabilities)
                 } else {
-                    State::Ready(*power_source)
+                    State::Ready(*power_source, false)
                 }
             }
             State::EprModeEntry(power_source) => {
                 // Request entry into EPR mode.
                 // Per spec 8.3.3.26.2.1 (PE_SNK_Send_EPR_Mode_Entry), sink sends EPR_Mode (Enter)
                 // and starts SenderResponseTimer and SinkEPREnterTimer.
-                // We use SenderResponseTimer for the initial response, then SinkEPREnterTimer
-                // for the overall EPR entry process.
+                //
+                // Note: The spec says SinkEPREnterTimer (500ms) should run continuously across
+                // both EprModeEntry and EprEntryWaitForResponse states until stopped or timeout.
+                // Our implementation uses SenderResponseTimer (30ms) here and a fresh
+                // SinkEPREnterTimer (500ms) in EprEntryWaitForResponse. This means the total
+                // timeout could be ~530ms instead of 500ms in edge cases. However, this is
+                // within the spec's allowed range (tEnterEPR max = 550ms per Table 6.71).
                 self.protocol_layer.transmit_epr_mode(Action::Enter, 0).await?;
 
                 // Wait for EnterAcknowledged with SenderResponseTimer (spec step 9-14)
@@ -722,7 +742,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                                 == crate::protocol_layer::message::extended::extended_control::ExtendedControlMessageType::EprKeepAliveAck
                             {
                                 self.mode = Mode::Epr;
-                                State::Ready(*power_source)
+                                State::Ready(*power_source, false)
                             } else {
                                 State::SendNotSupported(*power_source)
                             }
@@ -898,7 +918,7 @@ mod tests {
 
         // `TransitionSink` -> `Ready`
         policy_engine.run_step().await.unwrap();
-        assert!(matches!(policy_engine.state, State::Ready(_)));
+        assert!(matches!(policy_engine.state, State::Ready(..)));
 
         let good_crc = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
         assert!(matches!(
@@ -965,7 +985,7 @@ mod tests {
         // TransitionSink -> Ready
         policy_engine.run_step().await.unwrap();
         eprintln!("State after last run_step: {:?}", policy_engine.state);
-        assert!(matches!(policy_engine.state, State::Ready(_)));
+        assert!(matches!(policy_engine.state, State::Ready(..)));
 
         eprintln!(
             "Has transmitted data: {}",
@@ -1223,7 +1243,7 @@ mod tests {
         }
 
         // Verify we're in Ready state with EPR power
-        assert!(matches!(policy_engine.state, State::Ready(_)));
+        assert!(matches!(policy_engine.state, State::Ready(..)));
         eprintln!("Final state: {:?}", policy_engine.state);
 
         eprintln!("=== Phase 4 Complete: EPR power negotiation at 28V/5A (140W) ===\n");
@@ -1251,7 +1271,7 @@ mod tests {
             eprintln!("--- Keep-Alive cycle {} ---", cycle);
 
             // Manually set state to EprKeepAlive (normally triggered by SinkEPRKeepAliveTimer in Ready state)
-            if let State::Ready(power_source) = policy_engine.state.clone() {
+            if let State::Ready(power_source, _) = policy_engine.state.clone() {
                 policy_engine.state = State::EprKeepAlive(power_source);
             } else {
                 panic!("Expected Ready state before keep-alive cycle {}", cycle);
@@ -1320,7 +1340,7 @@ mod tests {
             ));
 
             // Verify we're back in Ready state (ready for next keep-alive cycle)
-            assert!(matches!(policy_engine.state, State::Ready(_)));
+            assert!(matches!(policy_engine.state, State::Ready(..)));
             eprintln!("  Returned to Ready state");
         }
 
