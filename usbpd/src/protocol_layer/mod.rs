@@ -589,11 +589,13 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         &mut self,
         message_type: ExtendedControlMessageType,
     ) -> Result<(), ProtocolError> {
+        // Per USB PD spec 6.2.1.1.2: for extended messages, num_objects must be non-zero.
+        // ExtendedControl = 2-byte extended header + 2-byte data = 4 bytes = 1 data object.
         let mut message = Message::new(Header::new_extended(
             self.default_header,
             self.counters.tx_message,
             ExtendedMessageType::ExtendedControl,
-            0,
+            1,
         ));
 
         message.payload = Some(Payload::Extended(Extended::ExtendedControl(
@@ -676,6 +678,10 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         let mut buffer = Self::get_message_buffer();
         let mut offset = header.to_bytes(&mut buffer);
         offset += ext_header.to_bytes(&mut buffer[offset..]);
+        // Pad to 4-byte Data Object boundary per USB PD spec.
+        // Extended header is 2 bytes, so add 2 bytes padding to complete the Data Object.
+        // Buffer is already zeroed, so just advance offset.
+        offset += 2;
 
         // Transmit and wait for GoodCRC
         match self.transmit_inner(&buffer[..offset]).await {
