@@ -1,18 +1,19 @@
 //! Policy engine for the implementation of a sink.
 use core::marker::PhantomData;
 
-use embassy_futures::select::{Either3, select3};
+use embassy_futures::select::{Either, Either3, select, select3};
 use usbpd_traits::Driver;
 
 use super::device_policy_manager::DevicePolicyManager;
 use crate::counters::{Counter, Error as CounterError};
-use crate::protocol_layer::message::Payload;
+use crate::protocol_layer::message::data::epr_mode::Action;
 use crate::protocol_layer::message::data::request::PowerSource;
 use crate::protocol_layer::message::data::source_capabilities::SourceCapabilities;
 use crate::protocol_layer::message::data::{Data, request};
 use crate::protocol_layer::message::header::{
-    ControlMessageType, DataMessageType, Header, MessageType, SpecificationRevision,
+    ControlMessageType, DataMessageType, ExtendedMessageType, Header, MessageType, SpecificationRevision,
 };
+use crate::protocol_layer::message::{Payload, extended};
 use crate::protocol_layer::{ProtocolError, ProtocolLayer, RxError, TxError};
 use crate::sink::device_policy_manager::Event;
 use crate::timers::{Timer, TimerType};
@@ -57,9 +58,9 @@ enum State {
     GetSourceCap(Mode, request::PowerSource),
 
     // EPR states
-    _EprSendEntry,
+    _EprSendEntry(request::PowerSource),
     _EprSendExit,
-    _EprEntryWaitForResponse,
+    _EprEntryWaitForResponse(request::PowerSource),
     _EprExitReceived,
     _EprKeepAlive(request::PowerSource),
 }
@@ -218,6 +219,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
             State::Startup => {
                 self.contract = Default::default();
                 self.protocol_layer.reset();
+                self.mode = Mode::Spr;
 
                 State::Discovery
             }
@@ -281,7 +283,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 self.protocol_layer
                     .receive_message_type(
                         &[MessageType::Control(ControlMessageType::PsRdy)],
-                        TimerType::PSTransitionSpr,
+                        match self.mode {
+                            Mode::Epr => TimerType::PSTransitionEpr,
+                            Mode::Spr => TimerType::PSTransitionSpr,
+                        },
                     )
                     .await?;
 
@@ -309,8 +314,15 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                         _ => core::future::pending().await,
                     }
                 };
+                let epr_keep_alive_fut = async {
+                    match self.mode {
+                        Mode::Epr => TimerType::get_timer::<TIMER>(TimerType::SinkEPRKeepAlive).await,
+                        Mode::Spr => core::future::pending().await,
+                    }
+                };
+                let timers_fut = async { select(pps_periodic_fut, epr_keep_alive_fut).await };
 
-                match select3(receive_fut, event_fut, pps_periodic_fut).await {
+                match select3(receive_fut, event_fut, timers_fut).await {
                     // A message was received.
                     Either3::First(message) => {
                         let message = message?;
@@ -323,6 +335,23 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                                 };
                                 State::EvaluateCapabilities(capabilities)
                             }
+                            MessageType::Extended(ExtendedMessageType::EprSourceCapabilities) => {
+                                if let Some(Payload::Extended(extended::Extended::EprSourceCapabilities(pdos))) =
+                                    message.payload
+                                {
+                                    State::EvaluateCapabilities(
+                                        crate::protocol_layer::message::data::source_capabilities::SourceCapabilities(
+                                            pdos,
+                                        ),
+                                    )
+                                } else {
+                                    unreachable!()
+                                }
+                            }
+                            MessageType::Data(DataMessageType::EprMode) => {
+                                // Handle source exit notification.
+                                State::_EprExitReceived
+                            }
                             MessageType::Control(ControlMessageType::GetSinkCap) => State::GiveSinkCap(*power_source),
                             _ => State::SendNotSupported(*power_source),
                         }
@@ -331,11 +360,20 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     Either3::Second(event) => match event {
                         Event::RequestSprSourceCapabilities => State::GetSourceCap(Mode::Spr, *power_source),
                         Event::RequestEprSourceCapabilities => State::GetSourceCap(Mode::Epr, *power_source),
-                        Event::RequestPower(power_source) => State::SelectCapability(power_source),
+                        Event::RequestPower(power_source) => {
+                            if matches!(power_source, PowerSource::EprRequest { .. }) {
+                                State::_EprSendEntry(power_source)
+                            } else {
+                                State::SelectCapability(power_source)
+                            }
+                        }
                         Event::None => State::Ready(*power_source),
                     },
                     // PPS periodic timeout -> select capability again as keep-alive.
-                    Either3::Third(_) => State::SelectCapability(*power_source),
+                    Either3::Third(timeout_source) => match timeout_source {
+                        Either::First(_) => State::SelectCapability(*power_source),
+                        Either::Second(_) => State::_EprKeepAlive(*power_source),
+                    },
                 }
             }
             State::SendNotSupported(power_source) => {
@@ -415,9 +453,11 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                             .await?;
                     }
                     Mode::Epr => {
-                        // self.protocol_layer
-                        //     .transmit_extended_control_message(ExtendedControlMessageType::EprGetSourceCap)
-                        //     .await?;
+                        self.protocol_layer
+                            .transmit_extended_control_message(
+                                crate::protocol_layer::message::extended::extended_control::ExtendedControlMessageType::EprGetSourceCap,
+                            )
+                            .await?;
                     }
                 };
 
@@ -426,17 +466,75 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
 
                 State::Ready(*power_source)
             }
-            State::_EprSendEntry => unimplemented!(),
-            State::_EprEntryWaitForResponse => unimplemented!(),
-            State::_EprSendExit => unimplemented!(),
-            State::_EprExitReceived => unimplemented!(),
-            State::_EprKeepAlive(_power_source) => {
+            State::_EprSendEntry(power_source) => {
+                // Request entry into EPR mode.
+                self.protocol_layer.transmit_epr_mode(Action::Enter, 0).await?;
+                State::_EprEntryWaitForResponse(*power_source)
+            }
+            State::_EprEntryWaitForResponse(power_source) => {
+                let message = self
+                    .protocol_layer
+                    .receive_message_type(&[MessageType::Data(DataMessageType::EprMode)], TimerType::SinkEPREnter)
+                    .await?;
+
+                let Some(Payload::Data(Data::EprMode(epr_mode))) = message.payload else {
+                    unreachable!()
+                };
+
+                match epr_mode.action() {
+                    Action::Enter | Action::EnterAcknowledged | Action::EnterSucceeded => {
+                        self.mode = Mode::Epr;
+                        State::SelectCapability(*power_source)
+                    }
+                    Action::EnterFailed => State::HardReset,
+                    Action::Exit => State::_EprExitReceived,
+                }
+            }
+            State::_EprSendExit => {
+                // Inform partner we are exiting EPR.
+                self.protocol_layer.transmit_epr_mode(Action::Exit, 0).await?;
+                self.mode = Mode::Spr;
+                State::WaitForCapabilities
+            }
+            State::_EprExitReceived => {
+                // Switch back to SPR on exit request.
+                self.mode = Mode::Spr;
+                State::WaitForCapabilities
+            }
+            State::_EprKeepAlive(power_source) => {
                 // Entry: Send EPRKeepAlive Message
-                // Entry: Init. and run SenderReponseTimer
-                // Transition to
+                self.protocol_layer
+                    .transmit_extended_control_message(
+                        crate::protocol_layer::message::extended::extended_control::ExtendedControlMessageType::EprKeepAlive,
+                    )
+                    .await?;
+
                 // - Ready on EPRKeepAliveAck message
                 // - HardReset on SenderResponseTimerTimeout
-                unimplemented!();
+                match self
+                    .protocol_layer
+                    .receive_message_type(
+                        &[MessageType::Extended(ExtendedMessageType::ExtendedControl)],
+                        TimerType::SenderResponse,
+                    )
+                    .await
+                {
+                    Ok(message) => {
+                        if let Some(Payload::Extended(extended::Extended::ExtendedControl(control))) = message.payload {
+                            if control.message_type()
+                                == crate::protocol_layer::message::extended::extended_control::ExtendedControlMessageType::EprKeepAliveAck
+                            {
+                                self.mode = Mode::Epr;
+                                State::Ready(*power_source)
+                            } else {
+                                State::SendNotSupported(*power_source)
+                            }
+                        } else {
+                            State::SendNotSupported(*power_source)
+                        }
+                    }
+                    Err(_) => State::HardReset,
+                }
             }
         };
 
@@ -523,7 +621,6 @@ mod tests {
 
         // `TransitionSink` -> `Ready`
         policy_engine.run_step().await.unwrap();
-
         assert!(matches!(policy_engine.state, State::Ready(_)));
 
         let good_crc = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
