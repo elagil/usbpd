@@ -31,6 +31,9 @@ bitfield! {
         pub capability_mismatch: bool @ 26,
         pub usb_communications_capable: bool @ 25,
         pub no_usb_suspend: bool @ 24,
+        /// Unchunked extended messages supported.
+        /// WARNING: Do not set to true - the library always uses chunked mode
+        /// for compatibility with more PHYs.
         pub unchunked_extended_messages_supported: bool @ 23,
         pub epr_mode_capable: bool @ 22,
         pub raw_operating_current: u16 @ 10..=19,
@@ -68,7 +71,9 @@ bitfield! {
         pub usb_communications_capable: bool @ 25,
         /// No USB Suspend
         pub no_usb_suspend: bool @ 24,
-        /// Unchunked extended messages supported
+        /// Unchunked extended messages supported.
+        /// WARNING: Do not set to true - the library always uses chunked mode
+        /// for compatibility with more PHYs.
         pub unchunked_extended_messages_supported: bool @ 23,
         /// EPR mode capable
         pub epr_mode_capable: bool @ 22,
@@ -106,7 +111,9 @@ bitfield!(
         pub usb_communications_capable: bool @ 25,
         /// No USB Suspend
         pub no_usb_suspend: bool @ 24,
-        /// Unchunked extended messages supported
+        /// Unchunked extended messages supported.
+        /// WARNING: Do not set to true - the library always uses chunked mode
+        /// for compatibility with more PHYs.
         pub unchunked_extended_messages_supported: bool @ 23,
         /// EPR mode capable
         pub epr_mode_capable: bool @ 22,
@@ -145,7 +152,9 @@ bitfield!(
         pub usb_communications_capable: bool @ 25,
         /// No USB Suspend
         pub no_usb_suspend: bool @ 24,
-        /// Unchunked extended messages supported
+        /// Unchunked extended messages supported.
+        /// WARNING: Do not set to true - the library always uses chunked mode
+        /// for compatibility with more PHYs.
         pub unchunked_extended_messages_supported: bool @ 23,
         /// EPR mode capable
         pub epr_mode_capable: bool @ 22,
@@ -490,7 +499,7 @@ impl PowerSource {
             .with_object_position(object_position as u8)
             .with_capability_mismatch(mismatch)
             .with_no_usb_suspend(true)
-            .with_unchunked_extended_messages_supported(true)
+            .with_unchunked_extended_messages_supported(false)
             .with_usb_communications_capable(true)
             .with_epr_mode_capable(true)
             .0;
