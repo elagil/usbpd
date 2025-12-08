@@ -241,9 +241,7 @@ impl PowerSource {
     /// Determine the data message type to use for this request.
     pub fn message_type(&self) -> crate::protocol_layer::message::header::DataMessageType {
         match self {
-            PowerSource::EprRequest { .. } => {
-                crate::protocol_layer::message::header::DataMessageType::EprRequest
-            }
+            PowerSource::EprRequest { .. } => crate::protocol_layer::message::header::DataMessageType::EprRequest,
             _ => crate::protocol_layer::message::header::DataMessageType::Request,
         }
     }
@@ -498,7 +496,7 @@ impl PowerSource {
             .0;
 
         // Copy of the PDO being requested
-        let pdo_copy = source_capabilities::PowerDataObject::Augmented(pdo.clone());
+        let pdo_copy = source_capabilities::PowerDataObject::Augmented(*pdo);
 
         Ok(Self::EprRequest { rdo, pdo: pdo_copy })
     }

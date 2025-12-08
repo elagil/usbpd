@@ -55,24 +55,31 @@ pub enum ChunkResult<T> {
 /// This struct accumulates chunks and reassembles the complete message.
 ///
 /// # Example
-/// ```ignore
+/// ```
+/// use usbpd::protocol_layer::message::extended::chunked::{
+///     ChunkedMessageAssembler, ChunkResult, MAX_EXTENDED_MSG_CHUNK_LEN,
+/// };
+/// use usbpd::protocol_layer::message::extended::ExtendedHeader;
+/// use usbpd::protocol_layer::message::header::Header;
+///
 /// let mut assembler = ChunkedMessageAssembler::new();
 ///
-/// loop {
-///     let chunk_data = receive_message();
-///     match assembler.process_chunk(&chunk_data)? {
-///         ChunkResult::Complete(data) => {
-///             // Full message received
-///             break;
-///         }
-///         ChunkResult::NeedMoreChunks(next_chunk) => {
-///             // Send chunk request for next_chunk
-///             send_chunk_request(next_chunk);
-///         }
-///         ChunkResult::ChunkRequested(chunk_num) => {
-///             // Other side is requesting a chunk (for sending)
-///         }
-///     }
+/// // Simulate receiving a 30-byte message split into 2 chunks (26 + 4 bytes)
+/// let full_data: [u8; 30] = core::array::from_fn(|i| i as u8);
+///
+/// // Process chunk 0 (first 26 bytes)
+/// let header = Header(0x9191); // Extended message header
+/// let ext_header = ExtendedHeader::new(30).with_chunked(true).with_chunk_number(0);
+/// match assembler.process_chunk(header, ext_header, &full_data[..26]).unwrap() {
+///     ChunkResult::NeedMoreChunks(next) => assert_eq!(next, 1),
+///     _ => panic!("Expected NeedMoreChunks"),
+/// }
+///
+/// // Process chunk 1 (remaining 4 bytes)
+/// let ext_header = ExtendedHeader::new(30).with_chunked(true).with_chunk_number(1);
+/// match assembler.process_chunk(header, ext_header, &full_data[26..]).unwrap() {
+///     ChunkResult::Complete(data) => assert_eq!(&data[..], &full_data),
+///     _ => panic!("Expected Complete"),
 /// }
 /// ```
 #[derive(Debug, Clone)]
@@ -248,7 +255,7 @@ impl<'a> ChunkedMessageSender<'a> {
         let total_chunks = if data.is_empty() {
             1
         } else {
-            ((data.len() + MAX_EXTENDED_MSG_CHUNK_LEN - 1) / MAX_EXTENDED_MSG_CHUNK_LEN) as u8
+            data.len().div_ceil(MAX_EXTENDED_MSG_CHUNK_LEN) as u8
         };
 
         Self {

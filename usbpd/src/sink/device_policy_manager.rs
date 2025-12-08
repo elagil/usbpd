@@ -13,10 +13,23 @@ pub enum Event {
     None,
     /// Request SPR source capabilities.
     RequestSprSourceCapabilities,
-    /// Request EPR source capabilities.
+    /// Request EPR source capabilities (when already in EPR mode).
     ///
+    /// Sends EprGetSourceCap extended control message.
     /// See [8.3.3.8.1]
     RequestEprSourceCapabilities,
+    /// Enter EPR mode.
+    ///
+    /// Initiates EPR mode entry sequence (EPR_Mode Enter -> EnterAcknowledged -> EnterSucceeded).
+    /// After successful entry, source automatically sends EPR_Source_Capabilities.
+    /// See spec Table 8.39: "Steps for Entering EPR Mode (Success)"
+    EnterEprMode,
+    /// Exit EPR mode (sink-initiated).
+    ///
+    /// Sends EPR_Mode (Exit) message to source, then waits for Source_Capabilities.
+    /// After receiving caps, negotiation proceeds as normal SPR negotiation.
+    /// See spec Table 8.46: "Steps for Exiting EPR Mode (Sink Initiated)"
+    ExitEprMode,
     /// Request a certain power level.
     RequestPower(request::PowerSource),
 }

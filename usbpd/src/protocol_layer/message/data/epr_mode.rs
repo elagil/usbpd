@@ -4,7 +4,7 @@
 use proc_bitfield::bitfield;
 
 /// Possible actions, encoded in the EPR mode data object.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Action {
     /// Enter EPR mode.
@@ -59,6 +59,7 @@ bitfield! {
     }
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for EprModeDataObject {
     fn default() -> Self {
         Self(0)

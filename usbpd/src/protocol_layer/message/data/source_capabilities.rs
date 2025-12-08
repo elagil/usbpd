@@ -44,6 +44,26 @@ pub enum PowerDataObject {
     Unknown(RawPowerDataObject),
 }
 
+impl PowerDataObject {
+    /// Check if this PDO is zero-padding (used in EPR capabilities messages).
+    ///
+    /// Per USB PD Spec R3.2 Section 6.5.15.1, if the SPR Capabilities Message
+    /// contains fewer than 7 PDOs, the unused Data Objects are zero-filled.
+    pub fn is_zero_padding(&self) -> bool {
+        match self {
+            PowerDataObject::FixedSupply(f) => f.0 == 0,
+            PowerDataObject::Battery(b) => b.0 == 0,
+            PowerDataObject::VariableSupply(v) => v.0 == 0,
+            PowerDataObject::Augmented(a) => match a {
+                Augmented::Spr(s) => s.0 == 0,
+                Augmented::Epr(e) => e.0 == 0,
+                Augmented::Unknown(u) => *u == 0,
+            },
+            PowerDataObject::Unknown(u) => u.0 == 0,
+        }
+    }
+}
+
 bitfield! {
     /// A raw power data object.
     ///
@@ -88,6 +108,7 @@ bitfield! {
     }
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for FixedSupply {
     fn default() -> Self {
         Self(0)
@@ -309,6 +330,41 @@ impl SourceCapabilities {
     /// Get power data objects (PDOs) from the source.
     pub fn pdos(&self) -> &[PowerDataObject] {
         &self.0
+    }
+
+    /// Check if this is an EPR capabilities message (has PDOs at position 8+).
+    ///
+    /// Per USB PD Spec R3.2 Section 6.5.15.1, EPR Capabilities Messages have
+    /// SPR PDOs in positions 1-7 and EPR PDOs starting at position 8.
+    pub fn is_epr_capabilities(&self) -> bool {
+        self.0.len() > 7
+    }
+
+    /// Get SPR PDOs (positions 1-7), excluding zero-padding entries.
+    ///
+    /// Per USB PD Spec R3.2 Section 6.5.15.1:
+    /// - Positions 1-7 contain SPR (A)PDOs
+    /// - If fewer than 7 SPR PDOs exist, unused positions are zero-filled
+    ///
+    /// Returns iterator of (position, PDO) tuples where position is 1-indexed.
+    pub fn spr_pdos(&self) -> impl Iterator<Item = (u8, &PowerDataObject)> {
+        self.0
+            .iter()
+            .take(7)
+            .enumerate()
+            .filter(|(_, pdo)| !pdo.is_zero_padding())
+            .map(|(i, pdo)| ((i + 1) as u8, pdo))
+    }
+
+    /// Get EPR PDOs (positions 8+).
+    ///
+    /// Per USB PD Spec R3.2 Section 6.5.15.1:
+    /// - EPR (A)PDOs start at Data Object position 8
+    /// - Only valid in EPR Capabilities Messages
+    ///
+    /// Returns iterator of (position, PDO) tuples where position is 1-indexed (8, 9, 10, 11).
+    pub fn epr_pdos(&self) -> impl Iterator<Item = (u8, &PowerDataObject)> {
+        self.0.iter().skip(7).enumerate().map(|(i, pdo)| ((i + 8) as u8, pdo))
     }
 }
 
