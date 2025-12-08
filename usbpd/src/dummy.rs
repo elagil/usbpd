@@ -9,6 +9,8 @@ use crate::protocol_layer::message::data::source_capabilities::{
 };
 use crate::sink::device_policy_manager::DevicePolicyManager as SinkDevicePolicyManager;
 use crate::timers::Timer;
+use crate::units::Power;
+use uom::si::power::watt;
 
 /// SPR source capabilities message for testing (includes EPR capable flag).
 /// Captured from real hardware: 5V@3A, 9V@3A, 12V@3A, 15V@3A, 20V@5A, PPS 5-21V@5A
@@ -75,7 +77,7 @@ impl SinkDevicePolicyManager for DummySinkEprDevice {
                     if fixed.epr_mode_capable() {
                         self.requested_epr_caps = true;
                         eprintln!("  Returning Event::EnterEprMode");
-                        return Event::EnterEprMode;
+                        return Event::EnterEprMode(Power::new::<watt>(140)); // Dummy 140W PDP
                     }
                 }
             }

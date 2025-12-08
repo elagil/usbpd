@@ -5,6 +5,7 @@
 use core::future::Future;
 
 use crate::protocol_layer::message::data::{request, sink_capabilities, source_capabilities};
+use crate::units::Power;
 
 /// Events that the device policy manager can send to the policy engine.
 #[derive(Debug)]
@@ -18,12 +19,16 @@ pub enum Event {
     /// Sends EprGetSourceCap extended control message.
     /// See [8.3.3.8.1]
     RequestEprSourceCapabilities,
-    /// Enter EPR mode.
+    /// Enter EPR mode with the specified operational PDP.
     ///
     /// Initiates EPR mode entry sequence (EPR_Mode Enter -> EnterAcknowledged -> EnterSucceeded).
     /// After successful entry, source automatically sends EPR_Source_Capabilities.
+    ///
+    /// Per USB PD spec 6.4.10, the Data field in EPR_Mode(Enter) shall be set to the
+    /// EPR Sink Operational PDP. For example, a 28V × 5A = 140W device should pass 140W.
+    ///
     /// See spec Table 8.39: "Steps for Entering EPR Mode (Success)"
-    EnterEprMode,
+    EnterEprMode(Power),
     /// Exit EPR mode (sink-initiated).
     ///
     /// Sends EPR_Mode (Exit) message to source, then waits for Source_Capabilities.
