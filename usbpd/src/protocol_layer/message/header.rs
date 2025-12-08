@@ -97,12 +97,11 @@ impl Header {
     }
 
     pub fn message_type(&self) -> MessageType {
-        if self.num_objects() == 0 {
-            if self.extended() {
-                MessageType::Extended(self.message_type_raw().into())
-            } else {
-                MessageType::Control(self.message_type_raw().into())
-            }
+        // Check extended bit first - Extended messages can have data objects (e.g., EPR Source Capabilities)
+        if self.extended() {
+            MessageType::Extended(self.message_type_raw().into())
+        } else if self.num_objects() == 0 {
+            MessageType::Control(self.message_type_raw().into())
         } else {
             MessageType::Data(self.message_type_raw().into())
         }

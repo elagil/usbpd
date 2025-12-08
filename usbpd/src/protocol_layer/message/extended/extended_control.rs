@@ -6,7 +6,7 @@ use byteorder::{ByteOrder, LittleEndian};
 use proc_bitfield::bitfield;
 
 /// Types of extended control message.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ExtendedControlMessageType {
     /// Get capabilities offered by a source in EPR mode.
@@ -68,6 +68,12 @@ impl ExtendedControl {
     pub fn to_bytes(self, buf: &mut [u8]) -> usize {
         LittleEndian::write_u16(buf, self.0);
         2
+    }
+
+    /// Parse an extended control message from bytes.
+    pub fn from_bytes(buf: &[u8]) -> Self {
+        assert!(buf.len() >= 2);
+        Self(LittleEndian::read_u16(buf))
     }
 }
 
