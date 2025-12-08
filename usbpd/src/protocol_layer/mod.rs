@@ -686,6 +686,27 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             Err(TxError::HardReset) => Err(RxError::HardReset),
         }
     }
+
+    /// Transmit sink capabilities in response to Get_Sink_Cap.
+    ///
+    /// Per USB PD Spec R3.2 Section 6.4.1.6, sinks respond to Get_Sink_Cap messages
+    /// with a Sink_Capabilities message containing PDOs describing what power levels
+    /// the sink can operate at.
+    pub async fn transmit_sink_capabilities(
+        &mut self,
+        capabilities: message::data::sink_capabilities::SinkCapabilities,
+    ) -> Result<(), ProtocolError> {
+        let num_objects = capabilities.num_objects();
+        let header = Header::new_data(
+            self.default_header,
+            self.counters.tx_message,
+            DataMessageType::SinkCapabilities,
+            num_objects,
+        );
+
+        self.transmit(Message::new_with_data(header, Data::SinkCapabilities(capabilities)))
+            .await
+    }
 }
 
 #[cfg(test)]

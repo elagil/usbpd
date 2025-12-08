@@ -77,6 +77,11 @@ pub struct Sink<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> {
     source_capabilities: Option<SourceCapabilities>,
     mode: Mode,
     state: State,
+    /// Tracks whether a Get_Source_Cap request is pending.
+    /// Per USB PD Spec R3.2 Section 8.3.3.3.8, in EPR mode, receiving a
+    /// Source_Capabilities message that was not requested via Get_Source_Cap
+    /// shall trigger a Hard Reset.
+    get_source_cap_pending: bool,
 
     _timer: PhantomData<TIMER>,
 }
@@ -114,6 +119,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
             hard_reset_counter: Counter::new(crate::counters::CounterType::HardReset),
             source_capabilities: None,
             mode: Mode::Spr,
+            get_source_cap_pending: false,
             _timer: PhantomData,
         }
     }
@@ -145,7 +151,8 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 (_, _, ProtocolError::UnexpectedMessage) => Some(State::SendSoftReset),
 
                 // FIXME: Unexpected message in power transition -> hard reset?
-                // FIXME: Source cap. message not requested by get_source_caps
+                // Note: Unrequested Source_Capabilities in EPR mode is handled in Ready state
+                // by checking get_source_cap_pending flag (per spec 8.3.3.3.8).
                 // Note: EPR PDO positioning (positions 8+ only) is enforced by SourceCapabilities::epr_pdos()
                 // per USB PD Spec R3.2 Section 6.5.15.1. Malformed messages with EPR PDOs in positions
                 // 1-7 would be parsed but ignored when using the spec-compliant accessor methods.
@@ -332,16 +339,25 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
 
                         match message.header.message_type() {
                             MessageType::Data(DataMessageType::SourceCapabilities) => {
-                                let Some(Payload::Data(Data::SourceCapabilities(capabilities))) = message.payload
-                                else {
-                                    unreachable!()
-                                };
-                                State::EvaluateCapabilities(capabilities)
+                                // Per USB PD Spec R3.2 Section 8.3.3.3.8:
+                                // In EPR Mode, if a Source_Capabilities Message is received that
+                                // has not been requested using a Get_Source_Cap Message, trigger Hard Reset.
+                                if self.mode == Mode::Epr && !self.get_source_cap_pending {
+                                    State::HardReset
+                                } else {
+                                    let Some(Payload::Data(Data::SourceCapabilities(capabilities))) = message.payload
+                                    else {
+                                        unreachable!()
+                                    };
+                                    self.get_source_cap_pending = false;
+                                    State::EvaluateCapabilities(capabilities)
+                                }
                             }
                             MessageType::Extended(ExtendedMessageType::EprSourceCapabilities) => {
                                 if let Some(Payload::Extended(extended::Extended::EprSourceCapabilities(pdos))) =
                                     message.payload
                                 {
+                                    self.get_source_cap_pending = false;
                                     State::EvaluateCapabilities(
                                         crate::protocol_layer::message::data::source_capabilities::SourceCapabilities(
                                             pdos,
@@ -462,17 +478,21 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 State::Startup
             }
             State::GiveSinkCap(power_source) => {
-                // FIXME: Send sink capabilities, as provided by device policy manager.
-                // Sending NotSupported is not to spec.
-                // See spec, [6.4.1.6]
-                self.protocol_layer
-                    .transmit_control_message(ControlMessageType::NotSupported)
-                    .await?;
+                // Per USB PD Spec R3.2 Section 6.4.1.6:
+                // Sinks respond to Get_Sink_Cap messages with a Sink_Capabilities message
+                // containing PDOs describing what power levels the sink can operate at.
+                let sink_caps = self.device_policy_manager.sink_capabilities();
+                self.protocol_layer.transmit_sink_capabilities(sink_caps).await?;
 
                 State::Ready(*power_source)
             }
             State::GetSourceCap(requested_mode, power_source) => {
                 // Commonly used for switching between EPR and SPR mode, depending on requested mode.
+                // Set flag before sending to track that we requested source capabilities.
+                // Per USB PD Spec R3.2 Section 8.3.3.3.8, in EPR mode, receiving an unrequested
+                // Source_Capabilities message triggers a Hard Reset.
+                self.get_source_cap_pending = true;
+
                 match requested_mode {
                     Mode::Spr => {
                         self.protocol_layer
@@ -489,6 +509,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 };
 
                 let caps = Self::wait_for_source_capabilities(&mut self.protocol_layer).await?;
+                self.get_source_cap_pending = false;
                 self.device_policy_manager.inform(&caps).await;
 
                 State::Ready(*power_source)

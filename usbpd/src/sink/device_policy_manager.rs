@@ -4,7 +4,7 @@
 //! or renegotiate the power contract.
 use core::future::Future;
 
-use crate::protocol_layer::message::data::{request, source_capabilities};
+use crate::protocol_layer::message::data::{request, sink_capabilities, source_capabilities};
 
 /// Events that the device policy manager can send to the policy engine.
 #[derive(Debug)]
@@ -78,6 +78,19 @@ pub trait DevicePolicyManager {
     /// This callback should return when the device has reached the default level.
     fn hard_reset(&mut self) -> impl Future<Output = ()> {
         async {}
+    }
+
+    /// Get the sink's power capabilities.
+    ///
+    /// Per USB PD Spec R3.2 Section 6.4.1.6, sinks respond to Get_Sink_Cap messages
+    /// with a Sink_Capabilities message containing PDOs describing what power levels
+    /// the sink can operate at.
+    ///
+    /// All sinks shall minimally offer one PDO at vSafe5V. The default implementation
+    /// returns a single 5V @ 100mA PDO.
+    fn sink_capabilities(&self) -> sink_capabilities::SinkCapabilities {
+        // Default: 5V @ 100mA (1A = 100 * 10mA)
+        sink_capabilities::SinkCapabilities::new_vsafe5v_only(100)
     }
 
     /// The policy engine gets and evaluates device policy events when ready.

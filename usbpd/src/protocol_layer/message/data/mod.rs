@@ -16,6 +16,8 @@ const PDO_SIZE: usize = size_of::<u32>();
 #[allow(missing_docs)]
 pub mod source_capabilities;
 
+pub mod sink_capabilities;
+
 pub mod epr_mode;
 
 // FIXME: add documentation
@@ -51,6 +53,8 @@ impl PdoState for () {
 pub enum Data {
     /// Source capabilities.
     SourceCapabilities(source_capabilities::SourceCapabilities),
+    /// Sink capabilities.
+    SinkCapabilities(sink_capabilities::SinkCapabilities),
     /// Request for a power level from the source.
     Request(request::PowerSource),
     /// Used to enter, acknowledge or exit EPR mode.
@@ -179,6 +183,7 @@ impl Data {
         match self {
             Self::Unknown => 0,
             Self::SourceCapabilities(_) => unimplemented!(),
+            Self::SinkCapabilities(caps) => caps.to_bytes(payload),
             Self::Request(request::PowerSource::FixedVariableSupply(data_object)) => data_object.to_bytes(payload),
             Self::Request(request::PowerSource::Pps(data_object)) => data_object.to_bytes(payload),
             Self::Request(request::PowerSource::Avs(data_object)) => data_object.to_bytes(payload),
