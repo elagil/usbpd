@@ -252,6 +252,7 @@ impl SinkPowerDataObject {
 /// - Maximum 7 PDOs for SPR mode
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SinkCapabilities(pub Vec<SinkPowerDataObject, 7>);
 
 impl SinkCapabilities {
