@@ -5,7 +5,7 @@ use embassy_futures::select::{Either, Either3, select, select3};
 use usbpd_traits::Driver;
 
 use super::device_policy_manager::DevicePolicyManager;
-use crate::counters::{Counter, Error as CounterError};
+use crate::counters::Counter;
 use crate::protocol_layer::message::data::epr_mode::Action;
 use crate::protocol_layer::message::data::request::PowerSource;
 use crate::protocol_layer::message::data::source_capabilities::SourceCapabilities;
@@ -408,28 +408,56 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 State::WaitForCapabilities
             }
             State::HardReset => {
-                // Other causes of entry:
-                // - SinkWaitCapTimer timeout or PSTransitionTimer timeout, when reset count <
-                //   max
-                // - Hard reset request from device policy manager
+                // Per USB PD Spec R3.2 Section 8.3.3.3.8 (PE_SNK_Hard_Reset):
+                // Entry conditions:
+                // - PSTransitionTimer timeout (when HardResetCounter <= nHardResetCount)
+                // - Hard reset request from Device Policy Manager
                 // - EPR mode and EPR_Source_Capabilities message with EPR PDO in pos. 1..7
-                // - source_capabilities message not requested by get_source_caps
-                // Transition to TransitionToDefault
-                match self.hard_reset_counter.increment() {
-                    Ok(_) => self.protocol_layer.hard_reset().await?,
+                // - Source_Capabilities message not requested by Get_Source_Cap
+                // - SinkWaitCapTimer timeout (May transition)
+                //
+                // On entry: Request Hard Reset Signaling AND increment HardResetCounter
 
-                    // FIXME: Only unresponsive if WaitCapTimer timed out
-                    Err(CounterError::Exceeded) => return Err(Error::PortPartnerUnresponsive),
+                // Check if we've exceeded the hard reset count before attempting
+                if self.hard_reset_counter.increment().is_err() {
+                    // Per spec: If SinkWaitCapTimer times out and HardResetCounter > nHardResetCount
+                    // the Sink shall assume that the Source is non-responsive.
+                    return Err(Error::PortPartnerUnresponsive);
                 }
+
+                // Transmit Hard Reset Signaling
+                self.protocol_layer.hard_reset().await?;
 
                 State::TransitionToDefault
             }
             State::TransitionToDefault => {
-                // Entry: Request power sink transition to default
-                // Entry: Reset local hardware???
-                // Entry: Set port data role to UFP and turn off VConn
-                // Exit: Inform protocol layer that hard reset is complete
-                // Transition to Startup
+                // Per USB PD Spec R3.2 Section 8.3.3.3.9 (PE_SNK_Transition_to_default):
+                // This state is entered when:
+                // - Hard Reset Signaling is detected (received or transmitted)
+                // - From PE_SNK_Hard_Reset after hard reset is complete
+                //
+                // On entry:
+                // - Indicate to DPM that Sink shall transition to default
+                // - Request reset of local hardware
+                // - Request DPM that Port Data Role is set to UFP
+                //
+                // Transition to PE_SNK_Startup when:
+                // - DPM indicates Sink has reached default level
+
+                // Notify DPM about hard reset (DPM should transition to default power level)
+                self.device_policy_manager.hard_reset().await;
+
+                // Reset protocol layer (per spec 6.8.3: "Protocol Layers shall be reset as for Soft Reset")
+                self.protocol_layer.reset();
+
+                // Reset EPR mode (per spec 6.8.3.2: "Hard Reset shall cause EPR Mode to be exited")
+                self.mode = Mode::Spr;
+
+                // Reset contract to default
+                self.contract = Contract::Safe5V;
+
+                // Clear cached source capabilities
+                self.source_capabilities = None;
 
                 State::Startup
             }
