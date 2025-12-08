@@ -2,6 +2,7 @@
 use core::marker::PhantomData;
 
 use embassy_futures::select::{Either, Either3, select, select3};
+use uom::si::power::watt;
 use usbpd_traits::Driver;
 
 use super::device_policy_manager::DevicePolicyManager;
@@ -19,7 +20,6 @@ use crate::protocol_layer::{ProtocolError, ProtocolLayer, RxError, TxError};
 use crate::sink::device_policy_manager::Event;
 use crate::timers::{Timer, TimerType};
 use crate::{DataRole, PowerRole, units};
-use uom::si::power::watt;
 
 /// Sink capability
 #[derive(Debug, Clone, Copy, PartialEq)]
