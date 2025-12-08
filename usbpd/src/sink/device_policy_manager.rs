@@ -67,6 +67,19 @@ pub trait DevicePolicyManager {
         async {}
     }
 
+    /// Notify the device that a hard reset has occurred.
+    ///
+    /// Per USB PD Spec R3.2 Section 8.3.3.3.9, on entry to PE_SNK_Transition_to_default:
+    /// - The sink shall transition to default power level (vSafe5V)
+    /// - Local hardware should be reset
+    /// - Port data role should be set to UFP
+    ///
+    /// The device should prepare for VBUS going to vSafe0V and then back to vSafe5V.
+    /// This callback should return when the device has reached the default level.
+    fn hard_reset(&mut self) -> impl Future<Output = ()> {
+        async {}
+    }
+
     /// The policy engine gets and evaluates device policy events when ready.
     ///
     /// By default, this is a future that never resolves.
