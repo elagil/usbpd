@@ -15,9 +15,12 @@ pub mod message;
 use core::future::Future;
 use core::marker::PhantomData;
 
+use byteorder::{ByteOrder, LittleEndian};
 use embassy_futures::select::{Either, select};
+use heapless::Vec;
 use message::Message;
 use message::data::{Data, request};
+use message::extended::extended_control::ExtendedControlMessageType;
 use message::header::{ControlMessageType, DataMessageType, ExtendedMessageType, Header, MessageType};
 use usbpd_traits::{Driver, DriverRxError, DriverTxError};
 
@@ -28,10 +31,14 @@ use crate::protocol_layer::message::extended::Extended;
 use crate::protocol_layer::message::{ParseError, Payload};
 use crate::timers::{Timer, TimerType};
 
-/// The protocol layer does not support extended messages.
-///
-/// This is the maximum standard message size.
-const MAX_MESSAGE_SIZE: usize = 30;
+/// Maximum message size including headers and payload.
+const MAX_MESSAGE_SIZE: usize = 272;
+
+/// Size of the message header in bytes.
+const MSG_HEADER_SIZE: usize = 2;
+
+/// Size of the extended message header in bytes.
+const EXT_HEADER_SIZE: usize = 2;
 
 /// Errors that can occur in the protocol layer.
 #[derive(thiserror::Error, Debug)]
@@ -113,6 +120,8 @@ pub(crate) struct ProtocolLayer<DRIVER: Driver, TIMER: Timer> {
     driver: DRIVER,
     counters: Counters,
     default_header: Header,
+    extended_rx_buffer: Vec<u8, MAX_MESSAGE_SIZE>,
+    extended_rx_expected: Option<(ExtendedMessageType, u16, u8)>,
     _timer: PhantomData<TIMER>,
 }
 
@@ -123,6 +132,8 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             driver,
             counters: Default::default(),
             default_header,
+            extended_rx_buffer: Vec::new(),
+            extended_rx_expected: None,
             _timer: PhantomData,
         }
     }
@@ -260,7 +271,40 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         Ok(self.transmit_inner(&buffer[..size]).await?)
     }
 
-    /// Receive a message.
+    /// Handle acknowledgement and retransmission detection for a received message.
+    ///
+    /// Returns `Ok(true)` if this was a retransmission (caller should continue to next message),
+    /// `Ok(false)` if this is a new message to process, or `Err` on failure.
+    async fn handle_rx_ack(&mut self, message: &Message) -> Result<bool, RxError> {
+        let is_good_crc = matches!(
+            message.header.message_type(),
+            MessageType::Control(ControlMessageType::GoodCRC)
+        );
+
+        let is_retransmission = if is_good_crc {
+            false
+        } else {
+            self.update_rx_message_counter(message)
+        };
+
+        if !DRIVER::HAS_AUTO_GOOD_CRC && !is_good_crc {
+            match self.transmit_good_crc().await {
+                Ok(()) => {}
+                Err(ProtocolError::TxError(TxError::HardReset)) => return Err(RxError::HardReset),
+                Err(_) => return Err(RxError::UnsupportedMessage),
+            }
+        }
+
+        Ok(is_retransmission)
+    }
+
+    /// Reset chunked message reception state.
+    fn reset_chunked_rx(&mut self) {
+        self.extended_rx_buffer.clear();
+        self.extended_rx_expected = None;
+    }
+
+    /// Receive a message, assembling chunked extended messages as needed.
     async fn receive_message_inner(&mut self) -> Result<Message, RxError> {
         loop {
             let mut buffer = Self::get_message_buffer();
@@ -271,6 +315,102 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                 Err(DriverRxError::HardReset) => return Err(RxError::HardReset),
             };
 
+            // Parse header early to handle chunking.
+            let header = Header::from_bytes(&buffer[..MSG_HEADER_SIZE])?;
+            let message_type = header.message_type();
+
+            if matches!(message_type, MessageType::Extended(_)) {
+                let ext_header_end = MSG_HEADER_SIZE + EXT_HEADER_SIZE;
+                let ext_header = message::extended::ExtendedHeader::from_bytes(&buffer[MSG_HEADER_SIZE..ext_header_end]);
+                let payload = &buffer[ext_header_end..length];
+                let total_size = ext_header.data_size();
+                let chunked = ext_header.chunked();
+                let chunk_number = ext_header.chunk_number();
+                let msg_type = match message_type {
+                    MessageType::Extended(mt) => mt,
+                    _ => unreachable!(),
+                };
+
+                // Update specification revision, based on the received frame.
+                self.default_header = self.default_header.with_spec_revision(header.spec_revision()?);
+
+                if chunked {
+                    trace!(
+                        "Received chunked extended message {:?}, chunk {}, size {}",
+                        message_type,
+                        chunk_number,
+                        payload.len()
+                    );
+
+                    // Update RX counters and acknowledge.
+                    let tmp_message = Message { header, payload: None };
+                    if self.handle_rx_ack(&tmp_message).await? {
+                        continue; // Retransmission
+                    }
+
+                    let (expected_total, expected_next) = match self.extended_rx_expected {
+                        Some((ty, total, next)) if ty == msg_type => (total, next),
+                        _ => (total_size, 0),
+                    };
+
+                    // Ensure chunks arrive in order.
+                    if expected_next != 0 && chunk_number != expected_next {
+                        self.reset_chunked_rx();
+                        return Err(RxError::UnsupportedMessage);
+                    }
+
+                    if chunk_number == 0 || expected_next == 0 {
+                        self.extended_rx_buffer.clear();
+                        self.extended_rx_expected = Some((msg_type, total_size, 1));
+                    } else {
+                        self.extended_rx_expected = Some((msg_type, expected_total, expected_next + 1));
+                    }
+
+                    if self.extended_rx_buffer.len() + payload.len() > self.extended_rx_buffer.capacity() {
+                        self.reset_chunked_rx();
+                        return Err(RxError::UnsupportedMessage);
+                    }
+                    if self.extended_rx_buffer.extend_from_slice(payload).is_err() {
+                        self.reset_chunked_rx();
+                        return Err(RxError::UnsupportedMessage);
+                    }
+
+                    if self.extended_rx_buffer.len() < total_size as usize {
+                        // Need more chunks.
+                        continue;
+                    }
+
+                    // All chunks received, parse payload.
+                    let ext_payload = &self.extended_rx_buffer[..total_size as usize];
+                    let parsed_payload = match msg_type {
+                        ExtendedMessageType::ExtendedControl => {
+                            Payload::Extended(message::extended::Extended::ExtendedControl(
+                                message::extended::extended_control::ExtendedControl::from_bytes(ext_payload),
+                            ))
+                        }
+                        ExtendedMessageType::EprSourceCapabilities => {
+                            Payload::Extended(message::extended::Extended::EprSourceCapabilities(
+                                ext_payload
+                                    .chunks_exact(4)
+                                    .map(|buf| {
+                                        message::data::source_capabilities::parse_raw_pdo(LittleEndian::read_u32(buf))
+                                    })
+                                    .collect(),
+                            ))
+                        }
+                        _ => Payload::Extended(message::extended::Extended::Unknown),
+                    };
+
+                    self.extended_rx_expected = None;
+                    let mut message = Message::new(header);
+                    message.payload = Some(parsed_payload);
+
+                    trace!("Received assembled extended message {:?}", message);
+                    return Ok(message);
+                }
+            }
+
+            // Non-extended or unchunked extended messages.
             let message = Message::from_bytes(&buffer[..length])?;
 
             // Update specification revision, based on the received frame.
@@ -283,6 +423,11 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                 }
                 MessageType::Control(ControlMessageType::SoftReset) => return Err(RxError::SoftReset),
                 _ => (),
+            }
+
+            // Handle GoodCRC and retransmissions.
+            if self.handle_rx_ack(&message).await? {
+                continue; // Retransmission
             }
 
             trace!("Received message {:?}", message);
@@ -343,24 +488,12 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             loop {
                 match self.receive_message_inner().await {
                     Ok(message) => {
-                        // See spec, [6.7.1.2]
-                        let is_retransmission = self.update_rx_message_counter(&message);
-
-                        // If the PHY handles GoodCRC automatically, don't send one from software.
-                        if !DRIVER::HAS_AUTO_GOOD_CRC
-                            && !matches!(
-                                message.header.message_type(),
-                                MessageType::Control(ControlMessageType::GoodCRC)
-                            )
-                        {
-                            self.transmit_good_crc().await?;
-                        }
-
-                        if is_retransmission {
-                            // Retry reception.
+                        if matches!(
+                            message.header.message_type(),
+                            MessageType::Control(ControlMessageType::GoodCRC)
+                        ) {
                             continue;
                         }
-
                         return if message_types.contains(&message.header.message_type()) {
                             Ok(message)
                         } else {
@@ -407,7 +540,10 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     /// Wait for the source to provide its capabilities.
     pub async fn wait_for_source_capabilities(&mut self) -> Result<Message, ProtocolError> {
         self.receive_message_type(
-            &[MessageType::Data(message::header::DataMessageType::SourceCapabilities)],
+            &[
+                MessageType::Data(message::header::DataMessageType::SourceCapabilities),
+                MessageType::Extended(ExtendedMessageType::EprSourceCapabilities),
+            ],
             TimerType::SinkWaitCap,
         )
         .await
@@ -424,25 +560,42 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         self.transmit(message).await
     }
 
-    // /// Transmit an extended control message of the provided type.
-    // pub async fn transmit_extended_control_message(
-    //     &mut self,
-    //     message_type: ExtendedControlMessageType,
-    // ) -> Result<(), ProtocolError> {
-    //     let mut message = Message::new(Header::new_extended(
-    //         self.default_header,
-    //         self.counters.tx_message,
-    //         ExtendedMessageType::ExtendedControl,
-    //         1,
-    //     ));
+    /// Transmit an extended control message of the provided type.
+    pub async fn transmit_extended_control_message(
+        &mut self,
+        message_type: ExtendedControlMessageType,
+    ) -> Result<(), ProtocolError> {
+        let mut message = Message::new(Header::new_extended(
+            self.default_header,
+            self.counters.tx_message,
+            ExtendedMessageType::ExtendedControl,
+            0,
+        ));
 
-    //     // FIXME: Put useful data.
-    //     message.payload = Some(Payload::Extended(Extended::ExtendedControl));
+        message.payload = Some(Payload::Extended(Extended::ExtendedControl(
+            message::extended::extended_control::ExtendedControl::default().with_message_type(message_type),
+        )));
 
-    //     let _epr_mdo = EprModeDataObject::new().with_action(message_type as u8);
+        self.transmit(message).await
+    }
 
-    //     self.transmit(message).await
-    // }
+    /// Transmit an EPR mode data message.
+    pub async fn transmit_epr_mode(
+        &mut self,
+        action: message::data::epr_mode::Action,
+        data: u8,
+    ) -> Result<(), ProtocolError> {
+        let header = Header::new_data(
+            self.default_header,
+            self.counters.tx_message,
+            DataMessageType::EprMode,
+            1,
+        );
+
+        let mdo = EprModeDataObject::default().with_action(action).with_data(data);
+
+        self.transmit(Message::new_with_data(header, Data::EprMode(mdo))).await
+    }
 
     /// Transmit a data message of the provided type.
     pub async fn _transmit_data_message(
@@ -466,12 +619,9 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         // Only sinks can request from a supply.
         assert!(matches!(self.default_header.port_power_role(), PowerRole::Sink));
 
-        let header = Header::new_data(
-            self.default_header,
-            self.counters.tx_message,
-            DataMessageType::Request,
-            1,
-        );
+        let message_type = power_source_request.message_type();
+        let num_objects = power_source_request.num_objects();
+        let header = Header::new_data(self.default_header, self.counters.tx_message, message_type, num_objects);
 
         self.transmit(Message::new_with_data(header, Data::Request(power_source_request)))
             .await
