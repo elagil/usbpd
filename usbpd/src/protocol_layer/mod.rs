@@ -707,6 +707,31 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         self.transmit(Message::new_with_data(header, Data::SinkCapabilities(capabilities)))
             .await
     }
+
+    /// Transmit EPR sink capabilities in response to EPR_Get_Sink_Cap.
+    ///
+    /// Per USB PD Spec R3.2 Section 8.3.3.3.10, sinks respond to EPR_Get_Sink_Cap
+    /// messages with an EPR_Sink_Capabilities message.
+    pub async fn transmit_epr_sink_capabilities(
+        &mut self,
+        capabilities: message::data::sink_capabilities::SinkCapabilities,
+    ) -> Result<(), ProtocolError> {
+        // Convert SinkCapabilities PDOs to the extended message format
+        let pdos: heapless::Vec<_, 7> = capabilities.0.iter().cloned().collect();
+        let extended_payload = message::extended::Extended::EprSinkCapabilities(pdos);
+
+        let header = Header::new_extended(
+            self.default_header,
+            self.counters.tx_message,
+            ExtendedMessageType::EprSinkCapabilities,
+            0, // num_objects is 0 for extended messages
+        );
+
+        let mut message = Message::new(header);
+        message.payload = Some(Payload::Extended(extended_payload));
+
+        self.transmit(message).await
+    }
 }
 
 #[cfg(test)]

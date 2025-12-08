@@ -8,6 +8,7 @@ use byteorder::{ByteOrder, LittleEndian};
 use heapless::Vec;
 use proc_bitfield::bitfield;
 
+use crate::protocol_layer::message::data::sink_capabilities::SinkPowerDataObject;
 use crate::protocol_layer::message::data::source_capabilities::PowerDataObject;
 
 /// Types of extended messages.
@@ -25,6 +26,8 @@ pub enum Extended {
     ExtendedControl(extended_control::ExtendedControl),
     /// EPR source capabilities list.
     EprSourceCapabilities(Vec<PowerDataObject, 16>),
+    /// EPR sink capabilities list.
+    EprSinkCapabilities(Vec<SinkPowerDataObject, 7>),
     /// Unknown data type.
     Unknown,
 }
@@ -36,6 +39,7 @@ impl Extended {
             Self::SourceCapabilitiesExtended => 0,
             Self::ExtendedControl(_payload) => 2,
             Self::EprSourceCapabilities(pdos) => (pdos.len() * core::mem::size_of::<u32>()) as u16,
+            Self::EprSinkCapabilities(pdos) => (pdos.len() * core::mem::size_of::<u32>()) as u16,
             Self::Unknown => 0,
         }
     }
@@ -61,6 +65,14 @@ impl Extended {
                         PowerDataObject::Unknown(p) => p.0,
                     };
                     LittleEndian::write_u32(&mut payload[written..written + 4], raw);
+                    written += 4;
+                }
+                written
+            }
+            Self::EprSinkCapabilities(pdos) => {
+                let mut written = 0;
+                for pdo in pdos {
+                    LittleEndian::write_u32(&mut payload[written..written + 4], pdo.to_raw());
                     written += 4;
                 }
                 written

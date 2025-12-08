@@ -62,6 +62,15 @@ impl PowerDataObject {
             PowerDataObject::Unknown(u) => u.0 == 0,
         }
     }
+
+    /// Check if this is an EPR (Augmented) PDO.
+    ///
+    /// Per USB PD Spec R3.2, EPR APDOs are only valid in positions 8+ of
+    /// EPR_Source_Capabilities messages. Finding one in positions 1-7 is a
+    /// protocol error requiring Hard Reset.
+    pub fn is_epr_pdo(&self) -> bool {
+        matches!(self, PowerDataObject::Augmented(Augmented::Epr(_)))
+    }
 }
 
 bitfield! {
@@ -365,6 +374,17 @@ impl SourceCapabilities {
     /// Returns iterator of (position, PDO) tuples where position is 1-indexed (8, 9, 10, 11).
     pub fn epr_pdos(&self) -> impl Iterator<Item = (u8, &PowerDataObject)> {
         self.0.iter().skip(7).enumerate().map(|(i, pdo)| ((i + 8) as u8, pdo))
+    }
+
+    /// Check if any EPR PDO is in invalid position (1-7).
+    ///
+    /// Per USB PD Spec R3.2 Section 8.3.3.3.8:
+    /// "In EPR Mode and An EPR_Source_Capabilities Message is received with
+    /// an EPR (A)PDO in object positions 1... 7" → Hard Reset
+    ///
+    /// EPR APDOs should only appear in positions 8+ of EPR_Source_Capabilities.
+    pub fn has_epr_pdo_in_spr_positions(&self) -> bool {
+        self.0.iter().take(7).any(|pdo| pdo.is_epr_pdo())
     }
 }
 
