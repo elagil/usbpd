@@ -164,13 +164,30 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         TimerType::get_timer::<TIMER>(timer_type)
     }
 
+    /// Receive a simple (non-chunked) message from the driver.
+    /// Used by wait_for_good_crc to avoid recursion with chunked message handling.
+    async fn receive_simple(&mut self) -> Result<Message, RxError> {
+        loop {
+            let mut buffer = Self::get_message_buffer();
+
+            let length = match self.driver.receive(&mut buffer).await {
+                Ok(length) => length,
+                Err(DriverRxError::Discarded) => continue,
+                Err(DriverRxError::HardReset) => return Err(RxError::HardReset),
+            };
+
+            let message = Message::from_bytes(&buffer[..length])?;
+            return Ok(message);
+        }
+    }
+
     /// Wait until a GoodCrc message is received, or a timeout occurs.
     async fn wait_for_good_crc(&mut self) -> Result<(), RxError> {
         trace!("Wait for GoodCrc");
 
         let timeout_fut = Self::get_timer(TimerType::CRCReceive);
         let receive_fut = async {
-            let message = self.receive_message_inner().await?;
+            let message = self.receive_simple().await?;
 
             if matches!(
                 message.header.message_type(),
@@ -321,7 +338,8 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
 
             if matches!(message_type, MessageType::Extended(_)) {
                 let ext_header_end = MSG_HEADER_SIZE + EXT_HEADER_SIZE;
-                let ext_header = message::extended::ExtendedHeader::from_bytes(&buffer[MSG_HEADER_SIZE..ext_header_end]);
+                let ext_header =
+                    message::extended::ExtendedHeader::from_bytes(&buffer[MSG_HEADER_SIZE..ext_header_end]);
                 let payload = &buffer[ext_header_end..length];
                 let total_size = ext_header.data_size();
                 let chunked = ext_header.chunked();
@@ -376,7 +394,13 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                     }
 
                     if self.extended_rx_buffer.len() < total_size as usize {
-                        // Need more chunks.
+                        // Need more chunks - send chunk request per spec 6.12.2.1.2.4
+                        let next_chunk = self
+                            .extended_rx_expected
+                            .as_ref()
+                            .map(|(_, _, next)| *next)
+                            .unwrap_or(1);
+                        self.transmit_chunk_request(msg_type, next_chunk).await?;
                         continue;
                     }
 
@@ -625,6 +649,42 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
 
         self.transmit(Message::new_with_data(header, Data::Request(power_source_request)))
             .await
+    }
+
+    /// Transmit a chunk request message per USB PD spec 6.12.2.1.2.4.
+    ///
+    /// A chunk request is an extended message with:
+    /// - The same message type as the chunked message being received
+    /// - Extended header with: chunked=1, request_chunk=1, chunk_number=requested_chunk, data_size=0
+    async fn transmit_chunk_request(
+        &mut self,
+        message_type: ExtendedMessageType,
+        chunk_number: u8,
+    ) -> Result<(), RxError> {
+        trace!("Transmit chunk request for {:?} chunk {}", message_type, chunk_number);
+
+        // Build extended header for chunk request
+        let ext_header = message::extended::ExtendedHeader::new(0)
+            .with_chunked(true)
+            .with_request_chunk(true)
+            .with_chunk_number(chunk_number);
+
+        // Build message header - num_objects = 1 for the extended header word
+        let header = Header::new_extended(self.default_header, self.counters.tx_message, message_type, 1);
+
+        // Build message bytes manually
+        let mut buffer = Self::get_message_buffer();
+        let mut offset = header.to_bytes(&mut buffer);
+        offset += ext_header.to_bytes(&mut buffer[offset..]);
+
+        // Transmit and wait for GoodCRC
+        match self.transmit_inner(&buffer[..offset]).await {
+            Ok(_) => match self.wait_for_good_crc().await {
+                Ok(()) => Ok(()),
+                Err(e) => Err(e),
+            },
+            Err(TxError::HardReset) => Err(RxError::HardReset),
+        }
     }
 }
 

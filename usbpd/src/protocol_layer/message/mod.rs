@@ -6,6 +6,9 @@ pub mod extended;
 #[allow(missing_docs)]
 pub mod header;
 
+#[cfg(test)]
+mod epr_messages_test;
+
 use byteorder::{ByteOrder, LittleEndian};
 use header::{Header, MessageType};
 
