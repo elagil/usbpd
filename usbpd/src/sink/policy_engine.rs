@@ -65,7 +65,7 @@ enum State {
     EprEntryWaitForResponse(request::PowerSource),
     EprWaitForCapabilities(request::PowerSource),
     EprSendExit,
-    EprExitReceived,
+    EprExitReceived(request::PowerSource),
     EprKeepAlive(request::PowerSource),
 }
 
@@ -213,14 +213,25 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
         }
     }
 
+    /// Wait for source capabilities message (either Source_Capabilities or EPR_Source_Capabilities).
+    ///
+    /// Per USB PD Spec R3.2 Section 8.3.3.3.3 (PE_SNK_Wait_for_Capabilities):
+    /// - In SPR Mode: Source_Capabilities Message is received
+    /// - In EPR Mode: EPR_Source_Capabilities Message is received
+    ///
+    /// EPR Mode persists through Soft Reset (unlike Hard Reset which exits EPR per spec 6.8.3.2).
+    /// Per spec section 6.4.1.2.2, after a Soft Reset while in EPR Mode, the source sends
+    /// EPR_Source_Capabilities. Therefore this function must handle both message types.
     async fn wait_for_source_capabilities(
         protocol_layer: &mut ProtocolLayer<DRIVER, TIMER>,
     ) -> Result<SourceCapabilities, Error> {
         let message = protocol_layer.wait_for_source_capabilities().await?;
         trace!("Source capabilities: {:?}", message);
 
-        let Some(Payload::Data(Data::SourceCapabilities(capabilities))) = message.payload else {
-            unreachable!()
+        let capabilities = match message.payload {
+            Some(Payload::Data(Data::SourceCapabilities(caps))) => caps,
+            Some(Payload::Extended(extended::Extended::EprSourceCapabilities(pdos))) => SourceCapabilities(pdos),
+            _ => unreachable!(),
         };
 
         Ok(capabilities)
@@ -376,7 +387,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                             }
                             MessageType::Data(DataMessageType::EprMode) => {
                                 // Handle source exit notification.
-                                State::EprExitReceived
+                                State::EprExitReceived(*power_source)
                             }
                             // Per spec 8.3.3.3.7: Get_Sink_Cap → GiveSinkCap (send Sink_Capabilities)
                             MessageType::Control(ControlMessageType::GetSinkCap) => {
@@ -607,7 +618,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                         self.mode = Mode::Epr;
                         State::EprWaitForCapabilities(*power_source)
                     }
-                    Action::Exit => State::EprExitReceived,
+                    Action::Exit => State::EprExitReceived(*power_source),
                     // Per spec 8.3.3.26.2.1: EPR_Mode message not Enter Succeeded → Soft Reset
                     _ => State::SendSoftReset,
                 }
@@ -632,7 +643,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                         self.mode = Mode::Epr;
                         State::EprWaitForCapabilities(*power_source)
                     }
-                    Action::Exit => State::EprExitReceived,
+                    Action::Exit => State::EprExitReceived(*power_source),
                     // Per spec 8.3.3.26.2.2: EPR_Mode message not Enter Succeeded → Soft Reset
                     _ => State::SendSoftReset,
                 }
@@ -662,10 +673,30 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 self.mode = Mode::Spr;
                 State::WaitForCapabilities
             }
-            State::EprExitReceived => {
-                // Switch back to SPR on exit request.
+            State::EprExitReceived(power_source) => {
+                // Per USB PD Spec R3.2 Section 8.3.3.26.4.2 (PE_SNK_EPR_Mode_Exit_Received):
+                // - If in an Explicit Contract with an SPR (A)PDO → WaitForCapabilities
+                // - If NOT in an Explicit Contract with an SPR (A)PDO → HardReset
+                //
+                // SPR PDOs are in object positions 1-7, EPR PDOs are in positions 8+.
+                // In EPR mode, requests use EprRequest which contains the RDO with object position.
                 self.mode = Mode::Spr;
-                State::WaitForCapabilities
+
+                let is_epr_pdo_contract = match power_source {
+                    PowerSource::EprRequest { rdo, .. } => {
+                        // Extract object position from RDO (bits 28-31)
+                        let object_position = request::RawDataObject(*rdo).object_position();
+                        object_position >= 8
+                    }
+                    // Non-EprRequest variants are only used in SPR mode, so always SPR PDOs
+                    _ => false,
+                };
+
+                if is_epr_pdo_contract {
+                    State::HardReset
+                } else {
+                    State::WaitForCapabilities
+                }
             }
             State::EprKeepAlive(power_source) => {
                 // Per spec 8.3.3.3.11 (PE_SNK_EPR_Keep_Alive):
