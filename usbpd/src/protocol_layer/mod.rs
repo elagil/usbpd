@@ -296,29 +296,50 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         Self::validate_outgoing_message(&message)?;
 
         trace!("Transmit message: {:?}", message);
-        self.counters.retry.reset();
 
         let mut buffer = Self::get_message_buffer();
         let size = message.to_bytes(&mut buffer);
 
-        loop {
-            match self.transmit_inner(&buffer[..size]).await {
-                Ok(_) => match self.wait_for_good_crc().await {
-                    Ok(()) => {
-                        trace!("Transmit success");
-                        return Ok(());
-                    }
-                    Err(RxError::ReceiveTimeout) => match self.counters.retry.increment() {
-                        Ok(_) => {
-                            // Retry transmission, until the retry counter is exceeded.
+        if DRIVER::HAS_AUTO_RETRY {
+            // Hardware handles retries and verifies GoodCRC reception.
+            // Call driver.transmit() directly (not transmit_inner()) because
+            // Discarded here means all hardware retries exhausted — no point
+            // retrying in software.
+            match self.driver.transmit(&buffer[..size]).await {
+                Ok(()) => {
+                    self.counters.retry.reset();
+                    _ = self.counters.tx_message.increment();
+                    trace!("Transmit success (hardware retry)");
+                    Ok(())
+                }
+                Err(DriverTxError::HardReset) => Err(TxError::HardReset.into()),
+                Err(DriverTxError::Discarded) => {
+                    Err(ProtocolError::TransmitRetriesExceeded(self.counters.retry.max_value()))
+                }
+            }
+        } else {
+            // Software retry loop
+            self.counters.retry.reset();
+
+            loop {
+                match self.transmit_inner(&buffer[..size]).await {
+                    Ok(_) => match self.wait_for_good_crc().await {
+                        Ok(()) => {
+                            trace!("Transmit success");
+                            return Ok(());
                         }
-                        Err(CounterError::Exceeded) => {
-                            return Err(ProtocolError::TransmitRetriesExceeded(self.counters.retry.max_value()));
-                        }
+                        Err(RxError::ReceiveTimeout) => match self.counters.retry.increment() {
+                            Ok(_) => {
+                                // Retry transmission, until the retry counter is exceeded.
+                            }
+                            Err(CounterError::Exceeded) => {
+                                return Err(ProtocolError::TransmitRetriesExceeded(self.counters.retry.max_value()));
+                            }
+                        },
+                        Err(other) => return Err(other.into()),
                     },
                     Err(other) => return Err(other.into()),
-                },
-                Err(other) => return Err(other.into()),
+                }
             }
         }
     }
@@ -721,11 +742,23 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         offset += 2;
 
         // Transmit and wait for GoodCRC
-        match self.transmit_inner(&buffer[..offset]).await {
-            Ok(_) => self.wait_for_good_crc().await,
-            Err(TxError::HardReset) => Err(RxError::HardReset),
-            Err(TxError::UnchunkedExtendedMessagesNotSupported | TxError::AvsVoltageAlignmentInvalid) => {
-                unreachable!("validation should happen before transmit_inner")
+        if DRIVER::HAS_AUTO_RETRY {
+            match self.driver.transmit(&buffer[..offset]).await {
+                Ok(()) => {
+                    self.counters.retry.reset();
+                    _ = self.counters.tx_message.increment();
+                    Ok(())
+                }
+                Err(DriverTxError::HardReset) => Err(RxError::HardReset),
+                Err(DriverTxError::Discarded) => Err(RxError::ReceiveTimeout),
+            }
+        } else {
+            match self.transmit_inner(&buffer[..offset]).await {
+                Ok(_) => self.wait_for_good_crc().await,
+                Err(TxError::HardReset) => Err(RxError::HardReset),
+                Err(TxError::UnchunkedExtendedMessagesNotSupported | TxError::AvsVoltageAlignmentInvalid) => {
+                    unreachable!("validation should happen before transmit_inner")
+                }
             }
         }
     }
