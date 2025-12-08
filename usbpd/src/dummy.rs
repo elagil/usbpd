@@ -2,6 +2,7 @@
 use std::future::pending;
 use std::vec::Vec;
 
+use uom::si::power::watt;
 use usbpd_traits::Driver;
 
 use crate::protocol_layer::message::data::source_capabilities::{
@@ -10,7 +11,6 @@ use crate::protocol_layer::message::data::source_capabilities::{
 use crate::sink::device_policy_manager::DevicePolicyManager as SinkDevicePolicyManager;
 use crate::timers::Timer;
 use crate::units::Power;
-use uom::si::power::watt;
 
 /// SPR source capabilities message for testing (includes EPR capable flag).
 /// Captured from real hardware: 5V@3A, 9V@3A, 12V@3A, 15V@3A, 20V@5A, PPS 5-21V@5A
