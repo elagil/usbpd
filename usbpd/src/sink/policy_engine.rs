@@ -18,7 +18,8 @@ use crate::protocol_layer::message::{Payload, extended};
 use crate::protocol_layer::{ProtocolError, ProtocolLayer, RxError, TxError};
 use crate::sink::device_policy_manager::Event;
 use crate::timers::{Timer, TimerType};
-use crate::{DataRole, PowerRole};
+use crate::{DataRole, PowerRole, units};
+use uom::si::power::watt;
 
 /// Sink capability
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -63,7 +64,7 @@ enum State {
     GetSourceCap(Mode, request::PowerSource),
 
     // EPR states
-    EprModeEntry(request::PowerSource),
+    EprModeEntry(request::PowerSource, units::Power),
     EprEntryWaitForResponse(request::PowerSource),
     EprWaitForCapabilities(request::PowerSource),
     EprSendExit,
@@ -429,7 +430,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     Either3::Second(event) => match event {
                         Event::RequestSprSourceCapabilities => State::GetSourceCap(Mode::Spr, *power_source),
                         Event::RequestEprSourceCapabilities => State::GetSourceCap(Mode::Epr, *power_source),
-                        Event::EnterEprMode => State::EprModeEntry(*power_source),
+                        Event::EnterEprMode(pdp) => State::EprModeEntry(*power_source, pdp),
                         Event::ExitEprMode => State::EprSendExit,
                         Event::RequestPower(power_source) => State::SelectCapability(power_source),
                         Event::None => State::Ready(*power_source, false),
@@ -602,10 +603,12 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     State::Ready(*power_source, false)
                 }
             }
-            State::EprModeEntry(power_source) => {
+            State::EprModeEntry(power_source, operational_pdp) => {
                 // Request entry into EPR mode.
                 // Per spec 8.3.3.26.2.1 (PE_SNK_Send_EPR_Mode_Entry), sink sends EPR_Mode (Enter)
                 // and starts SenderResponseTimer and SinkEPREnterTimer.
+                //
+                // Per spec 6.4.10, the Data field shall be set to the EPR Sink Operational PDP.
                 //
                 // Note: The spec says SinkEPREnterTimer (500ms) should run continuously across
                 // both EprModeEntry and EprEntryWaitForResponse states until stopped or timeout.
@@ -613,7 +616,8 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 // SinkEPREnterTimer (500ms) in EprEntryWaitForResponse. This means the total
                 // timeout could be ~530ms instead of 500ms in edge cases. However, this is
                 // within the spec's allowed range (tEnterEPR max = 550ms per Table 6.71).
-                self.protocol_layer.transmit_epr_mode(Action::Enter, 0).await?;
+                let pdp_watts: u8 = operational_pdp.get::<watt>() as u8;
+                self.protocol_layer.transmit_epr_mode(Action::Enter, pdp_watts).await?;
 
                 // Wait for EnterAcknowledged with SenderResponseTimer (spec step 9-14)
                 let message = self
