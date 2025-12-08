@@ -146,44 +146,44 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 // Handle when soft reset is signaled by the driver itself.
                 (_, _, ProtocolError::RxError(RxError::SoftReset)) => Some(State::SoftReset),
 
-                // Unexpected messages indicate a protocol error and demand a soft reset.
-                // See spec, [6.8.1]
-                (_, _, ProtocolError::UnexpectedMessage) => Some(State::SendSoftReset),
-
-                // FIXME: Unexpected message in power transition -> hard reset?
-                // Note: Unrequested Source_Capabilities in EPR mode is handled in Ready state
-                // by checking get_source_cap_pending flag (per spec 8.3.3.3.8).
-                // Note: EPR PDO positioning (positions 8+ only) is enforced by SourceCapabilities::epr_pdos()
-                // per USB PD Spec R3.2 Section 6.5.15.1. Malformed messages with EPR PDOs in positions
-                // 1-7 would be parsed but ignored when using the spec-compliant accessor methods.
-
-                // Fall back to hard reset
-                // - after soft reset accept failed to be sent, or
-                // - after sending soft reset failed.
+                // Per spec 6.3.13: If the Soft_Reset Message fails, a Hard Reset shall be initiated.
+                // This handles the case where we're trying to send/receive a soft reset and it fails.
                 (_, State::SoftReset | State::SendSoftReset, ProtocolError::TransmitRetriesExceeded(_)) => {
                     Some(State::HardReset)
                 }
 
-                // See spec, [8.3.3.3.3]
+                // Per spec 8.3.3.3.3: SinkWaitCapTimer timeout triggers Hard Reset.
                 (_, State::WaitForCapabilities, ProtocolError::RxError(RxError::ReceiveTimeout)) => {
                     Some(State::HardReset)
                 }
 
-                // See spec, [8.3.3.3.5]
+                // Per spec 8.3.3.3.5: SenderResponseTimer timeout triggers Hard Reset.
                 (_, State::SelectCapability(_), ProtocolError::RxError(RxError::ReceiveTimeout)) => {
                     Some(State::HardReset)
                 }
 
-                // See spec, [8.3.3.3.6]
+                // Per USB PD Spec R3.2 Section 8.3.3.3.6 and Table 6.72:
+                // Any Protocol Error during power transition (PE_SNK_Transition_Sink state)
+                // shall trigger a Hard Reset, not a Soft Reset.
                 (_, State::TransitionSink(_), _) => Some(State::HardReset),
 
+                // Unexpected messages indicate a protocol error and demand a soft reset.
+                // Per spec 6.8.1 Table 6.72 (for non-power-transitioning states).
+                // Note: This must come AFTER TransitionSink check above.
+                (_, _, ProtocolError::UnexpectedMessage) => Some(State::SendSoftReset),
+
+                // Per spec Table 6.72: Unsupported messages in Ready state get Not_Supported response.
                 (_, State::Ready(power_source), ProtocolError::RxError(RxError::UnsupportedMessage)) => {
                     Some(State::SendNotSupported(*power_source))
                 }
 
+                // Per spec 6.6.9.1: Transmission failure (no GoodCRC after retries) triggers Soft Reset.
+                // Note: If we're in SoftReset/SendSoftReset state, this is caught above and escalates to Hard Reset.
                 (_, _, ProtocolError::TransmitRetriesExceeded(_)) => Some(State::SendSoftReset),
 
-                // Attempt to recover protocol errors with a soft reset.
+                // Unhandled protocol errors - log and continue.
+                // Note: Unrequested Source_Capabilities in EPR mode is handled in Ready state
+                // by checking get_source_cap_pending flag (per spec 8.3.3.3.8).
                 (_, _, error) => {
                     error!("Protocol error {:?} in sink state transition", error);
                     None
