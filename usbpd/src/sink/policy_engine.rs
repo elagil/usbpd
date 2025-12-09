@@ -485,14 +485,16 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 // - Hard reset request from Device Policy Manager
                 // - EPR mode and EPR_Source_Capabilities message with EPR PDO in pos. 1..7
                 // - Source_Capabilities message not requested by Get_Source_Cap
-                // - SinkWaitCapTimer timeout (May transition)
+                // - SinkWaitCapTimer timeout (when HardResetCounter <= nHardResetCount)
                 //
                 // On entry: Request Hard Reset Signaling AND increment HardResetCounter
 
-                // Check if we've exceeded the hard reset count before attempting
+                // Increment counter first - returns Err when counter > nHardResetCount.
+                // Per spec 8.3.3.3.8: If HardResetCounter > nHardResetCount (> 2),
+                // the Sink shall assume that the Source is non-responsive.
+                // With counter max_value = 3, we allow 3 hard reset attempts (counter 1, 2, 3)
+                // before wrap returns Err.
                 if self.hard_reset_counter.increment().is_err() {
-                    // Per spec: If SinkWaitCapTimer times out and HardResetCounter > nHardResetCount
-                    // the Sink shall assume that the Source is non-responsive.
                     return Err(Error::PortPartnerUnresponsive);
                 }
 

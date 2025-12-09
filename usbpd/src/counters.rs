@@ -38,7 +38,11 @@ impl Counter {
             CounterType::Busy => 5,
             CounterType::Caps => 50,
             CounterType::DiscoverIdentity => 20,
-            CounterType::HardReset => 2,
+            // Per USB PD Spec Table 6.70: nHardResetCount = 2
+            // Per spec 8.3.3.3.8: Give up when HardResetCounter > nHardResetCount (i.e., > 2).
+            // Since increment() returns Err on wrap (value becomes 0), we need max_value = 3
+            // to allow counter values 1, 2, 3 before wrapping, giving 3 hard reset attempts.
+            CounterType::HardReset => 3,
             CounterType::MessageId => 7,
             CounterType::Retry => 2,
         };
