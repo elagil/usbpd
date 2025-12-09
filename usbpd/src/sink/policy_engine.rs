@@ -1,7 +1,7 @@
 //! Policy engine for the implementation of a sink.
 use core::marker::PhantomData;
 
-use embassy_futures::select::{Either, Either3, select, select3};
+use embassy_futures::select::{Either3, select3};
 use uom::si::power::watt;
 use usbpd_traits::Driver;
 
@@ -334,16 +334,6 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 // - SinkEPRKeepAliveTimer: triggers EprKeepAlive in EPR mode
                 self.contract = Contract::Explicit;
 
-                // Per spec 6.6.4.1: SinkRequestTimer ensures minimum tSinkRequest (100ms) delay
-                // after receiving Wait before re-requesting. Timer is only active if we entered
-                // Ready due to a Wait message.
-                if *after_wait {
-                    TimerType::get_timer::<TIMER>(TimerType::SinkRequest).await;
-                    // Per spec 8.3.3.3.7: SinkRequestTimer timeout → SelectCapability
-                    self.state = State::SelectCapability(*power_source);
-                    return Ok(());
-                }
-
                 let receive_fut = self.protocol_layer.receive_message();
                 let event_fut = self
                     .device_policy_manager
@@ -360,7 +350,17 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                         Mode::Spr => core::future::pending().await,
                     }
                 };
-                let timers_fut = async { select(pps_periodic_fut, epr_keep_alive_fut).await };
+                // Per spec 8.3.3.3.7: SinkRequestTimer runs concurrently when re-entering
+                // Ready after a Wait response. On timeout, transition to SelectCapability.
+                // Per spec 6.6.4.1: Ensures minimum tSinkRequest (100ms) delay before re-request.
+                let sink_request_fut = async {
+                    if *after_wait {
+                        TimerType::get_timer::<TIMER>(TimerType::SinkRequest).await
+                    } else {
+                        core::future::pending().await
+                    }
+                };
+                let timers_fut = async { select3(pps_periodic_fut, epr_keep_alive_fut, sink_request_fut).await };
 
                 match select3(receive_fut, event_fut, timers_fut).await {
                     // A message was received.
@@ -435,10 +435,14 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                         Event::RequestPower(power_source) => State::SelectCapability(power_source),
                         Event::None => State::Ready(*power_source, false),
                     },
-                    // PPS periodic timeout -> select capability again as keep-alive.
+                    // Timer timeout handling
                     Either3::Third(timeout_source) => match timeout_source {
-                        Either::First(_) => State::SelectCapability(*power_source),
-                        Either::Second(_) => State::EprKeepAlive(*power_source),
+                        // PPS periodic timeout -> select capability again as keep-alive.
+                        Either3::First(_) => State::SelectCapability(*power_source),
+                        // EPR keep-alive timeout
+                        Either3::Second(_) => State::EprKeepAlive(*power_source),
+                        // SinkRequest timeout -> re-request power after Wait response
+                        Either3::Third(_) => State::SelectCapability(*power_source),
                     },
                 }
             }
@@ -545,9 +549,14 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 State::Ready(*power_source, false)
             }
             State::GetSourceCap(requested_mode, power_source) => {
-                // Commonly used for switching between EPR and SPR mode, depending on requested mode.
+                // Per USB PD Spec R3.2 Section 8.3.3.3.12 (PE_SNK_Get_Source_Cap):
+                // - Send Get_Source_Cap (SPR) or EPR_Get_Source_Cap (EPR)
+                // - Start SenderResponseTimer
+                // - On timeout or mode mismatch → Ready
+                // - On matching capabilities received → EvaluateCapabilities
+                //
                 // Set flag before sending to track that we requested source capabilities.
-                // Per USB PD Spec R3.2 Section 8.3.3.3.8, in EPR mode, receiving an unrequested
+                // Per spec 8.3.3.3.8, in EPR mode, receiving an unrequested
                 // Source_Capabilities message triggers a Hard Reset.
                 self.get_source_cap_pending = true;
 
@@ -566,9 +575,31 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     }
                 };
 
-                // Use protocol layer directly to get the full Message (not the helper that only returns SourceCapabilities)
-                let message = self.protocol_layer.wait_for_source_capabilities().await?;
+                // Per spec 8.3.3.3.12: Use SenderResponseTimer (not SinkWaitCap)
+                let result = self
+                    .protocol_layer
+                    .receive_message_type(
+                        &[
+                            MessageType::Data(DataMessageType::SourceCapabilities),
+                            MessageType::Extended(ExtendedMessageType::EprSourceCapabilities),
+                        ],
+                        TimerType::SenderResponse,
+                    )
+                    .await;
+
                 self.get_source_cap_pending = false;
+
+                // Per spec 8.3.3.3.12: On timeout, inform DPM and transition to Ready
+                let message = match result {
+                    Ok(msg) => msg,
+                    Err(ProtocolError::RxError(RxError::ReceiveTimeout)) => {
+                        // Inform DPM of timeout (no capabilities received)
+                        warn!("Get_Source_Cap timeout, returning to Ready");
+                        self.state = State::Ready(*power_source, false);
+                        return Ok(());
+                    }
+                    Err(e) => return Err(e.into()),
+                };
 
                 // Per spec 8.3.3.3.12:
                 // - In SPR mode + SPR caps requested + Source_Capabilities received → EvaluateCapabilities
