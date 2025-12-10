@@ -73,6 +73,17 @@ pub mod _20millivolts_mod {
     }
 }
 
+/// Defines a unit for electric potential in 25 mV steps.
+/// Used by AVS (Adjustable Voltage Supply) per USB PD 3.2 Table 6.26.
+pub mod _25millivolts_mod {
+    unit! {
+        system: uom::si;
+        quantity: uom::si::electric_potential;
+
+        @_25millivolts: 0.025; "_25mV", "_25millivolts", "_25millivolts";
+    }
+}
+
 /// Defines a unit for power in 250 mW steps.
 pub mod _250milliwatts_mod {
     unit! {

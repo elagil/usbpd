@@ -6,6 +6,7 @@ use uom::si::{self};
 
 use super::source_capabilities;
 use crate::_20millivolts_mod::_20millivolts;
+use crate::_25millivolts_mod::_25millivolts;
 use crate::_50milliamperes_mod::_50milliamperes;
 use crate::_250milliwatts_mod::_250milliwatts;
 use crate::units::{ElectricCurrent, ElectricPotential};
@@ -158,7 +159,9 @@ bitfield!(
         pub unchunked_extended_messages_supported: bool @ 23,
         /// EPR mode capable
         pub epr_mode_capable: bool @ 22,
-        /// Output voltage in 20mV units
+        /// Output voltage in 25mV units (per USB PD 3.2 Table 6.26).
+        /// The least two significant bits Shall be set to zero, making
+        /// the effective voltage step size 100mV.
         pub raw_output_voltage: u16 @ 9..=20,
         /// Operating current in 50mA units
         pub raw_operating_current: u16 @ 0..=6,
@@ -172,7 +175,7 @@ impl Avs {
     }
 
     pub fn output_voltage(&self) -> ElectricPotential {
-        ElectricPotential::new::<_20millivolts>(self.raw_output_voltage().into())
+        ElectricPotential::new::<_25millivolts>(self.raw_output_voltage().into())
     }
 
     pub fn operating_current(&self) -> ElectricCurrent {
@@ -487,7 +490,10 @@ impl PowerSource {
             raw_current = 0x7f;
         }
 
-        let raw_voltage = voltage.get::<_20millivolts>() as u16;
+        // AVS voltage is in 25mV units with LSB 2 bits = 0 (effective 100mV steps)
+        // Per USB PD 3.2 Table 6.26: "Output voltage in 25 mV units,
+        // the least two significant bits Shall be set to zero"
+        let raw_voltage = (voltage.get::<_25millivolts>() as u16) & !0x3;
 
         let object_position = index + 1;
         assert!(object_position > 0b0000 && object_position <= 0b1110);
