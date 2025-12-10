@@ -26,6 +26,7 @@ jobs:
             usbpd
             examples/embassy-nucleo-h563zi
             examples/embassy-stm32-g431cb
+            examples/embassy-stm32-g431cb-epr
 
       - name: Build
         run: bash .github/ci/build.sh

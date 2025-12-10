@@ -3,7 +3,7 @@ set -euo pipefail
 
 export RUSTFLAGS="-D warnings"
 
-for dir in usbpd usbpd-traits examples/embassy-nucleo-h563zi examples/embassy-stm32-g431cb;
+for dir in usbpd usbpd-traits examples/embassy-nucleo-h563zi examples/embassy-stm32-g431cb examples/embassy-stm32-g431cb-epr;
 do
     pushd $dir
     cargo +nightly fmt --check
