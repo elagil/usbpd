@@ -5,7 +5,10 @@ use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
 use embassy_stm32::{Peri, bind_interrupts, peripherals};
 use embassy_time::{Duration, Timer, with_timeout};
 use uom::si::power::watt;
-use usbpd::protocol_layer::message::data::request::{CurrentRequest, FixedVariableSupply, PowerSource, VoltageRequest};
+#[allow(unused_imports)] // Avs is used in commented AVS example code
+use usbpd::protocol_layer::message::data::request::{
+    Avs, CurrentRequest, FixedVariableSupply, PowerSource, VoltageRequest,
+};
 use usbpd::protocol_layer::message::data::source_capabilities::{Augmented, PowerDataObject, SourceCapabilities};
 use usbpd::sink::device_policy_manager::{DevicePolicyManager, Event};
 use usbpd::sink::policy_engine::Sink;
@@ -200,12 +203,22 @@ impl SinkTimer for EmbassySinkTimer {
     }
 }
 
-/// Target voltage for EPR request (28V in 50mV units)
+/// Target voltage for EPR Fixed request (28V in 50mV units)
 const TARGET_EPR_VOLTAGE_RAW: u16 = 28 * 20;
-/// Target current for EPR request (4A in 10mA units)
+/// Target current for EPR Fixed request (4A in 10mA units)
 const TARGET_EPR_CURRENT_RAW: u16 = 4 * 100;
 /// Operational PDP for EPR mode entry (28V × 4A = 112W)
 const OPERATIONAL_PDP_WATTS: u32 = 112;
+
+// ============================================================================
+// AVS (Adjustable Voltage Supply) configuration - uncomment to use AVS instead
+// ============================================================================
+// /// Target voltage for AVS request in volts
+// const TARGET_AVS_VOLTAGE_V: u32 = 24;
+// /// Target current for AVS request (5A in 50mA units)
+// const TARGET_AVS_CURRENT_RAW: u16 = 5 * 20; // 5A = 100 in 50mA units
+// /// Operational PDP for EPR mode entry with AVS (24V × 5A = 120W)
+// const OPERATIONAL_PDP_WATTS: u32 = 120;
 
 #[derive(Default)]
 struct Device {
@@ -289,6 +302,61 @@ impl DevicePolicyManager for Device {
                         return PowerSource::EprRequest { rdo: rdo.0, pdo: *pdo };
                     }
                 }
+
+                // ============================================================================
+                // AVS (Adjustable Voltage Supply) request - uncomment to use AVS instead
+                // ============================================================================
+                // To use AVS instead of Fixed EPR:
+                // 1. Comment out the Fixed EPR PDO search above
+                // 2. Uncomment the AVS constants at the top of this file
+                // 3. Uncomment the code below
+                //
+                // if let PowerDataObject::Augmented(Augmented::Epr(avs)) = pdo {
+                //     let min_mv = avs.raw_min_voltage() as u32 * 100;
+                //     let max_mv = avs.raw_max_voltage() as u32 * 100;
+                //     let target_mv = TARGET_AVS_VOLTAGE_V * 1000;
+                //
+                //     // Check if this AVS PDO supports our target voltage
+                //     if min_mv <= target_mv && target_mv <= max_mv {
+                //         // Calculate max current from PDP (in 50mA units)
+                //         let pdp_mw = avs.raw_pd_power() as u32 * 1000;
+                //         let max_current_ma = pdp_mw / TARGET_AVS_VOLTAGE_V;
+                //         let max_current_raw = (max_current_ma / 50) as u16;
+                //
+                //         let current = if TARGET_AVS_CURRENT_RAW > max_current_raw {
+                //             warn!(
+                //                 "Source max {}mA < target {}mA at {}V, using source max",
+                //                 max_current_raw as u32 * 50,
+                //                 TARGET_AVS_CURRENT_RAW as u32 * 50,
+                //                 TARGET_AVS_VOLTAGE_V
+                //             );
+                //             max_current_raw
+                //         } else {
+                //             TARGET_AVS_CURRENT_RAW
+                //         };
+                //
+                //         // AVS voltage is in 25mV units with LSB 2 bits = 0 (effective 100mV steps)
+                //         // Per USB PD 3.2 Table 6.26
+                //         let voltage_raw = ((TARGET_AVS_VOLTAGE_V * 1000 / 25) & !0x3) as u16;
+                //
+                //         info!(
+                //             "Requesting {}V AVS at position {} with {}mA",
+                //             TARGET_AVS_VOLTAGE_V,
+                //             position,
+                //             current as u32 * 50
+                //         );
+                //
+                //         let rdo = Avs(0)
+                //             .with_object_position(position)
+                //             .with_usb_communications_capable(true)
+                //             .with_no_usb_suspend(true)
+                //             .with_epr_mode_capable(true)
+                //             .with_raw_output_voltage(voltage_raw)
+                //             .with_raw_operating_current(current);
+                //
+                //         return PowerSource::EprRequest { rdo: rdo.0, pdo: *pdo };
+                //     }
+                // }
             }
 
             warn!("28V EPR PDO not found, falling back to SPR");
