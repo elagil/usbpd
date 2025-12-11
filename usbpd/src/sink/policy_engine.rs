@@ -7,7 +7,7 @@ use usbpd_traits::Driver;
 
 use super::device_policy_manager::DevicePolicyManager;
 use crate::counters::Counter;
-use crate::protocol_layer::message::data::epr_mode::Action;
+use crate::protocol_layer::message::data::epr_mode::{self, Action};
 use crate::protocol_layer::message::data::request::PowerSource;
 use crate::protocol_layer::message::data::source_capabilities::SourceCapabilities;
 use crate::protocol_layer::message::data::{Data, request};
@@ -676,7 +676,14 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                         State::EprWaitForCapabilities(*power_source)
                     }
                     Action::Exit => State::EprExitReceived(*power_source),
-                    // Per spec 8.3.3.26.2.1: EPR_Mode message not Enter Succeeded → Soft Reset
+                    Action::EnterFailed => {
+                        // Per spec 8.3.3.26.2.1: EnterFailed → Soft Reset
+                        // Notify DPM of the failure reason before soft reset
+                        let reason = epr_mode::DataEnterFailed::from(epr_mode.data());
+                        self.device_policy_manager.epr_mode_entry_failed(reason).await;
+                        State::SendSoftReset
+                    }
+                    // Per spec 8.3.3.26.2.1: any other EPR_Mode message → Soft Reset
                     _ => State::SendSoftReset,
                 }
             }
@@ -701,7 +708,14 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                         State::EprWaitForCapabilities(*power_source)
                     }
                     Action::Exit => State::EprExitReceived(*power_source),
-                    // Per spec 8.3.3.26.2.2: EPR_Mode message not Enter Succeeded → Soft Reset
+                    Action::EnterFailed => {
+                        // Per spec 8.3.3.26.2.2: EnterFailed → Soft Reset
+                        // Notify DPM of the failure reason before soft reset
+                        let reason = epr_mode::DataEnterFailed::from(epr_mode.data());
+                        self.device_policy_manager.epr_mode_entry_failed(reason).await;
+                        State::SendSoftReset
+                    }
+                    // Per spec 8.3.3.26.2.2: any other EPR_Mode message → Soft Reset
                     _ => State::SendSoftReset,
                 }
             }

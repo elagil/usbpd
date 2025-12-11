@@ -2,7 +2,7 @@
 use heapless::Vec;
 use proc_bitfield::bitfield;
 use uom::si::electric_current::centiampere;
-use uom::si::electric_potential::decivolt;
+use uom::si::electric_potential::{decivolt, volt};
 use uom::si::power::watt;
 
 use super::PdoState;
@@ -61,15 +61,6 @@ impl PowerDataObject {
             },
             PowerDataObject::Unknown(u) => u.0 == 0,
         }
-    }
-
-    /// Check if this is an EPR (Augmented) PDO.
-    ///
-    /// Per USB PD Spec R3.2, EPR APDOs are only valid in positions 8+ of
-    /// EPR_Source_Capabilities messages. Finding one in positions 1-7 is a
-    /// protocol error requiring Hard Reset.
-    pub fn is_epr_pdo(&self) -> bool {
-        matches!(self, PowerDataObject::Augmented(Augmented::Epr(_)))
     }
 }
 
@@ -382,9 +373,18 @@ impl SourceCapabilities {
     /// "In EPR Mode and An EPR_Source_Capabilities Message is received with
     /// an EPR (A)PDO in object positions 1... 7" → Hard Reset
     ///
-    /// EPR APDOs should only appear in positions 8+ of EPR_Source_Capabilities.
+    /// EPR (A)PDOs per spec:
+    /// - Fixed Supply PDOs offering 28V, 36V, or 48V (voltage > 20V)
+    /// - EPR AVS APDOs
     pub fn has_epr_pdo_in_spr_positions(&self) -> bool {
-        self.0.iter().take(7).any(|pdo| pdo.is_epr_pdo())
+        let max_spr_voltage = ElectricPotential::new::<volt>(20);
+        self.0.iter().take(7).any(|pdo| match pdo {
+            // EPR Fixed Supply: voltage > 20V
+            PowerDataObject::FixedSupply(f) => f.voltage() > max_spr_voltage,
+            // EPR AVS APDO
+            PowerDataObject::Augmented(Augmented::Epr(_)) => true,
+            _ => false,
+        })
     }
 }
 

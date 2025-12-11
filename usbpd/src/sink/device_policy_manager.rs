@@ -4,7 +4,7 @@
 //! or renegotiate the power contract.
 use core::future::Future;
 
-use crate::protocol_layer::message::data::{request, sink_capabilities, source_capabilities};
+use crate::protocol_layer::message::data::{epr_mode, request, sink_capabilities, source_capabilities};
 use crate::units::Power;
 
 /// Events that the device policy manager can send to the policy engine.
@@ -82,6 +82,22 @@ pub trait DevicePolicyManager {
     /// The device should prepare for VBUS going to vSafe0V and then back to vSafe5V.
     /// This callback should return when the device has reached the default level.
     fn hard_reset(&mut self) -> impl Future<Output = ()> {
+        async {}
+    }
+
+    /// Notify the device that EPR mode entry failed.
+    ///
+    /// Per USB PD Spec R3.2 Section 8.3.3.26.2.1, when the source responds with
+    /// EPR_Mode (Enter Failed), the sink transitions to soft reset. This callback
+    /// informs the DPM of the failure reason before the soft reset occurs.
+    ///
+    /// The failure reasons are defined in Table 6.50 and include:
+    /// - Cable not EPR capable
+    /// - Source failed to become VCONN source
+    /// - EPR capable bit not set in RDO
+    /// - Source unable to enter EPR mode (sink may retry later)
+    /// - EPR capable bit not set in PDO
+    fn epr_mode_entry_failed(&mut self, _reason: epr_mode::DataEnterFailed) -> impl Future<Output = ()> {
         async {}
     }
 
