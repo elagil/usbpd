@@ -216,14 +216,18 @@ impl ChunkedMessageAssembler {
             return Err(ParseError::Other("Unexpected chunk number"));
         }
 
+        // Validate chunk size (should never exceed 26 bytes per spec)
+        if chunk_data.len() > MAX_EXTENDED_MSG_CHUNK_LEN {
+            return Err(ParseError::ChunkOverflow(chunk_data.len(), MAX_EXTENDED_MSG_CHUNK_LEN));
+        }
+
         // Copy chunk data to buffer
-        let chunk_len = core::cmp::min(chunk_data.len(), MAX_EXTENDED_MSG_CHUNK_LEN);
-        for &byte in &chunk_data[..chunk_len] {
+        for &byte in chunk_data {
             if self.buffer.push(byte).is_err() {
                 return Err(ParseError::Other("Chunk buffer overflow"));
             }
         }
-        self.received_bytes += chunk_len;
+        self.received_bytes += chunk_data.len();
         self.next_chunk = chunk_number + 1;
 
         // Check if we have all the data
@@ -485,5 +489,22 @@ mod tests {
 
         // Now assembler should not be in progress
         assert!(!assembler.is_in_progress());
+    }
+
+    #[test]
+    fn test_chunk_overflow_error() {
+        let mut assembler = ChunkedMessageAssembler::new();
+
+        let header = Header(0x1000);
+        let ext_header = ExtendedHeader::new(30).with_chunked(true).with_chunk_number(0);
+        // Create chunk larger than MAX_EXTENDED_MSG_CHUNK_LEN (26 bytes)
+        let oversized_chunk = [0u8; 27];
+
+        // Should return ChunkOverflow error
+        let result = assembler.process_chunk(header, ext_header, &oversized_chunk);
+        assert!(matches!(
+            result,
+            Err(ParseError::ChunkOverflow(27, MAX_EXTENDED_MSG_CHUNK_LEN))
+        ));
     }
 }

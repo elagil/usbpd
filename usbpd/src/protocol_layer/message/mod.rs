@@ -53,6 +53,9 @@ pub enum ParseError {
         /// The extended message type.
         message_type: header::ExtendedMessageType,
     },
+    /// Received a chunk larger than the maximum allowed size (26 bytes).
+    #[error("chunk size {0} exceeds maximum {1}")]
+    ChunkOverflow(usize, usize),
     /// Attempt to reuse a ChunkedMessageAssembler that is already processing a message.
     /// The user must create a new assembler or explicitly call reset() first.
     #[error("parser already in use, create a new assembler or call reset()")]
