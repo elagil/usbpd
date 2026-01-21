@@ -82,8 +82,8 @@ impl TimerType {
             TimerType::SwapSourceStart => TIMER::after_millis(20),
             TimerType::VCONNDischarge => TIMER::after_millis(200),
             TimerType::VCONNOn => TIMER::after_millis(50),
-            TimerType::VDMModeEntry => TIMER::after_millis(25),
-            TimerType::VDMModeExit => TIMER::after_millis(25),
+            TimerType::VDMModeEntry => TIMER::after_millis(45),
+            TimerType::VDMModeExit => TIMER::after_millis(45),
             TimerType::VDMResponse => TIMER::after_millis(27),
         }
     }
