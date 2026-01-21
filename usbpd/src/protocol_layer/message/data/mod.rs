@@ -118,7 +118,10 @@ impl Data {
                     // Parse the PDO (second object) using the standard PDO parser
                     let pdo = source_capabilities::parse_raw_pdo(raw_pdo);
 
-                    Data::Request(request::PowerSource::EprRequest(request::EprRequestDataObject { rdo, pdo }))
+                    Data::Request(request::PowerSource::EprRequest(request::EprRequestDataObject {
+                        rdo,
+                        pdo,
+                    }))
                 } else {
                     warn!("Invalid EPR_Request: expected 2 data objects, got {}", num_objects);
                     Data::Unknown

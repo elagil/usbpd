@@ -4,11 +4,11 @@
 //! Covers: EPR mode entry, chunked source capabilities, EPR requests, keep-alive.
 
 use crate::dummy::{DUMMY_EPR_SOURCE_CAPS_CHUNK_0, DUMMY_EPR_SOURCE_CAPS_CHUNK_1};
+use crate::protocol_layer::message::data::Data;
 use crate::protocol_layer::message::data::epr_mode::Action;
 use crate::protocol_layer::message::data::request::PowerSource;
-use crate::protocol_layer::message::data::Data;
-use crate::protocol_layer::message::extended::chunked::{ChunkResult, ChunkedMessageAssembler};
 use crate::protocol_layer::message::extended::Extended;
+use crate::protocol_layer::message::extended::chunked::{ChunkResult, ChunkedMessageAssembler};
 use crate::protocol_layer::message::header::{DataMessageType, ExtendedMessageType, MessageType};
 use crate::protocol_layer::message::{Message, Payload};
 

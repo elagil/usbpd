@@ -256,7 +256,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                             if unchunked {
                                 return Err(TxError::UnchunkedExtendedMessagesNotSupported);
                             }
-                            
+
                             // Check if this looks like an AVS request (bits 30-31 = 00, bits 28-29 = 11)
                             let is_avs = ((rdo_bits >> 30) & 0x3 == 0) && ((rdo_bits >> 28) & 0x3 == 3);
                             if is_avs {
