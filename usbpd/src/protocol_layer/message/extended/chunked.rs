@@ -320,27 +320,6 @@ impl<'a> ChunkedMessageSender<'a> {
         self.data.len() as u16
     }
 
-    /// Get the next chunk's data and extended header.
-    ///
-    /// Returns None if all chunks have been sent.
-    pub fn next_chunk(&mut self) -> Option<(ExtendedHeader, &[u8])> {
-        if self.is_complete() {
-            return None;
-        }
-
-        let start = self.current_chunk as usize * MAX_EXTENDED_MSG_CHUNK_LEN;
-        let end = core::cmp::min(start + MAX_EXTENDED_MSG_CHUNK_LEN, self.data.len());
-        let chunk_data = &self.data[start..end];
-
-        let ext_header = ExtendedHeader::new(self.data.len() as u16)
-            .with_chunked(true)
-            .with_chunk_number(self.current_chunk);
-
-        self.current_chunk += 1;
-
-        Some((ext_header, chunk_data))
-    }
-
     /// Get a specific chunk by number (for responding to chunk requests).
     pub fn get_chunk(&self, chunk_number: u8) -> Option<(ExtendedHeader, &[u8])> {
         if chunk_number >= self.total_chunks {
@@ -403,14 +382,14 @@ mod tests {
         assert_eq!(sender.total_chunks(), 1);
         assert!(!sender.is_complete());
 
-        let (ext_hdr, chunk) = sender.next_chunk().unwrap();
+        let (ext_hdr, chunk) = sender.next().unwrap();
         assert_eq!(chunk, &data);
         assert_eq!(ext_hdr.data_size(), 5);
         assert_eq!(ext_hdr.chunk_number(), 0);
         assert!(ext_hdr.chunked());
 
         assert!(sender.is_complete());
-        assert!(sender.next_chunk().is_none());
+        assert!(sender.next().is_none());
     }
 
     #[test]
@@ -421,11 +400,11 @@ mod tests {
 
         assert_eq!(sender.total_chunks(), 2);
 
-        let (ext_hdr, chunk) = sender.next_chunk().unwrap();
+        let (ext_hdr, chunk) = sender.next().unwrap();
         assert_eq!(chunk.len(), 26);
         assert_eq!(ext_hdr.chunk_number(), 0);
 
-        let (ext_hdr, chunk) = sender.next_chunk().unwrap();
+        let (ext_hdr, chunk) = sender.next().unwrap();
         assert_eq!(chunk.len(), 4);
         assert_eq!(ext_hdr.chunk_number(), 1);
 
