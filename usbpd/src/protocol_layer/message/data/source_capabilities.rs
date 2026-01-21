@@ -6,9 +6,9 @@ use uom::si::electric_potential::{decivolt, volt};
 use uom::si::power::watt;
 
 use super::PdoState;
+use crate::_250milliwatts_mod::_250milliwatts;
 use crate::_50milliamperes_mod::_50milliamperes;
 use crate::_50millivolts_mod::_50millivolts;
-use crate::_250milliwatts_mod::_250milliwatts;
 use crate::units::{ElectricCurrent, ElectricPotential, Power};
 
 /// Kinds of supplies that can be reported within source capabilities.
@@ -50,17 +50,17 @@ impl PowerDataObject {
     /// Per USB PD Spec R3.2 Section 6.5.15.1, if the SPR Capabilities Message
     /// contains fewer than 7 PDOs, the unused Data Objects are zero-filled.
     pub fn is_zero_padding(&self) -> bool {
-        match self {
-            PowerDataObject::FixedSupply(f) => f.0 == 0,
-            PowerDataObject::Battery(b) => b.0 == 0,
-            PowerDataObject::VariableSupply(v) => v.0 == 0,
+        (match self {
+            PowerDataObject::FixedSupply(f) => f.0,
+            PowerDataObject::Battery(b) => b.0,
+            PowerDataObject::VariableSupply(v) => v.0,
             PowerDataObject::Augmented(a) => match a {
-                Augmented::Spr(s) => s.0 == 0,
-                Augmented::Epr(e) => e.0 == 0,
-                Augmented::Unknown(u) => *u == 0,
+                Augmented::Spr(s) => s.0,
+                Augmented::Epr(e) => e.0,
+                Augmented::Unknown(u) => *u,
             },
-            PowerDataObject::Unknown(u) => u.0 == 0,
-        }
+            PowerDataObject::Unknown(u) => u.0,
+        }) == 0
     }
 }
 
