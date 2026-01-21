@@ -85,7 +85,7 @@ impl SinkFixedSupply {
     pub fn new_vsafe5v(operational_current_10ma: u16) -> Self {
         Self::default()
             .with_kind(0b00)
-            .with_raw_voltage(100) // 5V = 100 * 50mV
+            .with_raw_voltage(100) // 5V = 100 * 50 mV
             .with_raw_operational_current(operational_current_10ma)
     }
 
@@ -175,11 +175,11 @@ bitfield! {
     pub struct SinkVariableSupply(pub u32): Debug, FromStorage, IntoStorage {
         /// Variable supply (10b)
         pub kind: u8 @ 30..=31,
-        /// Maximum Voltage in 50mV units
+        /// Maximum Voltage in 50 mV units
         pub raw_max_voltage: u16 @ 20..=29,
-        /// Minimum Voltage in 50mV units
+        /// Minimum Voltage in 50 mV units
         pub raw_min_voltage: u16 @ 10..=19,
-        /// Operational current in 10mA units
+        /// Operational current in 10 mA units
         pub raw_operational_current: u16 @ 0..=9,
     }
 }

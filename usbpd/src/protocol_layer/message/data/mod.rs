@@ -59,8 +59,11 @@ pub enum Data {
     Request(request::PowerSource),
     /// Used to enter, acknowledge or exit EPR mode.
     EprMode(epr_mode::EprModeDataObject),
-    /// Vendor defined.
-    VendorDefined((vendor_defined::VdmHeader, Vec<u32, 7>)), // TODO: Unused, and incomplete
+    /// Vendor defined messages (VDM).
+    ///
+    /// Currently parsed from the wire but not forwarded to user applications.
+    /// TODO: Add DevicePolicyManager callback to allow applications to handle vendor-specific messages.
+    VendorDefined((vendor_defined::VdmHeader, Vec<u32, 7>)),
     /// Unknown data type.
     Unknown,
 }
@@ -115,7 +118,7 @@ impl Data {
                     // Parse the PDO (second object) using the standard PDO parser
                     let pdo = source_capabilities::parse_raw_pdo(raw_pdo);
 
-                    Data::Request(request::PowerSource::EprRequest { rdo, pdo })
+                    Data::Request(request::PowerSource::EprRequest(request::EprRequestDataObject { rdo, pdo }))
                 } else {
                     warn!("Invalid EPR_Request: expected 2 data objects, got {}", num_objects);
                     Data::Unknown
@@ -187,11 +190,11 @@ impl Data {
             Self::Request(request::PowerSource::FixedVariableSupply(data_object)) => data_object.to_bytes(payload),
             Self::Request(request::PowerSource::Pps(data_object)) => data_object.to_bytes(payload),
             Self::Request(request::PowerSource::Avs(data_object)) => data_object.to_bytes(payload),
-            Self::Request(request::PowerSource::EprRequest { rdo, pdo }) => {
+            Self::Request(request::PowerSource::EprRequest(epr)) => {
                 // Write RDO (raw u32)
-                LittleEndian::write_u32(payload, *rdo);
+                LittleEndian::write_u32(payload, epr.rdo);
                 // Write PDO copy as raw u32
-                let raw_pdo = match pdo {
+                let raw_pdo = match &epr.pdo {
                     source_capabilities::PowerDataObject::FixedSupply(p) => p.0,
                     source_capabilities::PowerDataObject::Battery(p) => p.0,
                     source_capabilities::PowerDataObject::VariableSupply(p) => p.0,

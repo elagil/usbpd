@@ -5,6 +5,7 @@ use std::vec::Vec;
 use uom::si::power::watt;
 use usbpd_traits::Driver;
 
+use crate::protocol_layer::message::data::request::EprRequestDataObject;
 use crate::protocol_layer::message::data::source_capabilities::{
     Augmented, FixedSupply, PowerDataObject, SprProgrammablePowerSupply,
 };
@@ -160,7 +161,7 @@ impl SinkDevicePolicyManager for DummySinkEprDevice {
             }
 
             // Create EPR request with RDO and PDO copy
-            PowerSource::EprRequest { rdo: rdo.0, pdo }
+            PowerSource::EprRequest(EprRequestDataObject { rdo: rdo.0, pdo })
         } else {
             eprintln!("  No EPR PDOs found, selecting default 5V");
             // Fall back to default 5V

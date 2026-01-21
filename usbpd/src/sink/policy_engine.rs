@@ -754,10 +754,9 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 self.mode = Mode::Spr;
 
                 let is_epr_pdo_contract = match power_source {
-                    PowerSource::EprRequest { rdo, .. } => {
+                    PowerSource::EprRequest(epr) => {
                         // Extract object position from RDO (bits 28-31)
-                        let object_position = request::RawDataObject(*rdo).object_position();
-                        object_position >= 8
+                        epr.object_position() >= 8
                     }
                     // Non-EprRequest variants are only used in SPR mode, so always SPR PDOs
                     _ => false,
@@ -1248,14 +1247,13 @@ mod tests {
         ));
 
         // Verify EPR Request selects PDO#8 (28V)
-        if let Some(Payload::Data(Data::Request(PowerSource::EprRequest { rdo, pdo }))) = &epr_request.payload {
-            use crate::protocol_layer::message::data::request::RawDataObject;
-            let object_pos = RawDataObject(*rdo).object_position();
-            eprintln!("EPR Request: PDO#{} (RDO=0x{:08X})", object_pos, rdo);
+        if let Some(Payload::Data(Data::Request(PowerSource::EprRequest(epr)))) = &epr_request.payload {
+            let object_pos = epr.object_position();
+            eprintln!("EPR Request: PDO#{} (RDO=0x{:08X})", object_pos, epr.rdo);
             assert_eq!(object_pos, 8, "Should request PDO#8 (28V) to match real capture");
 
             // Verify it's the 28V PDO
-            if let PowerDataObject::FixedSupply(fixed) = pdo {
+            if let PowerDataObject::FixedSupply(fixed) = epr.pdo {
                 assert_eq!(fixed.raw_voltage(), 560, "28V = 560 * 50mV");
                 assert_eq!(fixed.raw_max_current(), 500, "5A = 500 * 10mA");
             }

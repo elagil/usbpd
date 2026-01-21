@@ -4,10 +4,14 @@ use embassy_futures::select::{Either, select};
 use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
 use embassy_stm32::{Peri, bind_interrupts, peripherals};
 use embassy_time::{Duration, Timer, with_timeout};
-use uom::si::power::watt;
-#[allow(unused_imports)] // Avs is used in commented AVS example code
+use uom::si::electric_current::{centiampere, milliampere};
+use uom::si::electric_potential::millivolt;
+use uom::si::power::{milliwatt, watt};
+#[cfg(not(feature = "avs"))]
+use usbpd::_50millivolts_mod::_50millivolts;
+#[allow(unused_imports)] // Avs is used in AVS feature mode
 use usbpd::protocol_layer::message::data::request::{
-    Avs, CurrentRequest, FixedVariableSupply, PowerSource, VoltageRequest,
+    Avs, CurrentRequest, EprRequestDataObject, FixedVariableSupply, PowerSource, VoltageRequest,
 };
 use usbpd::protocol_layer::message::data::source_capabilities::{Augmented, PowerDataObject, SourceCapabilities};
 use usbpd::sink::device_policy_manager::{DevicePolicyManager, Event};
@@ -16,6 +20,34 @@ use usbpd::timers::Timer as SinkTimer;
 use usbpd::units::Power;
 use usbpd_traits::Driver as SinkDriver;
 use {defmt_rtt as _, panic_probe as _};
+
+// ============================================================================
+// Configuration for Fixed EPR mode (default)
+// ============================================================================
+#[cfg(not(feature = "avs"))]
+mod config {
+    /// Target voltage for EPR Fixed request (28V in 50 mV units)
+    pub const TARGET_EPR_VOLTAGE_RAW: u16 = 28 * 20;
+    /// Target current for EPR Fixed request (4A in 10 mA units)
+    pub const TARGET_EPR_CURRENT_RAW: u16 = 4 * 100;
+    /// Operational PDP for EPR mode entry (28V × 4A = 112W)
+    pub const OPERATIONAL_PDP_WATTS: u32 = 112;
+}
+
+// ============================================================================
+// Configuration for AVS (Adjustable Voltage Supply) mode
+// ============================================================================
+#[cfg(feature = "avs")]
+mod config {
+    /// Target voltage for AVS request in volts
+    pub const TARGET_AVS_VOLTAGE_V: u32 = 24;
+    /// Target current for AVS request (5A in 50 mA units)
+    pub const TARGET_AVS_CURRENT_RAW: u16 = 5 * 20; // 5A = 100 in 50 mA units
+    /// Operational PDP for EPR mode entry with AVS (24V × 5A = 120W)
+    pub const OPERATIONAL_PDP_WATTS: u32 = 120;
+}
+
+use config::*;
 
 /// Print source capabilities in a nice format using defmt
 fn print_capabilities(caps: &SourceCapabilities) {
@@ -43,8 +75,8 @@ fn print_pdo(position: u8, pdo: &PowerDataObject) {
                 return;
             }
 
-            let voltage_mv = f.raw_voltage() as u32 * 50; // 50mV units
-            let current_ma = f.raw_max_current() as u32 * 10; // 10mA units
+            let voltage_mv = f.voltage().get::<millivolt>() as u32;
+            let current_ma = f.max_current().get::<milliampere>() as u32;
             let power_mw = voltage_mv * current_ma / 1000;
 
             let drp = if f.dual_role_power() { " DRP" } else { "" };
@@ -59,15 +91,15 @@ fn print_pdo(position: u8, pdo: &PowerDataObject) {
             );
         }
         PowerDataObject::Battery(b) => {
-            let min_mv = b.raw_min_voltage() as u32 * 50;
-            let max_mv = b.raw_max_voltage() as u32 * 50;
-            let power_mw = b.raw_max_power() as u32 * 250;
+            let min_mv = b.min_voltage().get::<millivolt>() as u32;
+            let max_mv = b.max_voltage().get::<millivolt>() as u32;
+            let power_mw = b.max_power().get::<milliwatt>() as u32;
             info!("  PDO[{}]: Battery {}-{}mV @ {}mW", position, min_mv, max_mv, power_mw);
         }
         PowerDataObject::VariableSupply(v) => {
-            let min_mv = v.raw_min_voltage() as u32 * 50;
-            let max_mv = v.raw_max_voltage() as u32 * 50;
-            let current_ma = v.raw_max_current() as u32 * 10;
+            let min_mv = v.min_voltage().get::<millivolt>() as u32;
+            let max_mv = v.max_voltage().get::<millivolt>() as u32;
+            let current_ma = v.max_current().get::<milliampere>() as u32;
             info!(
                 "  PDO[{}]: Variable {}-{}mV @ {}mA",
                 position, min_mv, max_mv, current_ma
@@ -75,9 +107,9 @@ fn print_pdo(position: u8, pdo: &PowerDataObject) {
         }
         PowerDataObject::Augmented(aug) => match aug {
             Augmented::Spr(pps) => {
-                let min_mv = pps.raw_min_voltage() as u32 * 100; // 100mV units
-                let max_mv = pps.raw_max_voltage() as u32 * 100;
-                let current_ma = pps.raw_max_current() as u32 * 50; // 50mA units
+                let min_mv = pps.min_voltage().get::<millivolt>() as u32;
+                let max_mv = pps.max_voltage().get::<millivolt>() as u32;
+                let current_ma = pps.max_current().get::<milliampere>() as u32;
                 let limited = if pps.pps_power_limited() { " (limited)" } else { "" };
                 info!(
                     "  PDO[{}]: PPS {}-{}mV @ {}mA{}",
@@ -85,9 +117,9 @@ fn print_pdo(position: u8, pdo: &PowerDataObject) {
                 );
             }
             Augmented::Epr(avs) => {
-                let min_mv = avs.raw_min_voltage() as u32 * 100;
-                let max_mv = avs.raw_max_voltage() as u32 * 100;
-                let power_mw = avs.raw_pd_power() as u32 * 1000; // 1W units
+                let min_mv = avs.min_voltage().get::<millivolt>() as u32;
+                let max_mv = avs.max_voltage().get::<millivolt>() as u32;
+                let power_mw = avs.pd_power().get::<milliwatt>() as u32;
                 info!("  PDO[{}]: EPR AVS {}-{}mV @ {}mW", position, min_mv, max_mv, power_mw);
             }
             Augmented::Unknown(raw) => {
@@ -203,23 +235,6 @@ impl SinkTimer for EmbassySinkTimer {
     }
 }
 
-/// Target voltage for EPR Fixed request (28V in 50mV units)
-const TARGET_EPR_VOLTAGE_RAW: u16 = 28 * 20;
-/// Target current for EPR Fixed request (4A in 10mA units)
-const TARGET_EPR_CURRENT_RAW: u16 = 4 * 100;
-/// Operational PDP for EPR mode entry (28V × 4A = 112W)
-const OPERATIONAL_PDP_WATTS: u32 = 112;
-
-// ============================================================================
-// AVS (Adjustable Voltage Supply) configuration - uncomment to use AVS instead
-// ============================================================================
-// /// Target voltage for AVS request in volts
-// const TARGET_AVS_VOLTAGE_V: u32 = 24;
-// /// Target current for AVS request (5A in 50mA units)
-// const TARGET_AVS_CURRENT_RAW: u16 = 5 * 20; // 5A = 100 in 50mA units
-// /// Operational PDP for EPR mode entry with AVS (24V × 5A = 120W)
-// const OPERATIONAL_PDP_WATTS: u32 = 120;
-
 #[derive(Default)]
 struct Device {
     /// Tracks whether we've requested to enter EPR mode
@@ -267,16 +282,18 @@ impl DevicePolicyManager for Device {
                     continue;
                 }
 
+                // Fixed EPR mode (default)
+                #[cfg(not(feature = "avs"))]
                 if let PowerDataObject::FixedSupply(fixed) = pdo {
-                    let voltage_raw = fixed.raw_voltage();
+                    let voltage_raw = fixed.voltage().get::<_50millivolts>() as u16;
 
-                    // Check if this is 28V (560 in 50mV units)
+                    // Check if this is 28V (560 in 50 mV units)
                     if voltage_raw == TARGET_EPR_VOLTAGE_RAW {
                         // Request our target current, but cap at source's max
-                        let source_max = fixed.raw_max_current();
+                        let source_max = fixed.max_current().get::<centiampere>() as u16;
                         let current = if TARGET_EPR_CURRENT_RAW > source_max {
                             warn!(
-                                "Source max {}mA < target {}mA, using source max",
+                                "Source max {} mA < target {} mA, using source max",
                                 source_max as u32 * 10,
                                 TARGET_EPR_CURRENT_RAW as u32 * 10
                             );
@@ -299,67 +316,65 @@ impl DevicePolicyManager for Device {
                             .with_raw_operating_current(current)
                             .with_raw_max_operating_current(current);
 
-                        return PowerSource::EprRequest { rdo: rdo.0, pdo: *pdo };
+                        return PowerSource::EprRequest(EprRequestDataObject { rdo: rdo.0, pdo: *pdo });
                     }
                 }
 
-                // ============================================================================
-                // AVS (Adjustable Voltage Supply) request - uncomment to use AVS instead
-                // ============================================================================
-                // To use AVS instead of Fixed EPR:
-                // 1. Comment out the Fixed EPR PDO search above
-                // 2. Uncomment the AVS constants at the top of this file
-                // 3. Uncomment the code below
-                //
-                // if let PowerDataObject::Augmented(Augmented::Epr(avs)) = pdo {
-                //     let min_mv = avs.raw_min_voltage() as u32 * 100;
-                //     let max_mv = avs.raw_max_voltage() as u32 * 100;
-                //     let target_mv = TARGET_AVS_VOLTAGE_V * 1000;
-                //
-                //     // Check if this AVS PDO supports our target voltage
-                //     if min_mv <= target_mv && target_mv <= max_mv {
-                //         // Calculate max current from PDP (in 50mA units)
-                //         let pdp_mw = avs.raw_pd_power() as u32 * 1000;
-                //         let max_current_ma = pdp_mw / TARGET_AVS_VOLTAGE_V;
-                //         let max_current_raw = (max_current_ma / 50) as u16;
-                //
-                //         let current = if TARGET_AVS_CURRENT_RAW > max_current_raw {
-                //             warn!(
-                //                 "Source max {}mA < target {}mA at {}V, using source max",
-                //                 max_current_raw as u32 * 50,
-                //                 TARGET_AVS_CURRENT_RAW as u32 * 50,
-                //                 TARGET_AVS_VOLTAGE_V
-                //             );
-                //             max_current_raw
-                //         } else {
-                //             TARGET_AVS_CURRENT_RAW
-                //         };
-                //
-                //         // AVS voltage is in 25mV units with LSB 2 bits = 0 (effective 100mV steps)
-                //         // Per USB PD 3.2 Table 6.26
-                //         let voltage_raw = ((TARGET_AVS_VOLTAGE_V * 1000 / 25) & !0x3) as u16;
-                //
-                //         info!(
-                //             "Requesting {}V AVS at position {} with {}mA",
-                //             TARGET_AVS_VOLTAGE_V,
-                //             position,
-                //             current as u32 * 50
-                //         );
-                //
-                //         let rdo = Avs(0)
-                //             .with_object_position(position)
-                //             .with_usb_communications_capable(true)
-                //             .with_no_usb_suspend(true)
-                //             .with_epr_mode_capable(true)
-                //             .with_raw_output_voltage(voltage_raw)
-                //             .with_raw_operating_current(current);
-                //
-                //         return PowerSource::EprRequest { rdo: rdo.0, pdo: *pdo };
-                //     }
-                // }
+                // AVS (Adjustable Voltage Supply) mode
+                #[cfg(feature = "avs")]
+                if let PowerDataObject::Augmented(Augmented::Epr(avs)) = pdo {
+                    let min_mv = avs.min_voltage().get::<millivolt>() as u32;
+                    let max_mv = avs.max_voltage().get::<millivolt>() as u32;
+                    let target_mv = TARGET_AVS_VOLTAGE_V * 1000;
+
+                    // Check if this AVS PDO supports our target voltage
+                    if min_mv <= target_mv && target_mv <= max_mv {
+                        // Calculate max current from PDP (in 50 mA units)
+                        let pdp_mw = avs.pd_power().get::<milliwatt>() as u32;
+                        let max_current_ma = pdp_mw / TARGET_AVS_VOLTAGE_V;
+                        let max_current_raw = (max_current_ma / 50) as u16;
+
+                        let current = if TARGET_AVS_CURRENT_RAW > max_current_raw {
+                            warn!(
+                                "Source max {}mA < target {}mA at {}V, using source max",
+                                max_current_raw as u32 * 50,
+                                TARGET_AVS_CURRENT_RAW as u32 * 50,
+                                TARGET_AVS_VOLTAGE_V
+                            );
+                            max_current_raw
+                        } else {
+                            TARGET_AVS_CURRENT_RAW
+                        };
+
+                        // AVS voltage is in 25 mV units with LSB 2 bits = 0 (effective 100 mV steps)
+                        // Per USB PD 3.2 Table 6.26
+                        let voltage_raw = ((TARGET_AVS_VOLTAGE_V * 1000 / 25) & !0x3) as u16;
+
+                        info!(
+                            "Requesting {}V AVS at position {} with {}mA",
+                            TARGET_AVS_VOLTAGE_V,
+                            position,
+                            current as u32 * 50
+                        );
+
+                        let rdo = Avs(0)
+                            .with_object_position(position)
+                            .with_usb_communications_capable(true)
+                            .with_no_usb_suspend(true)
+                            .with_epr_mode_capable(true)
+                            .with_raw_output_voltage(voltage_raw)
+                            .with_raw_operating_current(current);
+
+                        return PowerSource::EprRequest(EprRequestDataObject { rdo: rdo.0, pdo: *pdo });
+                    }
+                }
             }
 
+            #[cfg(not(feature = "avs"))]
             warn!("28V EPR PDO not found, falling back to SPR");
+            
+            #[cfg(feature = "avs")]
+            warn!("AVS PDO with suitable voltage range not found, falling back to SPR");
         }
 
         // For SPR request: manually construct RDO with epr_mode_capable bit if source supports EPR
@@ -371,18 +386,18 @@ impl DevicePolicyManager for Device {
                 .filter(|(_, p)| matches!(p, PowerDataObject::FixedSupply(_)))
                 .max_by_key(|(_, p)| {
                     if let PowerDataObject::FixedSupply(f) = p {
-                        f.raw_voltage()
+                        f.voltage().get::<millivolt>() as u32
                     } else {
                         0
                     }
                 })
                 && let PowerDataObject::FixedSupply(fixed) = pdo
             {
-                let max_current = fixed.raw_max_current();
+                let max_current = fixed.max_current().get::<centiampere>() as u16;
                 info!(
-                    "Requesting SPR PDO {} ({}mV) with EPR capable flag",
+                    "Requesting SPR PDO {} ({} mV) with EPR capable flag",
                     position,
-                    fixed.raw_voltage() as u32 * 50
+                    fixed.voltage().get::<millivolt>() as u32
                 );
 
                 // Create RDO with epr_mode_capable bit set
