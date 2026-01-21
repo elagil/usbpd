@@ -364,6 +364,33 @@ impl<'a> ChunkedMessageSender<'a> {
     }
 }
 
+impl<'a> Iterator for ChunkedMessageSender<'a> {
+    type Item = (ExtendedHeader, &'a [u8]);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.is_complete() {
+            return None;
+        }
+
+        let start = self.current_chunk as usize * MAX_EXTENDED_MSG_CHUNK_LEN;
+        let end = core::cmp::min(start + MAX_EXTENDED_MSG_CHUNK_LEN, self.data.len());
+        let chunk_data = &self.data[start..end];
+
+        let ext_header = ExtendedHeader::new(self.data.len() as u16)
+            .with_chunked(true)
+            .with_chunk_number(self.current_chunk);
+
+        self.current_chunk += 1;
+
+        Some((ext_header, chunk_data))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = (self.total_chunks - self.current_chunk) as usize;
+        (remaining, Some(remaining))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -504,5 +531,37 @@ mod tests {
             result,
             Err(ParseError::ChunkOverflow(27, MAX_EXTENDED_MSG_CHUNK_LEN))
         ));
+    }
+
+    #[test]
+    fn test_chunked_sender_as_iterator() {
+        // 30 bytes = 2 chunks (26 + 4)
+        let data = [0u8; 30];
+        let mut sender = ChunkedMessageSender::new(&data);
+
+        // Use iterator to get chunks
+        let (ext_hdr0, chunk0) = sender.next().unwrap();
+        assert_eq!(ext_hdr0.chunk_number(), 0);
+        assert_eq!(chunk0.len(), 26);
+
+        let (ext_hdr1, chunk1) = sender.next().unwrap();
+        assert_eq!(ext_hdr1.chunk_number(), 1);
+        assert_eq!(chunk1.len(), 4);
+
+        assert!(sender.next().is_none());
+    }
+
+    #[test]
+    fn test_chunked_sender_for_loop() {
+        let data = [1u8, 2, 3, 4, 5];
+        let sender = ChunkedMessageSender::new(&data);
+
+        let mut count = 0;
+        for (ext_hdr, chunk) in sender {
+            assert_eq!(ext_hdr.chunk_number(), count);
+            assert_eq!(chunk, &data);
+            count += 1;
+        }
+        assert_eq!(count, 1);
     }
 }
