@@ -78,9 +78,9 @@ bitfield! {
         pub unchunked_extended_messages_supported: bool @ 23,
         /// EPR mode capable
         pub epr_mode_capable: bool @ 22,
-        /// Operating power in 250mW units
+        /// Operating power in 250 mW units
         pub raw_operating_power: u16 @ 10..=19,
-        /// Maximum operating power in 250mW units
+        /// Maximum operating power in 250 mW units
         pub raw_max_operating_power: u16 @ 0..=9,
     }
 }
@@ -118,9 +118,9 @@ bitfield!(
         pub unchunked_extended_messages_supported: bool @ 23,
         /// EPR mode capable
         pub epr_mode_capable: bool @ 22,
-        /// Output voltage in 20mV units
+        /// Output voltage in 20 mV units
         pub raw_output_voltage: u16 @ 9..=20,
-        /// Operating current in 50mA units
+        /// Operating current in 50 mA units
         pub raw_operating_current: u16 @ 0..=6,
     }
 );
@@ -159,11 +159,11 @@ bitfield!(
         pub unchunked_extended_messages_supported: bool @ 23,
         /// EPR mode capable
         pub epr_mode_capable: bool @ 22,
-        /// Output voltage in 25mV units (per USB PD 3.2 Table 6.26).
+        /// Output voltage in 25 mV units (per USB PD 3.2 Table 6.26).
         /// The least two significant bits Shall be set to zero, making
-        /// the effective voltage step size 100mV.
+        /// the effective voltage step size 100 mV.
         pub raw_output_voltage: u16 @ 9..=20,
-        /// Operating current in 50mA units
+        /// Operating current in 50 mA units
         pub raw_operating_current: u16 @ 0..=6,
     }
 );
@@ -183,6 +183,29 @@ impl Avs {
     }
 }
 
+/// EPR Request containing RDO + copy of requested PDO for source verification.
+///
+/// Per USB PD 3.x Section 6.4.9, EPR_Request always has 2 data objects:
+/// - The Request Data Object (format depends on PDO type being requested)
+/// - Copy of the PDO being requested (for source verification)
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct EprRequestDataObject {
+    /// The raw Request Data Object (format depends on PDO type being requested).
+    /// This could be a FixedVariableSupply RDO, Avs RDO, or other EPR RDO type.
+    pub rdo: u32,
+    /// Copy of the PDO being requested (for source verification)
+    pub pdo: source_capabilities::PowerDataObject,
+}
+
+impl EprRequestDataObject {
+    /// Get the object position from the RDO
+    pub fn object_position(&self) -> u8 {
+        RawDataObject(self.rdo).object_position()
+    }
+}
+
 /// Power requests towards the source.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -194,13 +217,7 @@ pub enum PowerSource {
     Pps(Pps),
     Avs(Avs),
     /// EPR Request: RDO + copy of requested PDO for source verification.
-    /// Per USB PD 3.x Section 6.4.9, EPR_Request always has 2 data objects.
-    EprRequest {
-        /// The raw Request Data Object (format depends on PDO type being requested)
-        rdo: u32,
-        /// Copy of the PDO being requested (for source verification)
-        pdo: source_capabilities::PowerDataObject,
-    },
+    EprRequest(EprRequestDataObject),
     Unknown(RawDataObject),
 }
 
@@ -245,7 +262,7 @@ impl PowerSource {
             PowerSource::Battery(p) => p.object_position(),
             PowerSource::Pps(p) => p.object_position(),
             PowerSource::Avs(p) => p.object_position(),
-            PowerSource::EprRequest { rdo, .. } => RawDataObject(*rdo).object_position(),
+            PowerSource::EprRequest(epr) => epr.object_position(),
             PowerSource::Unknown(p) => p.object_position(),
         }
     }
@@ -474,8 +491,7 @@ impl PowerSource {
         let IndexedAugmented(pdo, index) = selected.unwrap();
         let max_current = match pdo {
             source_capabilities::Augmented::Epr(avs) => avs.pd_power() / voltage,
-            source_capabilities::Augmented::Spr(_) => return Err(Error::VoltageMismatch),
-            source_capabilities::Augmented::Unknown(_) => return Err(Error::VoltageMismatch),
+            _ => return Err(Error::VoltageMismatch),
         };
 
         let (current, mismatch) = match current_request {
@@ -490,7 +506,7 @@ impl PowerSource {
             raw_current = 0x7f;
         }
 
-        // AVS voltage is in 25mV units with LSB 2 bits = 0 (effective 100mV steps)
+        // AVS voltage is in 25 mV units with LSB 2 bits = 0 (effective 100 mV steps)
         // Per USB PD 3.2 Table 6.26: "Output voltage in 25 mV units,
         // the least two significant bits Shall be set to zero"
         let raw_voltage = (voltage.get::<_25millivolts>() as u16) & !0x3;
@@ -513,6 +529,6 @@ impl PowerSource {
         // Copy of the PDO being requested
         let pdo_copy = source_capabilities::PowerDataObject::Augmented(*pdo);
 
-        Ok(Self::EprRequest { rdo, pdo: pdo_copy })
+        Ok(Self::EprRequest(EprRequestDataObject { rdo, pdo: pdo_copy }))
     }
 }

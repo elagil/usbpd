@@ -162,11 +162,11 @@ bitfield! {
     pub struct VariableSupply(pub u32): Debug, FromStorage, IntoStorage {
         /// Variable supply (non-battery)
         pub kind: u8 @ 30..=31,
-        /// Maximum Voltage in 50mV units
+        /// Maximum Voltage in 50 mV units
         pub raw_max_voltage: u16 @ 20..=29,
-        /// Minimum Voltage in 50mV units
+        /// Minimum Voltage in 50 mV units
         pub raw_min_voltage: u16 @ 10..=19,
-        /// Maximum current in 10mA units
+        /// Maximum current in 10 mA units
         pub raw_max_current: u16 @ 0..=9,
     }
 }
@@ -216,11 +216,11 @@ bitfield! {
         /// SPR programmable power supply
         pub supply: u8 @ 28..=29,
         pub pps_power_limited: bool @ 27,
-        /// Maximum voltage in 100mV increments
+        /// Maximum voltage in 100 mV increments
         pub raw_max_voltage: u8 @ 17..=24,
-        /// Minimum Voltage in 100mV increments
+        /// Minimum Voltage in 100 mV increments
         pub raw_min_voltage: u8 @ 8..=15,
-        /// Maximum Current in 50mA increments
+        /// Maximum Current in 50 mA increments
         pub raw_max_current: u8 @ 0..=6,
     }
 }
@@ -255,11 +255,11 @@ bitfield! {
         /// EPR adjustable voltage supply
         pub supply: u8 @ 28..=29,
         pub peak_current: u8 @ 26..=27,
-        /// Maximum voltage in 100mV increments
+        /// Maximum voltage in 100 mV increments
         pub raw_max_voltage: u16 @ 17..=25,
-        /// Minimum Voltage in 100mV increments
+        /// Minimum Voltage in 100 mV increments
         pub raw_min_voltage: u8 @ 8..=15,
-        /// PDP in 1W increments
+        /// PDP in 1 W increments
         pub raw_pd_power: u8 @ 0..=7,
     }
 }

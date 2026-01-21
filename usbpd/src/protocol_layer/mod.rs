@@ -89,6 +89,12 @@ pub enum TxError {
     /// Driver reported a hard reset.
     #[error("hard reset")]
     HardReset,
+    /// unchunked_extended_messages_supported must be false (library uses chunked mode).
+    #[error("unchunked extended messages not supported")]
+    UnchunkedExtendedMessagesNotSupported,
+    /// AVS voltage LSB 2 bits must be zero per USB PD 3.2 Table 6.26.
+    #[error("AVS voltage alignment invalid")]
+    AvsVoltageAlignmentInvalid,
 }
 
 #[derive(Debug)]
@@ -219,6 +225,56 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         }
     }
 
+    /// Validate an outgoing message for spec compliance.
+    ///
+    /// This catches common mistakes when constructing messages:
+    /// - unchunked_extended_messages_supported should always be false
+    /// - AVS voltage LSB 2 bits should be zero (per USB PD 3.2 Table 6.26)
+    ///
+    /// Only validates outgoing messages - never called when parsing received data.
+    /// Returns an error if validation fails, allowing the caller to handle it appropriately.
+    fn validate_outgoing_message(message: &Message) -> Result<(), TxError> {
+        if let Some(Payload::Data(data)) = &message.payload {
+            match data {
+                message::data::Data::Request(power_source) => {
+                    use message::data::request::PowerSource;
+                    match power_source {
+                        PowerSource::FixedVariableSupply(rdo) => {
+                            if rdo.unchunked_extended_messages_supported() {
+                                return Err(TxError::UnchunkedExtendedMessagesNotSupported);
+                            }
+                        }
+                        PowerSource::Pps(rdo) => {
+                            if rdo.unchunked_extended_messages_supported() {
+                                return Err(TxError::UnchunkedExtendedMessagesNotSupported);
+                            }
+                        }
+                        PowerSource::EprRequest(epr) => {
+                            // Check the raw RDO for validation
+                            let rdo_bits = epr.rdo;
+                            let unchunked = (rdo_bits >> 23) & 1 == 1;
+                            if unchunked {
+                                return Err(TxError::UnchunkedExtendedMessagesNotSupported);
+                            }
+                            
+                            // Check if this looks like an AVS request (bits 30-31 = 00, bits 28-29 = 11)
+                            let is_avs = ((rdo_bits >> 30) & 0x3 == 0) && ((rdo_bits >> 28) & 0x3 == 3);
+                            if is_avs {
+                                let voltage = (rdo_bits >> 9) & 0xFFF;
+                                if (voltage as u16) & 0x3 != 0 {
+                                    return Err(TxError::AvsVoltageAlignmentInvalid);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     async fn transmit_inner(&mut self, buffer: &[u8]) -> Result<(), TxError> {
         loop {
             match self.driver.transmit(buffer).await {
@@ -240,6 +296,9 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             message.header.message_type(),
             MessageType::Control(ControlMessageType::GoodCRC)
         );
+
+        // Validate outgoing message for spec compliance
+        Self::validate_outgoing_message(&message)?;
 
         trace!("Transmit message: {:?}", message);
         self.counters.retry.reset();
@@ -690,6 +749,9 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                 Err(e) => Err(e),
             },
             Err(TxError::HardReset) => Err(RxError::HardReset),
+            Err(TxError::UnchunkedExtendedMessagesNotSupported | TxError::AvsVoltageAlignmentInvalid) => {
+                unreachable!("validation should happen before transmit_inner")
+            }
         }
     }
 

@@ -63,3 +63,5 @@ overflow-checks = false  # <-
 default = ["stm32g431cb"]
 
 stm32g431cb = ["embassy-stm32/stm32g431cb"]
+# Enable AVS (Adjustable Voltage Supply) instead of Fixed EPR mode
+avs = []
