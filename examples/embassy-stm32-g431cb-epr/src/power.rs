@@ -372,7 +372,7 @@ impl DevicePolicyManager for Device {
 
             #[cfg(not(feature = "avs"))]
             warn!("28V EPR PDO not found, falling back to SPR");
-            
+
             #[cfg(feature = "avs")]
             warn!("AVS PDO with suitable voltage range not found, falling back to SPR");
         }
