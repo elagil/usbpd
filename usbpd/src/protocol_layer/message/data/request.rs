@@ -521,7 +521,6 @@ impl PowerSource {
             .with_object_position(object_position as u8)
             .with_capability_mismatch(mismatch)
             .with_no_usb_suspend(true)
-            .with_unchunked_extended_messages_supported(false)
             .with_usb_communications_capable(true)
             .with_epr_mode_capable(true)
             .0;
