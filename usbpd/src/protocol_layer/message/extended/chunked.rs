@@ -222,10 +222,8 @@ impl ChunkedMessageAssembler {
         }
 
         // Copy chunk data to buffer
-        for &byte in chunk_data {
-            if self.buffer.push(byte).is_err() {
-                return Err(ParseError::Other("Chunk buffer overflow"));
-            }
+        if self.buffer.extend_from_slice(chunk_data).is_err() {
+            return Err(ParseError::Other("Chunk buffer overflow"));
         }
         self.received_bytes += chunk_data.len();
         self.next_chunk = chunk_number + 1;
