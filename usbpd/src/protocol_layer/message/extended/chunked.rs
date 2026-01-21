@@ -10,8 +10,8 @@ use heapless::Vec;
 use super::ExtendedHeader;
 // Re-export for convenience
 pub use super::ExtendedHeader as ChunkExtendedHeader;
-use crate::protocol_layer::message::ParseError;
 use crate::protocol_layer::message::header::{ExtendedMessageType, Header};
+use crate::protocol_layer::message::ParseError;
 
 /// Maximum data bytes in a single extended message chunk.
 pub const MAX_EXTENDED_MSG_CHUNK_LEN: usize = 26;
@@ -20,7 +20,7 @@ pub const MAX_EXTENDED_MSG_CHUNK_LEN: usize = 26;
 pub const MAX_EXTENDED_MSG_LEN: usize = 260;
 
 /// Maximum number of chunks (260 / 26 = 10).
-pub const MAX_CHUNKS: usize = 10;
+pub const MAX_CHUNKS: usize = MAX_EXTENDED_MSG_LEN / MAX_EXTENDED_MSG_CHUNK_LEN;
 
 /// Information about a received chunk.
 #[derive(Debug, Clone)]

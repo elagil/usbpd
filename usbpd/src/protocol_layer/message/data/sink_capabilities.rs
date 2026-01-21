@@ -7,8 +7,8 @@ use heapless::Vec;
 use proc_bitfield::bitfield;
 use uom::si::electric_current::centiampere;
 
-use crate::_50millivolts_mod::_50millivolts;
 use crate::_250milliwatts_mod::_250milliwatts;
+use crate::_50millivolts_mod::_50millivolts;
 use crate::units::{ElectricCurrent, ElectricPotential, Power};
 
 /// Fast Role Swap required USB Type-C current.
@@ -47,7 +47,7 @@ bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-    pub struct SinkFixedSupply(pub u32): Debug, FromStorage, IntoStorage {
+    pub struct FixedSupply(pub u32): Debug, FromStorage, IntoStorage {
         /// Fixed supply (00b)
         pub kind: u8 @ 30..=31,
         /// Dual-Role Power - set if Dual-Role Power supported
@@ -72,14 +72,14 @@ bitfield! {
 }
 
 #[allow(clippy::derivable_impls)]
-impl Default for SinkFixedSupply {
+impl Default for FixedSupply {
     fn default() -> Self {
         Self(0)
     }
 }
 
-impl SinkFixedSupply {
-    /// Create a new SinkFixedSupply PDO for the required vSafe5V entry.
+impl FixedSupply {
+    /// Create a new FixedSupply PDO for the required vSafe5V entry.
     ///
     /// All sinks must include at least one PDO at 5V.
     pub fn new_vsafe5v(operational_current_10ma: u16) -> Self {
@@ -89,7 +89,7 @@ impl SinkFixedSupply {
             .with_raw_operational_current(operational_current_10ma)
     }
 
-    /// Create a new SinkFixedSupply PDO at a specific voltage.
+    /// Create a new FixedSupply PDO at a specific voltage.
     pub fn new(voltage_50mv: u16, operational_current_10ma: u16) -> Self {
         Self::default()
             .with_kind(0b00)
@@ -120,7 +120,7 @@ bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-    pub struct SinkBattery(pub u32): Debug, FromStorage, IntoStorage {
+    pub struct Battery(pub u32): Debug, FromStorage, IntoStorage {
         /// Battery (01b)
         pub kind: u8 @ 30..=31,
         /// Maximum Voltage in 50 mV units
@@ -132,8 +132,8 @@ bitfield! {
     }
 }
 
-impl SinkBattery {
-    /// Create a new SinkBattery PDO.
+impl Battery {
+    /// Create a new Battery PDO.
     pub fn new(min_voltage_50mv: u16, max_voltage_50mv: u16, operational_power_250mw: u16) -> Self {
         Self::default()
             .with_kind(0b01)
@@ -159,7 +159,7 @@ impl SinkBattery {
 }
 
 #[allow(clippy::derivable_impls)]
-impl Default for SinkBattery {
+impl Default for Battery {
     fn default() -> Self {
         Self(0)
     }
@@ -172,7 +172,7 @@ bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-    pub struct SinkVariableSupply(pub u32): Debug, FromStorage, IntoStorage {
+    pub struct VariableSupply(pub u32): Debug, FromStorage, IntoStorage {
         /// Variable supply (10b)
         pub kind: u8 @ 30..=31,
         /// Maximum Voltage in 50 mV units
@@ -184,8 +184,8 @@ bitfield! {
     }
 }
 
-impl SinkVariableSupply {
-    /// Create a new SinkVariableSupply PDO.
+impl VariableSupply {
+    /// Create a new VariableSupply PDO.
     pub fn new(min_voltage_50mv: u16, max_voltage_50mv: u16, operational_current_10ma: u16) -> Self {
         Self::default()
             .with_kind(0b10)
@@ -211,7 +211,7 @@ impl SinkVariableSupply {
 }
 
 #[allow(clippy::derivable_impls)]
-impl Default for SinkVariableSupply {
+impl Default for VariableSupply {
     fn default() -> Self {
         Self(0)
     }
@@ -226,11 +226,11 @@ impl Default for SinkVariableSupply {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SinkPowerDataObject {
     /// Fixed voltage supply requirement.
-    FixedSupply(SinkFixedSupply),
+    FixedSupply(FixedSupply),
     /// Battery supply requirement.
-    Battery(SinkBattery),
+    Battery(Battery),
     /// Variable voltage supply requirement.
-    VariableSupply(SinkVariableSupply),
+    VariableSupply(VariableSupply),
 }
 
 impl SinkPowerDataObject {
@@ -261,7 +261,7 @@ impl SinkCapabilities {
     /// This is the minimum required per spec - all sinks must support 5V.
     pub fn new_vsafe5v_only(operational_current_10ma: u16) -> Self {
         let mut pdos = Vec::new();
-        pdos.push(SinkPowerDataObject::FixedSupply(SinkFixedSupply::new_vsafe5v(
+        pdos.push(SinkPowerDataObject::FixedSupply(FixedSupply::new_vsafe5v(
             operational_current_10ma,
         )))
         .ok();
