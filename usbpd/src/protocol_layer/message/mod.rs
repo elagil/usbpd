@@ -53,6 +53,10 @@ pub enum ParseError {
         /// The extended message type.
         message_type: header::ExtendedMessageType,
     },
+    /// Attempt to reuse a ChunkedMessageAssembler that is already processing a message.
+    /// The user must create a new assembler or explicitly call reset() first.
+    #[error("parser already in use, create a new assembler or call reset()")]
+    ParserReuse,
     /// Other parsing error with a message.
     #[error("other parse error: {0}")]
     Other(&'static str),
