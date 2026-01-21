@@ -121,15 +121,45 @@ impl ChunkedMessageAssembler {
         }
     }
 
-    /// Reset the assembler state.
+    /// Reset the assembler state by creating a fresh instance.
+    ///
+    /// This ensures reset() and new() always stay in sync.
     pub fn reset(&mut self) {
-        self.buffer.clear();
-        self.expected_size = 0;
-        self.received_bytes = 0;
-        self.message_type = None;
-        self.header_template = None;
-        self.next_chunk = 0;
-        self.in_progress = false;
+        *self = Self::new();
+    }
+
+    /// Create a new assembler and initialize it with chunk 0.
+    ///
+    /// This is a convenience method that combines `new()` and `process_chunk()` for the first chunk.
+    ///
+    /// # Arguments
+    /// * `header` - The PD message header for chunk 0
+    /// * `ext_header` - The extended message header for chunk 0
+    /// * `chunk_data` - The chunk 0 payload data (without headers)
+    ///
+    /// # Returns
+    /// * `Ok((assembler, result))` - New assembler and the result of processing chunk 0
+    /// * `Err(ParseError)` - If chunk 0 is invalid (e.g., wrong chunk number)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let (mut assembler, result) = ChunkedMessageAssembler::new_from_chunk(
+    ///     header, ext_header, chunk_0_data
+    /// )?;
+    /// match result {
+    ///     ChunkResult::Complete(data) => { /* Single chunk message */ },
+    ///     ChunkResult::NeedMoreChunks(_) => { /* Continue with process_chunk() */ },
+    ///     _ => unreachable!(),
+    /// }
+    /// ```
+    pub fn new_from_chunk(
+        header: Header,
+        ext_header: ExtendedHeader,
+        chunk_data: &[u8],
+    ) -> Result<(Self, ChunkResult<Vec<u8, MAX_EXTENDED_MSG_LEN>>), ParseError> {
+        let mut assembler = Self::new();
+        let result = assembler.process_chunk(header, ext_header, chunk_data)?;
+        Ok((assembler, result))
     }
 
     /// Check if assembly is currently in progress.
@@ -170,8 +200,11 @@ impl ChunkedMessageAssembler {
 
         // Validate chunk number
         if chunk_number == 0 {
-            // First chunk - initialize assembler
-            self.reset();
+            // First chunk - ensure parser is not already in use
+            if self.in_progress {
+                return Err(ParseError::ParserReuse);
+            }
+            // Initialize assembler for new message
             self.expected_size = data_size;
             self.message_type = Some(header.message_type_raw().into());
             self.header_template = Some(header);
@@ -384,5 +417,73 @@ mod tests {
             }
             _ => panic!("Expected complete"),
         }
+    }
+
+    #[test]
+    fn test_assembler_parser_reuse_error() {
+        let mut assembler = ChunkedMessageAssembler::new();
+
+        let header = Header(0x1000);
+        let ext_header = ExtendedHeader::new(30).with_chunked(true).with_chunk_number(0);
+        let data = [1u8; 26];
+
+        // Process first chunk - should succeed
+        match assembler.process_chunk(header, ext_header, &data).unwrap() {
+            ChunkResult::NeedMoreChunks(next) => assert_eq!(next, 1),
+            _ => panic!("Expected NeedMoreChunks"),
+        }
+
+        // Try to start a new message while previous one is in progress - should fail
+        let result = assembler.process_chunk(header, ext_header, &data);
+        assert!(matches!(result, Err(ParseError::ParserReuse)));
+    }
+
+    #[test]
+    fn test_new_from_chunk() {
+        let header = Header(0x1000);
+        let ext_header = ExtendedHeader::new(5).with_chunked(true).with_chunk_number(0);
+        let data = [1u8, 2, 3, 4, 5];
+
+        // Create assembler from chunk 0
+        let (assembler, result) = ChunkedMessageAssembler::new_from_chunk(header, ext_header, &data).unwrap();
+
+        // Single chunk message should be complete immediately
+        match result {
+            ChunkResult::Complete(buf) => assert_eq!(&buf[..], &data),
+            _ => panic!("Expected Complete"),
+        }
+
+        // Assembler should not be in progress after complete message
+        assert!(!assembler.is_in_progress());
+    }
+
+    #[test]
+    fn test_new_from_chunk_multi_chunk() {
+        let header = Header(0x1000);
+        let ext_header = ExtendedHeader::new(30).with_chunked(true).with_chunk_number(0);
+        let chunk_0 = [0u8; 26];
+
+        // Create assembler from chunk 0
+        let (mut assembler, result) = ChunkedMessageAssembler::new_from_chunk(header, ext_header, &chunk_0).unwrap();
+
+        // Multi-chunk message should need more chunks
+        match result {
+            ChunkResult::NeedMoreChunks(next) => assert_eq!(next, 1),
+            _ => panic!("Expected NeedMoreChunks"),
+        }
+
+        // Assembler should be in progress
+        assert!(assembler.is_in_progress());
+
+        // Process chunk 1
+        let ext_header_1 = ExtendedHeader::new(30).with_chunked(true).with_chunk_number(1);
+        let chunk_1 = [0u8; 4];
+        match assembler.process_chunk(header, ext_header_1, &chunk_1).unwrap() {
+            ChunkResult::Complete(_) => {}
+            _ => panic!("Expected Complete"),
+        }
+
+        // Now assembler should not be in progress
+        assert!(!assembler.is_in_progress());
     }
 }
