@@ -7,8 +7,8 @@ use heapless::Vec;
 use proc_bitfield::bitfield;
 use uom::si::electric_current::centiampere;
 
-use crate::_250milliwatts_mod::_250milliwatts;
 use crate::_50millivolts_mod::_50millivolts;
+use crate::_250milliwatts_mod::_250milliwatts;
 use crate::units::{ElectricCurrent, ElectricPotential, Power};
 
 /// Fast Role Swap required USB Type-C current.

@@ -6,9 +6,9 @@ use uom::si::electric_potential::{decivolt, volt};
 use uom::si::power::watt;
 
 use super::PdoState;
-use crate::_250milliwatts_mod::_250milliwatts;
 use crate::_50milliamperes_mod::_50milliamperes;
 use crate::_50millivolts_mod::_50millivolts;
+use crate::_250milliwatts_mod::_250milliwatts;
 use crate::units::{ElectricCurrent, ElectricPotential, Power};
 
 /// Kinds of supplies that can be reported within source capabilities.
