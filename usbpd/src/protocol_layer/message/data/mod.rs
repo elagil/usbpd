@@ -186,7 +186,7 @@ impl Data {
     pub fn to_bytes(&self, payload: &mut [u8]) -> usize {
         match self {
             Self::Unknown => 0,
-            Self::SourceCapabilities(_) => unimplemented!(),
+            Self::SourceCapabilities(caps) => caps.to_bytes(payload),
             Self::SinkCapabilities(caps) => caps.to_bytes(payload),
             Self::Request(request::PowerSource::FixedVariableSupply(data_object)) => data_object.to_bytes(payload),
             Self::Request(request::PowerSource::Pps(data_object)) => data_object.to_bytes(payload),

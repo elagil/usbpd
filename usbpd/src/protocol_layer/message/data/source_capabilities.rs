@@ -50,7 +50,12 @@ impl PowerDataObject {
     /// Per USB PD Spec R3.2 Section 6.5.15.1, if the SPR Capabilities Message
     /// contains fewer than 7 PDOs, the unused Data Objects are zero-filled.
     pub fn is_zero_padding(&self) -> bool {
-        (match self {
+        self.to_raw() == 0
+    }
+
+    /// Convert the PDO to its raw u32 representation.
+    pub fn to_raw(&self) -> u32 {
+        match self {
             PowerDataObject::FixedSupply(f) => f.0,
             PowerDataObject::Battery(b) => b.0,
             PowerDataObject::VariableSupply(v) => v.0,
@@ -60,7 +65,7 @@ impl PowerDataObject {
                 Augmented::Unknown(u) => *u,
             },
             PowerDataObject::Unknown(u) => u.0,
-        }) == 0
+        }
     }
 }
 
@@ -122,6 +127,13 @@ impl FixedSupply {
 
     pub fn max_current(&self) -> ElectricCurrent {
         ElectricCurrent::new::<centiampere>(self.raw_max_current().into())
+    }
+
+    pub fn vSafe5V(max_current_10ma: u16) -> Self {
+        FixedSupply::default()
+            .with_raw_voltage(100) // V = 5v = 100_u16 * 50mv
+            .with_raw_max_current(max_current_10ma)
+            .with_peak_current(0)
     }
 }
 
@@ -284,6 +296,18 @@ impl EprAdjustableVoltageSupply {
 pub struct SourceCapabilities(pub(crate) Vec<PowerDataObject, 16>);
 
 impl SourceCapabilities {
+    pub fn new_with_pdos(pdos: Vec<PowerDataObject, 16>) -> Self {
+        Self(pdos)
+    }
+
+    pub fn new_vsafe5v_only(maximum_current_10ma: u16) -> Self {
+        let mut inner = Vec::new();
+        inner
+            .push(PowerDataObject::FixedSupply(FixedSupply::vSafe5V(maximum_current_10ma)))
+            .ok();
+        Self(inner)
+    }
+
     pub fn vsafe_5v(&self) -> Option<&FixedSupply> {
         self.0.first().and_then(|supply| {
             if let PowerDataObject::FixedSupply(supply) = supply {
@@ -385,6 +409,19 @@ impl SourceCapabilities {
             PowerDataObject::Augmented(Augmented::Epr(_)) => true,
             _ => false,
         })
+    }
+
+    /// Convert to bytes for transmission.
+    ///
+    /// Each PDO is 4 bytes, little-endian.
+    pub fn to_bytes(&self, buffer: &mut [u8]) -> usize {
+        let mut offset = 0;
+        for pdo in &self.0 {
+            let raw = pdo.to_raw();
+            buffer[offset..offset + 4].copy_from_slice(&raw.to_le_bytes());
+            offset += 4;
+        }
+        offset
     }
 }
 

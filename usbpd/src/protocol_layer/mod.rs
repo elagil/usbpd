@@ -27,6 +27,7 @@ use usbpd_traits::{Driver, DriverRxError, DriverTxError};
 use crate::PowerRole;
 use crate::counters::{Counter, CounterType, Error as CounterError};
 use crate::protocol_layer::message::data::epr_mode::EprModeDataObject;
+use crate::protocol_layer::message::data::source_capabilities::SourceCapabilities;
 use crate::protocol_layer::message::extended::Extended;
 use crate::protocol_layer::message::{ParseError, Payload};
 use crate::timers::{Timer, TimerType};
@@ -155,10 +156,14 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         &mut self.driver
     }
 
-    /// Allows tests to access the default header directly.
-    #[cfg(test)]
+    /// Access the default header directly.
     pub fn header(&self) -> &Header {
         &self.default_header
+    }
+
+    /// Change the header's data role after a data role swap
+    pub fn set_header_data_role(&mut self, role: crate::DataRole) {
+        self.default_header.set_port_data_role(role);
     }
 
     fn get_message_buffer() -> [u8; MAX_MESSAGE_SIZE] {
@@ -696,6 +701,30 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         self.transmit(Message::new_with_data(header, Data::EprMode(mdo))).await
     }
 
+    /// Wait for the sink to request a capability with the a Request Message.
+    pub async fn wait_for_request(&mut self) -> Result<Message, ProtocolError> {
+        // Only sources await a sink power request
+        debug_assert!(matches!(self.default_header.port_power_role(), PowerRole::Source));
+
+        self.receive_message_type(
+            &[MessageType::Data(message::header::DataMessageType::Request)],
+            TimerType::SenderResponse,
+        )
+        .await
+    }
+
+    /// Wait for the sink to request a capability with an EPR_Request Message
+    pub async fn wait_for_epr_request(&mut self) -> Result<Message, ProtocolError> {
+        // Only sources await a sink power request
+        debug_assert!(matches!(self.default_header.port_power_role(), PowerRole::Source));
+
+        self.receive_message_type(
+            &[MessageType::Data(message::header::DataMessageType::EprRequest)],
+            TimerType::SenderResponse,
+        )
+        .await
+    }
+
     /// Request a certain power level from the source.
     pub async fn request_power(&mut self, power_source_request: request::PowerSource) -> Result<(), ProtocolError> {
         // Only sinks can request from a supply.
@@ -799,6 +828,50 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             self.counters.tx_message,
             ExtendedMessageType::EprSinkCapabilities,
             0, // num_objects is Reserved (0) for unchunked extended messages per spec 6.2.1.1.2
+        );
+
+        let mut message = Message::new(header);
+        message.payload = Some(Payload::Extended(extended_payload));
+
+        self.transmit(message).await
+    }
+
+    pub async fn transmit_source_capabilities(
+        &mut self,
+        source_capabilities: &SourceCapabilities,
+    ) -> Result<(), ProtocolError> {
+        // Only sources can send capabilities
+        debug_assert!(matches!(self.default_header.port_power_role(), PowerRole::Source));
+        if source_capabilities.has_epr_pdo_in_spr_positions() {
+            return Err(ProtocolError::TxError(TxError::HardReset));
+        }
+
+        let header = Header::new_data(
+            self.default_header,
+            self.counters.tx_message,
+            DataMessageType::SourceCapabilities,
+            source_capabilities.0.len() as u8, // Raw cast OK since since len has domain of [0, 8]
+        );
+
+        let message = Message::new_with_data(header, Data::SourceCapabilities(source_capabilities.clone()));
+
+        self.transmit(message).await
+    }
+
+    pub async fn transmit_epr_source_capabilities(
+        &mut self,
+        source_capabilities: &SourceCapabilities,
+    ) -> Result<(), ProtocolError> {
+        debug_assert!(matches!(self.default_header.port_power_role(), PowerRole::Source));
+
+        let pdos: heapless::Vec<_, 16> = source_capabilities.0.iter().cloned().collect();
+        let extended_payload = message::extended::Extended::EprSourceCapabilities(pdos);
+
+        let header = Header::new_extended(
+            self.default_header,
+            self.counters.tx_message,
+            ExtendedMessageType::EprSourceCapabilities,
+            0, // num_objects is 0 for extended messages
         );
 
         let mut message = Message::new(header);

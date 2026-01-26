@@ -26,6 +26,7 @@ pub(crate) mod fmt;
 pub(crate) mod counters;
 pub mod protocol_layer;
 pub mod sink;
+pub mod source;
 pub mod timers;
 
 #[cfg(test)]
