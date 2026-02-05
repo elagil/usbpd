@@ -815,7 +815,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
 mod tests {
     use super::Sink;
     use crate::counters::{Counter, CounterType};
-    use crate::dummy::{DUMMY_CAPABILITIES, DummyDriver, DummySinkDevice, DummyTimer};
+    use crate::dummy::{DUMMY_CAPABILITIES, DummyDriver, DummySinkDevice, DummyTimer, MAX_DATA_MESSAGE_SIZE};
     use crate::protocol_layer::message::data::Data;
     use crate::protocol_layer::message::data::epr_mode::Action;
     use crate::protocol_layer::message::data::request::PowerSource;
@@ -826,17 +826,17 @@ mod tests {
     use crate::protocol_layer::message::{Message, Payload};
     use crate::sink::policy_engine::State;
 
-    fn get_policy_engine() -> Sink<DummyDriver<30>, DummyTimer, DummySinkDevice> {
+    fn get_policy_engine() -> Sink<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DummySinkDevice> {
         Sink::new(DummyDriver::new(), DummySinkDevice {})
     }
 
     fn simulate_source_control_message<DPM: crate::sink::device_policy_manager::DevicePolicyManager>(
-        policy_engine: &mut Sink<DummyDriver<30>, DummyTimer, DPM>,
+        policy_engine: &mut Sink<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DPM>,
         control_message_type: ControlMessageType,
         message_id: u8,
     ) {
         let header = *policy_engine.protocol_layer.header();
-        let mut buf = [0u8; 30];
+        let mut buf = [0u8; MAX_DATA_MESSAGE_SIZE];
 
         Message::new(Header::new_control(
             header,
@@ -860,10 +860,10 @@ mod tests {
     /// Simulate an EPR Mode data message from the source with proper API.
     /// Returns the serialized bytes for assertion.
     fn simulate_source_epr_mode_message<DPM: crate::sink::device_policy_manager::DevicePolicyManager>(
-        policy_engine: &mut Sink<DummyDriver<30>, DummyTimer, DPM>,
+        policy_engine: &mut Sink<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DPM>,
         action: Action,
         message_id: u8,
-    ) -> heapless::Vec<u8, 30> {
+    ) -> heapless::Vec<u8, MAX_DATA_MESSAGE_SIZE> {
         use crate::protocol_layer::message::data::epr_mode::EprModeDataObject;
 
         let source_header = get_source_header_template();
@@ -877,7 +877,7 @@ mod tests {
         let epr_mode = EprModeDataObject::default().with_action(action);
         let message = Message::new_with_data(header, Data::EprMode(epr_mode));
 
-        let mut buf = [0u8; 30];
+        let mut buf = [0u8; MAX_DATA_MESSAGE_SIZE];
         let len = message.to_bytes(&mut buf);
         policy_engine.protocol_layer.driver().inject_received_data(&buf[..len]);
 
@@ -889,9 +889,9 @@ mod tests {
     /// Simulate an EprKeepAliveAck extended control message from the source.
     /// Returns the serialized bytes for assertion.
     fn simulate_epr_keep_alive_ack<DPM: crate::sink::device_policy_manager::DevicePolicyManager>(
-        policy_engine: &mut Sink<DummyDriver<30>, DummyTimer, DPM>,
+        policy_engine: &mut Sink<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DPM>,
         message_id: u8,
-    ) -> heapless::Vec<u8, 30> {
+    ) -> heapless::Vec<u8, MAX_DATA_MESSAGE_SIZE> {
         use crate::protocol_layer::message::Payload;
         use crate::protocol_layer::message::extended::Extended;
         use crate::protocol_layer::message::extended::extended_control::{ExtendedControl, ExtendedControlMessageType};
@@ -912,7 +912,7 @@ mod tests {
         )));
 
         // Serialize and inject
-        let mut buf = [0u8; 30];
+        let mut buf = [0u8; MAX_DATA_MESSAGE_SIZE];
         let len = message.to_bytes(&mut buf);
         policy_engine.protocol_layer.driver().inject_received_data(&buf[..len]);
 
@@ -982,7 +982,7 @@ mod tests {
         use crate::dummy::{DUMMY_SPR_CAPS_EPR_CAPABLE, DummySinkEprDevice};
 
         // Create policy engine with EPR-capable DPM
-        let mut policy_engine: Sink<DummyDriver<30>, DummyTimer, DummySinkEprDevice> =
+        let mut policy_engine: Sink<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DummySinkEprDevice> =
             Sink::new(DummyDriver::new(), DummySinkEprDevice::new());
 
         // === Phase 1: Initial SPR Negotiation ===

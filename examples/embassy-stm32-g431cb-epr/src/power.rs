@@ -377,40 +377,16 @@ impl DevicePolicyManager for Device {
             warn!("AVS PDO with suitable voltage range not found, falling back to SPR");
         }
 
-        // For SPR request: manually construct RDO with epr_mode_capable bit if source supports EPR
+        // For SPR request: set epr_mode_capable bit if source supports EPR
         // This is required before EPR mode entry - the source checks this bit
-        if source_epr_capable {
-            // Find highest SPR fixed voltage
-            if let Some((position, pdo)) = source_capabilities
-                .spr_pdos()
-                .filter(|(_, p)| matches!(p, PowerDataObject::FixedSupply(_)))
-                .max_by_key(|(_, p)| {
-                    if let PowerDataObject::FixedSupply(f) = p {
-                        f.voltage().get::<millivolt>()
-                    } else {
-                        0
-                    }
-                })
-                && let PowerDataObject::FixedSupply(fixed) = pdo
-            {
-                let max_current = fixed.max_current().get::<centiampere>() as u16;
-                info!(
-                    "Requesting SPR PDO {} ({} mV) with EPR capable flag",
-                    position,
-                    fixed.voltage().get::<millivolt>()
-                );
-
-                // Create RDO with epr_mode_capable bit set
-                let rdo = FixedVariableSupply(0)
-                    .with_object_position(position)
-                    .with_usb_communications_capable(true)
-                    .with_no_usb_suspend(true)
-                    .with_epr_mode_capable(true) // Important for EPR mode entry!
-                    .with_raw_operating_current(max_current)
-                    .with_raw_max_operating_current(max_current);
-
-                return PowerSource::FixedVariableSupply(rdo);
-            }
+        if source_epr_capable
+            && let Ok(PowerSource::FixedVariableSupply(rdo)) =
+                PowerSource::new_fixed(CurrentRequest::Highest, VoltageRequest::Highest, source_capabilities)
+        {
+            info!("Requesting SPR PDO {} with EPR capable flag", rdo.object_position());
+            // Set epr_mode_capable bit for EPR mode entry
+            let rdo = rdo.with_epr_mode_capable(true);
+            return PowerSource::FixedVariableSupply(rdo);
         }
 
         // Fall back to standard request (no EPR)

@@ -677,23 +677,6 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         self.transmit(Message::new_with_data(header, Data::EprMode(mdo))).await
     }
 
-    /// Transmit a data message of the provided type.
-    pub async fn _transmit_data_message(
-        &mut self,
-        message_type: DataMessageType,
-        _data: Data,
-        num_objects: u8,
-    ) -> Result<(), ProtocolError> {
-        let message = Message::new(Header::new_data(
-            self.default_header,
-            self.counters.tx_message,
-            message_type,
-            num_objects,
-        ));
-
-        self.transmit(message).await
-    }
-
     /// Request a certain power level from the source.
     pub async fn request_power(&mut self, power_source_request: request::PowerSource) -> Result<(), ProtocolError> {
         // Only sinks can request from a supply.
@@ -720,7 +703,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         trace!("Transmit chunk request for {:?} chunk {}", message_type, chunk_number);
 
         // Build extended header for chunk request
-        let ext_header = message::extended::ExtendedHeader::new(0)
+        let ext_header = message::extended::ExtendedHeader::default()
             .with_chunked(true)
             .with_request_chunk(true)
             .with_chunk_number(chunk_number);
@@ -739,10 +722,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
 
         // Transmit and wait for GoodCRC
         match self.transmit_inner(&buffer[..offset]).await {
-            Ok(_) => match self.wait_for_good_crc().await {
-                Ok(()) => Ok(()),
-                Err(e) => Err(e),
-            },
+            Ok(_) => self.wait_for_good_crc().await,
             Err(TxError::HardReset) => Err(RxError::HardReset),
             Err(TxError::UnchunkedExtendedMessagesNotSupported | TxError::AvsVoltageAlignmentInvalid) => {
                 unreachable!("validation should happen before transmit_inner")
@@ -787,7 +767,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             self.default_header,
             self.counters.tx_message,
             ExtendedMessageType::EprSinkCapabilities,
-            0, // num_objects is 0 for extended messages
+            0, // num_objects is Reserved (0) for unchunked extended messages per spec 6.2.1.1.2
         );
 
         let mut message = Message::new(header);
@@ -806,10 +786,12 @@ mod tests {
     use super::message::data::Data;
     use super::message::data::source_capabilities::SourceCapabilities;
     use super::message::header::Header;
-    use crate::dummy::{DUMMY_CAPABILITIES, DummyDriver, DummyTimer, get_dummy_source_capabilities};
+    use crate::dummy::{
+        DUMMY_CAPABILITIES, DummyDriver, DummyTimer, MAX_DATA_MESSAGE_SIZE, get_dummy_source_capabilities,
+    };
     use crate::protocol_layer::message::Payload;
 
-    fn get_protocol_layer() -> ProtocolLayer<DummyDriver<30>, DummyTimer> {
+    fn get_protocol_layer() -> ProtocolLayer<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer> {
         ProtocolLayer::new(
             DummyDriver::new(),
             Header::new_template(

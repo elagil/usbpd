@@ -85,7 +85,7 @@ bitfield! {
     /// Extended message header.
     ///
     /// Chunked messages are currently unsupported.
-    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[derive(Clone, Copy, PartialEq, Eq, Default)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub struct ExtendedHeader(pub u16): Debug, FromStorage, IntoStorage {
