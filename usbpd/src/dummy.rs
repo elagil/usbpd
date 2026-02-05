@@ -33,6 +33,10 @@ pub const DUMMY_EPR_SOURCE_CAPS_CHUNK_1: [u8; 18] = [
     0xB1, 0xCF, 0x28, 0x88, 0x00, 0x00, 0xF4, 0xC1, 0x18, 0x00, 0xF4, 0x41, 0x1B, 0x00, 0xF4, 0x01, 0x1F, 0x00,
 ];
 
+/// Maximum size of a non-extended USB PD message in bytes.
+/// Per USB PD spec, this is 2 bytes header + 7 data objects * 4 bytes = 30 bytes.
+pub const MAX_DATA_MESSAGE_SIZE: usize = 30;
+
 /// A dummy sink device that implements the sink device policy manager.
 pub struct DummySinkDevice {}
 
@@ -337,13 +341,13 @@ pub fn get_dummy_source_capabilities() -> Vec<PowerDataObject> {
 mod tests {
     use usbpd_traits::Driver;
 
-    use crate::dummy::DummyDriver;
+    use crate::dummy::{DummyDriver, MAX_DATA_MESSAGE_SIZE};
 
     #[tokio::test]
     async fn test_receive() {
-        let mut driver: DummyDriver<30> = DummyDriver::new();
+        let mut driver: DummyDriver<MAX_DATA_MESSAGE_SIZE> = DummyDriver::new();
 
-        let mut injected_data = [0u8; 30];
+        let mut injected_data = [0u8; MAX_DATA_MESSAGE_SIZE];
         injected_data[0] = 123;
 
         driver.inject_received_data(&injected_data);
@@ -351,7 +355,7 @@ mod tests {
         injected_data[1] = 255;
         driver.inject_received_data(&injected_data);
 
-        let mut buf = [0u8; 30];
+        let mut buf = [0u8; MAX_DATA_MESSAGE_SIZE];
         driver.receive(&mut buf).await.unwrap();
 
         assert_eq!(buf[0], 123);
