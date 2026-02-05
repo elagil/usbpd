@@ -66,29 +66,17 @@ impl SinkDevicePolicyManager for DummySinkEprDevice {
     ) -> crate::sink::device_policy_manager::Event {
         use crate::sink::device_policy_manager::Event;
 
-        eprintln!(
-            "DummySinkEprDevice::get_event called, requested_epr_caps={}",
-            self.requested_epr_caps
-        );
-        eprintln!("  PDOs count: {}", source_capabilities.pdos().len());
-
         // After initial SPR negotiation, enter EPR mode if source is EPR capable
         if !self.requested_epr_caps {
             // Check if source advertises EPR capability in first PDO
-            if let Some(first_pdo) = source_capabilities.pdos().first() {
-                eprintln!("  First PDO: {:?}", first_pdo);
-                if let PowerDataObject::FixedSupply(fixed) = first_pdo {
-                    eprintln!("  EPR capable: {}", fixed.epr_mode_capable());
-                    if fixed.epr_mode_capable() {
-                        self.requested_epr_caps = true;
-                        eprintln!("  Returning Event::EnterEprMode");
-                        return Event::EnterEprMode(Power::new::<watt>(140)); // Dummy 140W PDP
-                    }
+            if let Some(PowerDataObject::FixedSupply(fixed)) = source_capabilities.pdos().first() {
+                if fixed.epr_mode_capable() {
+                    self.requested_epr_caps = true;
+                    return Event::EnterEprMode(Power::new::<watt>(140)); // Dummy 140W PDP
                 }
             }
         }
 
-        eprintln!("  Returning Event::None");
         Event::None
     }
 
@@ -99,75 +87,33 @@ impl SinkDevicePolicyManager for DummySinkEprDevice {
         use crate::protocol_layer::message::data::request::{CurrentRequest, PowerSource, VoltageRequest};
         use crate::protocol_layer::message::data::source_capabilities::PowerDataObject;
 
-        eprintln!("DummySinkEprDevice::request called");
-        eprintln!("  Total PDOs: {}", source_capabilities.pdos().len());
-        eprintln!("  Is EPR capabilities: {}", source_capabilities.is_epr_capabilities());
-
-        // Log SPR PDOs (positions 1-7)
-        for (pos, pdo) in source_capabilities.spr_pdos() {
-            if let PowerDataObject::FixedSupply(fixed) = pdo {
-                eprintln!(
-                    "  SPR PDO[{}]: {}V @ {}A",
-                    pos,
-                    fixed.raw_voltage() / 20,
-                    fixed.raw_max_current() / 100
-                );
-            }
-        }
-
         // Use the spec-compliant epr_pdos() method to get EPR PDOs at positions 8+
         // Per USB PD Spec R3.2 Section 6.5.15.1, EPR PDOs always start at position 8
-        let mut first_epr_pdo: Option<(u8, PowerDataObject)> = None;
-
-        for (pos, pdo) in source_capabilities.epr_pdos() {
-            // Skip zero-padding (shouldn't happen at position 8+, but be safe)
-            if pdo.is_zero_padding() {
-                continue;
-            }
-
-            if let PowerDataObject::FixedSupply(fixed) = pdo {
-                eprintln!(
-                    "  EPR PDO[{}]: {}V @ {}A",
-                    pos,
-                    fixed.raw_voltage() / 20,
-                    fixed.raw_max_current() / 100
-                );
-
-                if first_epr_pdo.is_none() {
-                    first_epr_pdo = Some((pos, *pdo));
-                    eprintln!("  Selected first EPR PDO at position {}", pos);
-                }
-            }
-        }
+        let first_epr_pdo = source_capabilities
+            .epr_pdos()
+            .filter(|(_, pdo)| !pdo.is_zero_padding())
+            .find(|(_, pdo)| matches!(pdo, PowerDataObject::FixedSupply(_)));
 
         if let Some((position, pdo)) = first_epr_pdo {
-            let voltage = if let PowerDataObject::FixedSupply(fixed) = &pdo {
-                fixed.raw_voltage() / 20
-            } else {
-                0
-            };
-            eprintln!("  Requesting EPR PDO#{} ({}V)", position, voltage);
-
             // Create RDO for EPR fixed supply
-            // Use FixedVariableSupply structure which matches RDO format for fixed PDOs
             use crate::protocol_layer::message::data::request::FixedVariableSupply;
 
-            let mut rdo = FixedVariableSupply(0);
-            rdo = rdo.with_object_position(position); // Already 1-indexed from epr_pdos()
-            rdo = rdo.with_usb_communications_capable(true);
-            rdo = rdo.with_no_usb_suspend(true);
+            let mut rdo = FixedVariableSupply(0)
+                .with_object_position(position)
+                .with_usb_communications_capable(true)
+                .with_no_usb_suspend(true);
 
             // Set current based on the PDO's max current
-            if let PowerDataObject::FixedSupply(fixed) = &pdo {
+            if let PowerDataObject::FixedSupply(fixed) = pdo {
                 let max_current = fixed.raw_max_current();
-                rdo = rdo.with_raw_operating_current(max_current);
-                rdo = rdo.with_raw_max_operating_current(max_current);
+                rdo = rdo
+                    .with_raw_operating_current(max_current)
+                    .with_raw_max_operating_current(max_current);
             }
 
             // Create EPR request with RDO and PDO copy
-            PowerSource::EprRequest(EprRequestDataObject { rdo: rdo.0, pdo })
+            PowerSource::EprRequest(EprRequestDataObject { rdo: rdo.0, pdo: *pdo })
         } else {
-            eprintln!("  No EPR PDOs found, selecting default 5V");
             // Fall back to default 5V
             PowerSource::new_fixed(CurrentRequest::Highest, VoltageRequest::Safe5V, source_capabilities).unwrap()
         }
