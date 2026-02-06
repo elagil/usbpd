@@ -198,7 +198,7 @@ impl<const N: usize> Driver for DummyDriver<N> {
         Ok(())
     }
 
-    async fn wait_for_vbus(&self) {
+    async fn wait_for_vbus(&mut self) {
         // Do nothing.
     }
 }

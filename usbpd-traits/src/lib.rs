@@ -35,12 +35,13 @@ pub trait Driver {
 
     /// If this is `true`, the hardware automatically retries transmission
     /// when no GoodCRC is received. The protocol layer will skip its own
-    /// retry loop but still call wait_for_good_crc() to consume the GoodCRC
-    /// from the FIFO and validate the message ID.
+    /// retry loop and call driver.transmit() directly. On success, it
+    /// maintains protocol state (TX message counter) without calling
+    /// wait_for_good_crc(), since the hardware already verified GoodCRC.
     const HAS_AUTO_RETRY: bool = false;
 
     /// Wait for availability of VBus voltage.
-    fn wait_for_vbus(&self) -> impl Future<Output = ()>;
+    fn wait_for_vbus(&mut self) -> impl Future<Output = ()>;
 
     /// Receive a packet.
     fn receive(&mut self, buffer: &mut [u8]) -> impl Future<Output = Result<usize, DriverRxError>>;
