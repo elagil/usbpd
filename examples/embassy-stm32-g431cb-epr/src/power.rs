@@ -163,7 +163,7 @@ impl<'d> UcpdSinkDriver<'d> {
 }
 
 impl SinkDriver for UcpdSinkDriver<'_> {
-    async fn wait_for_vbus(&self) {
+    async fn wait_for_vbus(&mut self) {
         // The sink policy engine is only running when attached. Therefore VBus is present.
     }
 
