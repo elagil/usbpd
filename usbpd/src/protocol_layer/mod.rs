@@ -630,8 +630,6 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     }
 
     /// Wait for VBUS to be available.
-    ///
-    /// FIXME: Check what the logic should be.
     pub async fn wait_for_vbus(&mut self) {
         self.driver.wait_for_vbus().await
     }
@@ -830,7 +828,7 @@ mod tests {
             Header::new_template(
                 crate::DataRole::Ufp,
                 crate::PowerRole::Sink,
-                super::message::header::SpecificationRevision::R3_0,
+                super::message::header::SpecificationRevision::R3_X,
             ),
         )
     }

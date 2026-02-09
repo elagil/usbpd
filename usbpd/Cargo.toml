@@ -30,7 +30,10 @@ serde = { version = "1.0.225", default-features = false, features = [
 tokio = { version = "1.47.1", features = ["rt", "macros"] }
 
 [features]
-default = []
+default = ["epr"]
+
+# Enable EPR mode.
+epr = []
 
 log = ["dep:log"]
 defmt = ["dep:defmt", "heapless/defmt"]

@@ -1,9 +1,7 @@
 //! Definitions of message content.
 
-// FIXME: add documentation
 pub mod data;
 pub mod extended;
-#[allow(missing_docs)]
 pub mod header;
 
 #[cfg(test)]

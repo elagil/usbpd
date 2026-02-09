@@ -5,7 +5,7 @@ use uom::si::electric_current::centiampere;
 use uom::si::electric_potential::{decivolt, volt};
 use uom::si::power::watt;
 
-use super::PdoState;
+use super::PdoKind;
 use crate::_50milliamperes_mod::_50milliamperes;
 use crate::_50millivolts_mod::_50millivolts;
 use crate::_250milliwatts_mod::_250milliwatts;
@@ -388,8 +388,8 @@ impl SourceCapabilities {
     }
 }
 
-impl PdoState for SourceCapabilities {
-    fn pdo_at_object_position(&self, position: u8) -> Option<Kind> {
+impl PdoKind for SourceCapabilities {
+    fn at_object_position(&self, position: u8) -> Option<Kind> {
         self.pdos()
             .get(position.saturating_sub(1) as usize)
             .and_then(|pdo| match pdo {
@@ -406,15 +406,15 @@ impl PdoState for SourceCapabilities {
     }
 }
 
-impl PdoState for Option<SourceCapabilities> {
-    fn pdo_at_object_position(&self, position: u8) -> Option<Kind> {
-        self.as_ref().pdo_at_object_position(position)
+impl PdoKind for Option<SourceCapabilities> {
+    fn at_object_position(&self, position: u8) -> Option<Kind> {
+        self.as_ref().at_object_position(position)
     }
 }
 
-impl PdoState for Option<&SourceCapabilities> {
-    fn pdo_at_object_position(&self, position: u8) -> Option<Kind> {
-        self.and_then(|s| s.pdo_at_object_position(position))
+impl PdoKind for Option<&SourceCapabilities> {
+    fn at_object_position(&self, position: u8) -> Option<Kind> {
+        self.and_then(|s| s.at_object_position(position))
     }
 }
 
