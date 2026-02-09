@@ -4,5 +4,6 @@
         "usbpd-traits/Cargo.toml",
         "examples/embassy-nucleo-h563zi/Cargo.toml",
         "examples/embassy-stm32-g431cb/Cargo.toml",
+        "examples/embassy-stm32-g431cb-epr/Cargo.toml",
     ]
 }

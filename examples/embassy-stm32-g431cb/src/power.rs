@@ -3,7 +3,7 @@ use defmt::{Format, info, warn};
 use embassy_futures::select::{Either, select};
 use embassy_stm32::gpio::Output;
 use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
-use embassy_stm32::{Peri, bind_interrupts, peripherals};
+use embassy_stm32::{Peri, bind_interrupts, dma, peripherals};
 use embassy_time::{Duration, Ticker, Timer, with_timeout};
 use uom::si::electric_potential;
 use usbpd::protocol_layer::message::data::request::{self, CurrentRequest, VoltageRequest};
@@ -17,6 +17,8 @@ use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
     UCPD1 => ucpd::InterruptHandler<peripherals::UCPD1>;
+    DMA1_CHANNEL1 => dma::InterruptHandler<peripherals::DMA1_CH1>;
+    DMA1_CHANNEL2 => dma::InterruptHandler<peripherals::DMA1_CH2>;
 });
 
 pub struct UcpdResources {
@@ -241,6 +243,7 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
         let (mut cc_phy, pd_phy) = ucpd.split_pd_phy(
             ucpd_resources.rx_dma.reborrow(),
             ucpd_resources.tx_dma.reborrow(),
+            Irqs,
             cc_sel,
         );
 
