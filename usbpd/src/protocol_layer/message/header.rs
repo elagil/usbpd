@@ -1,4 +1,6 @@
 //! Definitions for a USB PD message header.
+//!
+//! See [6.2.1.1].
 use core::convert::TryFrom;
 
 use byteorder::{ByteOrder, LittleEndian};
@@ -12,18 +14,33 @@ bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+    /// Definition of the message header. Every message shall start with it.
     pub struct Header(pub u16): Debug, FromStorage, IntoStorage {
+        /// Shall be set to zero to indicate a Control Message or Data Message
+        /// and set to one to indicate an Extended Message.
         pub extended: bool @ 15,
+        /// The number of 32 bit data objects that follow the header.
         pub num_objects: u8 [get usize] @ 12..=14,
+        /// A rolling counter, maintained by the originator of the message.
         pub message_id: u8 @ 9..=11,
+        /// Indicate the port's present power role (0 -> sink, 1 -> source).
         pub port_power_role: bool [get PowerRole, set PowerRole] @ 8,
+        /// The specification revision.
+        ///
+        /// 00b - Revision 1.0 (deprecated)
+        /// 01b - Revision 2.0
+        /// 10b - Revision 3.x
+        /// 11b - Reserved, shall not be used
         pub spec_revision: u8 [try_get SpecificationRevision, set SpecificationRevision] @ 6..=7,
+        /// The port's data role (0 -> UFP, 1 -> DFP).
         pub port_data_role: bool [get DataRole, set DataRole] @ 5,
+        /// The type of message being sent. See [6.2.1.1.8] for details
         pub message_type_raw: u8 @ 0..=4,
     }
 }
 
 impl Header {
+    /// Create a header template with the given attributes.
     pub fn new_template(
         port_data_role: DataRole,
         port_power_role: PowerRole,
@@ -35,6 +52,7 @@ impl Header {
             .with_spec_revision(spec_revision)
     }
 
+    /// Create a new header that follows a template.
     pub fn new(
         template: Self,
         message_id: Counter,
@@ -53,10 +71,12 @@ impl Header {
             .with_extended(extended)
     }
 
+    /// Create a new control message header.
     pub fn new_control(template: Self, message_id: Counter, message_type: ControlMessageType) -> Self {
         Self::new(template, message_id, MessageType::Control(message_type), 0, false)
     }
 
+    /// Create a new data message header.
     pub fn new_data(template: Self, message_id: Counter, message_type: DataMessageType, num_objects: u8) -> Self {
         Self::new(
             template,
@@ -67,6 +87,7 @@ impl Header {
         )
     }
 
+    /// Create a new extended message header.
     pub fn new_extended(
         template: Self,
         message_id: Counter,
@@ -82,6 +103,7 @@ impl Header {
         )
     }
 
+    /// Parse a header from its binary representation.
     pub fn from_bytes(buf: &[u8]) -> Result<Self, ParseError> {
         assert!(buf.len() == 2);
 
@@ -91,11 +113,13 @@ impl Header {
         Ok(header)
     }
 
+    /// Serialize the header to its binary representation.
     pub fn to_bytes(self, buf: &mut [u8]) -> usize {
         LittleEndian::write_u16(buf, self.0);
         2
     }
 
+    /// Extract the message type that the header encodes.
     pub fn message_type(&self) -> MessageType {
         // Check extended bit first - Extended messages can have data objects (e.g., EPR Source Capabilities)
         if self.extended() {
@@ -108,12 +132,17 @@ impl Header {
     }
 }
 
+/// Specification revieions.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[allow(non_camel_case_types)]
 pub enum SpecificationRevision {
+    /// Version 1.0.
     R1_0,
+    /// Version 2.0.
     R2_0,
-    R3_0,
+    /// Version 3.x.
+    R3_X,
 }
 
 impl TryFrom<u8> for SpecificationRevision {
@@ -122,7 +151,7 @@ impl TryFrom<u8> for SpecificationRevision {
         match value {
             0b00 => Ok(Self::R1_0),
             0b01 => Ok(Self::R2_0),
-            0b10 => Ok(Self::R3_0),
+            0b10 => Ok(Self::R3_X),
             _ => Err(ParseError::UnsupportedSpecificationRevision(value)),
         }
     }
@@ -133,19 +162,25 @@ impl From<SpecificationRevision> for u8 {
         match value {
             SpecificationRevision::R1_0 => 0b00,
             SpecificationRevision::R2_0 => 0b01,
-            SpecificationRevision::R3_0 => 0b10,
+            SpecificationRevision::R3_X => 0b10,
         }
     }
 }
 
+/// The type of message that a header encodes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum MessageType {
+    /// A control message, as defined in [6.3].
     Control(ControlMessageType),
+    /// A data message, as defined in [6.4].
     Data(DataMessageType),
+    /// A data message, as defined in [6.5].
     Extended(ExtendedMessageType),
 }
 
+/// Types of control messages.
+#[allow(missing_docs)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ControlMessageType {
@@ -208,8 +243,10 @@ impl From<u8> for ControlMessageType {
     }
 }
 
+/// Types of data messages.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[allow(missing_docs)]
 pub enum DataMessageType {
     SourceCapabilities = 0b0_0001,
     Request = 0b0_0010,
@@ -275,8 +312,10 @@ impl From<u8> for ExtendedMessageType {
     }
 }
 
+/// Types of extended messages.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[allow(missing_docs)]
 pub enum ExtendedMessageType {
     SourceCapabilitiesExtended = 0b0_0001,
     Status = 0b0_0010,

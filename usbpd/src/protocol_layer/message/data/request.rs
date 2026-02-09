@@ -210,7 +210,7 @@ impl EprRequestDataObject {
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[allow(unused)] // FIXME: Implement missing request types.
+#[allow(unused)]
 pub enum PowerSource {
     FixedVariableSupply(FixedVariableSupply),
     Battery(Battery),

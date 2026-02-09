@@ -28,16 +28,14 @@ pub mod vendor_defined;
 #[allow(missing_docs)]
 pub mod request;
 
-/// PDO State.
-///
-/// FIXME: Required?
-pub trait PdoState {
-    /// FIXME: Required?
-    fn pdo_at_object_position(&self, position: u8) -> Option<source_capabilities::Kind>;
+/// Determine the kind of PDO.
+pub trait PdoKind {
+    /// Determine the kind of PDO at a given object position.
+    fn at_object_position(&self, position: u8) -> Option<source_capabilities::Kind>;
 }
 
-impl PdoState for () {
-    fn pdo_at_object_position(&self, _position: u8) -> Option<source_capabilities::Kind> {
+impl PdoKind for () {
+    fn at_object_position(&self, _position: u8) -> Option<source_capabilities::Kind> {
         None
     }
 }
@@ -70,7 +68,7 @@ pub enum Data {
 
 impl Data {
     /// Parse a data message.
-    pub fn parse_message<P: PdoState>(
+    pub fn parse_message<P: PdoKind>(
         mut message: super::Message,
         message_type: DataMessageType,
         payload: &[u8],
@@ -90,7 +88,7 @@ impl Data {
                     Data::Unknown
                 } else {
                     let raw = request::RawDataObject(LittleEndian::read_u32(payload));
-                    if let Some(t) = state.pdo_at_object_position(raw.object_position()) {
+                    if let Some(t) = state.at_object_position(raw.object_position()) {
                         Data::Request(match t {
                             source_capabilities::Kind::FixedSupply | source_capabilities::Kind::VariableSupply => {
                                 request::PowerSource::FixedVariableSupply(request::FixedVariableSupply(raw.0))
