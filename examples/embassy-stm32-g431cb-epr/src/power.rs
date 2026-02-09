@@ -2,7 +2,7 @@
 use defmt::{Format, info, warn};
 use embassy_futures::select::{Either, select};
 use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
-use embassy_stm32::{Peri, bind_interrupts, peripherals};
+use embassy_stm32::{Peri, bind_interrupts, dma, peripherals};
 use embassy_time::{Duration, Timer, with_timeout};
 use uom::si::electric_current::{centiampere, milliampere};
 use uom::si::electric_potential::millivolt;
@@ -20,6 +20,12 @@ use usbpd::timers::Timer as SinkTimer;
 use usbpd::units::Power;
 use usbpd_traits::Driver as SinkDriver;
 use {defmt_rtt as _, panic_probe as _};
+
+bind_interrupts!(struct Irqs {
+    UCPD1 => ucpd::InterruptHandler<peripherals::UCPD1>;
+    DMA1_CHANNEL1 => dma::InterruptHandler<peripherals::DMA1_CH1>;
+    DMA1_CHANNEL2 => dma::InterruptHandler<peripherals::DMA1_CH2>;
+});
 
 // ============================================================================
 // Configuration for Fixed EPR mode (default)
@@ -131,10 +137,6 @@ fn print_pdo(position: u8, pdo: &PowerDataObject) {
         }
     }
 }
-
-bind_interrupts!(struct Irqs {
-    UCPD1 => ucpd::InterruptHandler<peripherals::UCPD1>;
-});
 
 pub struct UcpdResources {
     pub ucpd: Peri<'static, peripherals::UCPD1>,
@@ -439,6 +441,7 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
         let (mut cc_phy, pd_phy) = ucpd.split_pd_phy(
             ucpd_resources.rx_dma.reborrow(),
             ucpd_resources.tx_dma.reborrow(),
+            Irqs,
             cc_sel,
         );
 
