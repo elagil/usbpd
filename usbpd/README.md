@@ -13,9 +13,15 @@ USB PD PHYs.
 
 ## Currently supported modes
 
-- SPR Sink with helpers for requesting
-  - A fixed supply
-  - A Programmable Power Supply (PPS)
+- SPR and EPR sink mode
+- Includes many helpers for requesting power sources, for example
+  - the highest fixed voltage,
+  - a specific fixed voltage and/or current, and
+  - augmented PDOs (PPS or AVS).
+
+## Usage
+
+Find usage examples for different platforms and modes in the [GitHub repository](https://github.com/elagil/usbpd/tree/main/examples).
 
 # Credit
 
