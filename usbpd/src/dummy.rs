@@ -7,7 +7,7 @@ use usbpd_traits::Driver;
 
 use crate::protocol_layer::message::data::request::{self, EprRequestDataObject};
 use crate::protocol_layer::message::data::source_capabilities::{
-    Augmented, FixedSupply, PowerDataObject, SourceCapabilities, SprProgrammablePowerSupply
+    Augmented, FixedSupply, PowerDataObject, SourceCapabilities, SprProgrammablePowerSupply,
 };
 use crate::sink::device_policy_manager::DevicePolicyManager as SinkDevicePolicyManager;
 use crate::source::device_policy_manager::DevicePolicyManager as SourceDevicePolicyManager;
@@ -121,19 +121,16 @@ impl SinkDevicePolicyManager for DummySinkEprDevice {
     }
 }
 
-pub struct DummySourceDevice {
-
-}
+pub struct DummySourceDevice {}
 
 impl SourceDevicePolicyManager for DummySourceDevice {
-
     fn evaluate_request(
         &mut self,
         request: &crate::protocol_layer::message::data::request::PowerSource,
     ) -> impl Future<Output = crate::source::device_policy_manager::CapabilityResponse> {
-        async { 
-            if request.object_position() < 8 { 
-                crate::source::device_policy_manager::CapabilityResponse::Accept 
+        async {
+            if request.object_position() < 8 {
+                crate::source::device_policy_manager::CapabilityResponse::Accept
             } else {
                 crate::source::device_policy_manager::CapabilityResponse::Reject
             }
@@ -143,26 +140,19 @@ impl SourceDevicePolicyManager for DummySourceDevice {
     fn source_capabilities(&mut self) -> SourceCapabilities {
         SourceCapabilities(heapless::Vec::from_slice(get_dummy_source_capabilities().as_slice()).unwrap())
     }
-
 }
 
-pub struct DummyDualRoleDevice {
+pub struct DummyDualRoleDevice {}
 
-}
+impl SourceDevicePolicyManager for DummyDualRoleDevice {}
 
-impl SourceDevicePolicyManager for DummyDualRoleDevice {
-
-}
-
-impl SinkDevicePolicyManager for DummyDualRoleDevice {
-
-}
+impl SinkDevicePolicyManager for DummyDualRoleDevice {}
 
 /// A dummy timer for testing.
 pub struct DummyTimer {}
 
 impl Timer for DummyTimer {
-    async fn after_millis(_milliseconds: u64) { 
+    async fn after_millis(_milliseconds: u64) {
         // Should work OK since msgs should always send and arrive instantly in tests,
         // such that timeouts never occur if a messaging sequence was pre-defined by the
         // dummy endpoint before running `policy_engine.run_step().await.unwrap()`
@@ -290,13 +280,15 @@ pub const DUMMY_CAPABILITIES: [u8; 30] = [
     0xC9, // +
 ];
 
-
 pub fn get_source_capability_request() -> request::PowerSource {
     request::PowerSource::new_fixed(
         request::CurrentRequest::Highest,
         request::VoltageRequest::Safe5V,
-        &crate::protocol_layer::message::data::source_capabilities::SourceCapabilities(heapless::Vec::from_slice(&get_dummy_source_capabilities()).unwrap())
-    ).unwrap()
+        &crate::protocol_layer::message::data::source_capabilities::SourceCapabilities(
+            heapless::Vec::from_slice(&get_dummy_source_capabilities()).unwrap(),
+        ),
+    )
+    .unwrap()
 }
 
 /// Get dummy source capabilities for testing.

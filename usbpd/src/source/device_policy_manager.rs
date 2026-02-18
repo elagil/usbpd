@@ -4,11 +4,10 @@
 //! or renegotiate the power contract.
 use core::future::Future;
 
-use crate::{DataRole, protocol_layer::message::data::{
-    request,
-    sink_capabilities::SinkCapabilities,
-    source_capabilities::SourceCapabilities,
-}};
+use crate::DataRole;
+use crate::protocol_layer::message::data::request;
+use crate::protocol_layer::message::data::sink_capabilities::SinkCapabilities;
+use crate::protocol_layer::message::data::source_capabilities::SourceCapabilities;
 
 /// Events that the device policy manager can send to the policy engine.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -68,25 +67,21 @@ pub enum SwapType {
     Power,
 }
 
-/// Trait for the device policy manager. 
+/// Trait for the device policy manager.
 /// Functions labeled **EPR** do not need to be implemented on non-epr sources.
 /// Functions labeled **DRP** do not need to be implemented on source-only devices.
 ///
 /// This entity commands the policy engine and enforces device policy.
 pub trait DevicePolicyManager {
-
     /// Evaluate a request from the Sink
-    /// 
+    ///
     /// The policy engine will use this evaluation to determine PD control flow
-    fn evaluate_request(
-        &mut self,
-        _request: &request::PowerSource,
-    ) -> impl Future<Output = CapabilityResponse> {
+    fn evaluate_request(&mut self, _request: &request::PowerSource) -> impl Future<Output = CapabilityResponse> {
         async { CapabilityResponse::Reject }
     }
 
     /// Evaluate a swap request:
-    /// - Vconn, 
+    /// - Vconn,
     /// - **DRP**: Data, Power, Fast Power
     fn evaluate_swap_request(&mut self, _swap_request: SwapType) -> impl Future<Output = bool> {
         async { false }
@@ -107,7 +102,7 @@ pub trait DevicePolicyManager {
     }
 
     /// Hard reset power supply to vSafe5V via vSafe0V
-    /// 
+    ///
     /// A Hard Reset shall not cause any change to either the Rp/Rd resistor being asserted
     fn hard_reset(&mut self) -> impl Future<Output = Result<(), ()>> {
         async { Ok(()) }
@@ -119,12 +114,16 @@ pub trait DevicePolicyManager {
     }
 
     /// **EPR** Return `true` if device is EPR capable.
-    /// 
+    ///
     /// Also possible to dynamically assess EPR capability
-    fn epr_capable(&mut self) -> bool { false }
+    fn epr_capable(&mut self) -> bool {
+        false
+    }
 
     /// **EPR** Return `true` if the `Cable Plug` supports EPR
-    fn epr_cable_good(&mut self) -> bool { false }
+    fn epr_cable_good(&mut self) -> bool {
+        false
+    }
 
     /// **EPR** Return device's EPR capabilities
     fn epr_source_capabilities(&mut self) -> SourceCapabilities {
@@ -132,38 +131,46 @@ pub trait DevicePolicyManager {
     }
 
     /// **DRP** Respond to the Policy Engine's request for this port's current sink capabilities
-    /// 
+    ///
     /// Defaults to only default usb capability (5v @ 3A)
     fn sink_capabilities(&mut self) -> impl Future<Output = SinkCapabilities> {
         async { SinkCapabilities::new_vsafe5v_only(3 * 100) }
     }
 
     /// **DRP** Discharge the VBUS to vSafe5V
-    fn discharge_vbus(&mut self) -> impl Future<Output = ()> { async {} }
+    fn discharge_vbus(&mut self) -> impl Future<Output = ()> {
+        async {}
+    }
 
     /// **DRP** Turn the Source off.
-    /// 
+    ///
     /// This will be requested before a Role Swap to Sink
-    fn disable_source(&mut self) -> impl Future<Output = ()> { async {} }
+    fn disable_source(&mut self) -> impl Future<Output = ()> {
+        async {}
+    }
 
     /// **DRP** Set the CC lines to sink configuration
-    /// 
+    ///
     /// This will be requested before a Role Swap to Sink
-    fn cc_sink(&mut self) -> impl Future<Output = ()> { async {} }
+    fn cc_sink(&mut self) -> impl Future<Output = ()> {
+        async {}
+    }
 
     /// **DRP** Detect whether a fast role swap is signaled on the cc lines
-    /// 
-    /// Table 1.4 - Fast Role Swap Request: 
-    /// 
-    /// An indication from an Initial Source to the Initial Sink that a 
-    /// Fast Role Swap is needed. The Fast Role Swap Request is indicated by 
+    ///
+    /// Table 1.4 - Fast Role Swap Request:
+    ///
+    /// An indication from an Initial Source to the Initial Sink that a
+    /// Fast Role Swap is needed. The Fast Role Swap Request is indicated by
     /// driving the CC line to ground for a short period.
     fn fr_swap_signaled(&mut self) -> impl Future<Output = bool> {
         async { true }
     }
 
     /// **DRP** Swap data role
-    fn swap_data_role(&mut self, _role: DataRole) -> impl Future<Output = ()> { async {} }
+    fn swap_data_role(&mut self, _role: DataRole) -> impl Future<Output = ()> {
+        async {}
+    }
 
     /// The policy engine gets and evaluates device policy events when ready.
     ///

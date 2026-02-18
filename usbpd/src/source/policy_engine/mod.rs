@@ -1,28 +1,23 @@
 //! Policy engine for the implementation of a sink.
 use core::marker::PhantomData;
 
-use embassy_futures::select::{Either, select};
-use embassy_futures::select::{Either3, select3};
+use embassy_futures::select::{Either, Either3, select, select3};
 use usbpd_traits::Driver;
 
-use super::device_policy_manager::DevicePolicyManager;
-use super::device_policy_manager::Event;
+use super::device_policy_manager::{DevicePolicyManager, Event};
 use crate::counters::Counter;
-use crate::protocol_layer::message::Message;
-use crate::protocol_layer::message::Payload;
 use crate::protocol_layer::message::data::request::PowerSource;
 use crate::protocol_layer::message::data::sink_capabilities::SinkCapabilities;
-use crate::protocol_layer::message::data::source_capabilities::Kind;
-use crate::protocol_layer::message::data::source_capabilities::SourceCapabilities;
+use crate::protocol_layer::message::data::source_capabilities::{Kind, SourceCapabilities};
 use crate::protocol_layer::message::data::{Data, PdoKind, epr_mode, request};
 use crate::protocol_layer::message::extended::Extended;
 use crate::protocol_layer::message::extended::extended_control::ExtendedControlMessageType;
 use crate::protocol_layer::message::header::{
     ControlMessageType, DataMessageType, ExtendedMessageType, Header, MessageType, SpecificationRevision,
 };
+use crate::protocol_layer::message::{Message, Payload};
 use crate::protocol_layer::{ProtocolError, ProtocolLayer, RxError, TxError};
-use crate::source::device_policy_manager::SwapType;
-use crate::source::device_policy_manager::{CapabilityResponse, Info};
+use crate::source::device_policy_manager::{CapabilityResponse, Info, SwapType};
 use crate::timers::{Timer, TimerType};
 use crate::{DataRole, PowerRole};
 
@@ -56,9 +51,7 @@ enum Contract {
 enum State {
     // States of the policy engine as given by specification.
     // 8.3.3.2 Policy Engine Source Port State Diagram
-    Startup {
-        role_swap: bool,
-    },
+    Startup { role_swap: bool },
     Discovery,
     SendCapabilities,
     NegotiateCapability(PowerSource),
@@ -118,7 +111,7 @@ enum State {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum VcsSwapSource {
     Message,
-    Epr
+    Epr,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -210,11 +203,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
     }
 
     /// Create a new source policy engine with a given `driver` and set of `source_capabilities`.
-    pub fn new(
-        driver: DRIVER,
-        device_policy_manager: DPM,
-        role_swap: bool,
-    ) -> Self {
+    pub fn new(driver: DRIVER, device_policy_manager: DPM, role_swap: bool) -> Self {
         Self {
             device_policy_manager,
             protocol_layer: Self::new_protocol_layer(driver),
@@ -234,14 +223,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
         }
     }
 
-    /// Create a new source policy engine with dual role capabilities, 
+    /// Create a new source policy engine with dual role capabilities,
     /// with a given `driver`, and set of `source_capabilities`, and set of `sink_capabilities`
     /// for the port
-    pub fn new_dual_role(
-        driver: DRIVER,
-        device_policy_manager: DPM,
-        role_swapped: bool,
-    ) -> Self {
+    pub fn new_dual_role(driver: DRIVER, device_policy_manager: DPM, role_swapped: bool) -> Self {
         Self {
             device_policy_manager,
             protocol_layer: Self::new_protocol_layer(driver),
@@ -250,7 +235,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
 
             state: match role_swapped {
                 true => State::SendCapabilities,
-                false => State::Startup { role_swap: true }
+                false => State::Startup { role_swap: true },
             },
             contract: match role_swapped {
                 true => Contract::Implicit,
@@ -308,16 +293,13 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
 
                 // PowerSwap:     Per spec 8.3.3.19.3.6, the Policy Engine shall transition to ErrorRecovery on RxTimeout or TxSendFail
                 // FastPowerSwap: Per spec 8.3.3.19.5.6, the Policy Engine shall transition to ErrorRecovery on RxTimeout or TxSendFail
-                (_, 
-                    State::DrSwap(SwapState::Power(PowerRoleSwap::WaitSourceOn)) |
-                    State::DrSwap(SwapState::FastPower(FastPowerRoleSwap::WaitSourceOn)), 
-                    
-                    ProtocolError::RxError(RxError::ReceiveTimeout) |
-                    ProtocolError::TransmitRetriesExceeded(_)) => 
-                {
-                    Some(State::ErrorRecovery)
-                }
-                
+                (
+                    _,
+                    State::DrSwap(SwapState::Power(PowerRoleSwap::WaitSourceOn))
+                    | State::DrSwap(SwapState::FastPower(FastPowerRoleSwap::WaitSourceOn)),
+                    ProtocolError::RxError(RxError::ReceiveTimeout) | ProtocolError::TransmitRetriesExceeded(_),
+                ) => Some(State::ErrorRecovery),
+
                 // Per spec 8.3.3.2.5: When any Protocol Error occurs, transition to Hard Reset
                 (_, State::TransitionSupply(_), _) => Some(State::HardReset),
 
@@ -417,17 +399,19 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
             }
             // 8.3.3.2.4 (PE_SRC_Negotiate_Capability):
             State::NegotiateCapability(power_request) => {
-
                 // FIXME: This should be done in the protocol layer
                 // If the request is Unknown, attempt to match to its PDO to determine the Kind & re-type the request
                 let power_request = match *power_request {
                     PowerSource::Unknown(u) => {
-                        match self.device_policy_manager
+                        match self
+                            .device_policy_manager
                             .source_capabilities()
-                            .at_object_position(u.object_position()) 
+                            .at_object_position(u.object_position())
                         {
                             Some(q) => match q {
-                                Kind::FixedSupply | Kind::VariableSupply => request::PowerSource::FixedVariableSupply(request::FixedVariableSupply(u.0)),
+                                Kind::FixedSupply | Kind::VariableSupply => {
+                                    request::PowerSource::FixedVariableSupply(request::FixedVariableSupply(u.0))
+                                }
                                 Kind::Battery => request::PowerSource::Battery(request::Battery(u.0)),
                                 Kind::Pps => request::PowerSource::Pps(request::Pps(u.0)),
                                 Kind::Avs => request::PowerSource::Avs(request::Avs(u.0)),
@@ -435,16 +419,13 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                             None => {
                                 trace!("Could not match Unknown Power Request to a PDO!");
                                 *power_request
-                            },
+                            }
                         }
                     }
-                    _ => *power_request
+                    _ => *power_request,
                 };
 
-                let response = self
-                    .device_policy_manager
-                    .evaluate_request(&power_request)
-                    .await;
+                let response = self.device_policy_manager.evaluate_request(&power_request).await;
 
                 match response {
                     CapabilityResponse::Accept => State::TransitionSupply(power_request),
@@ -505,8 +486,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                 match select3(
                     self.protocol_layer.receive_message(),
                     self.device_policy_manager.get_event(),
-                    timers_fut
-                ).await {
+                    timers_fut,
+                )
+                .await
+                {
                     Either3::First(message) => {
                         let message = message?;
                         self.match_message_to_state(message).await?
@@ -568,12 +551,13 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                 self.protocol_layer.transmit_control_message(message_type).await?;
 
                 match self.contract {
-                    Contract::Invalid => 
+                    Contract::Invalid => {
                         if message_type == ControlMessageType::Reject {
                             State::HardReset
                         } else {
                             State::WaitNewCapabilities
                         }
+                    }
                     Contract::Explicit(_) => State::Ready,
                     _ => State::WaitNewCapabilities,
                 }
@@ -690,15 +674,19 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                 // Transition to SendCapabilities only when the DPM indicates the source capabilities have changed
                 let mut wait_time: usize = 0;
                 loop {
-                    match select(
-                    self.device_policy_manager.get_event(),
-                    TIMER::after_millis(5000)
-                    ).await {
-                        Either::First(event) => if event == Event::UpdatedSourceCapabilities { break },
+                    match select(self.device_policy_manager.get_event(), TIMER::after_millis(5000)).await {
+                        Either::First(event) => {
+                            if event == Event::UpdatedSourceCapabilities {
+                                break;
+                            }
+                        }
                         Either::Second(_timeout) => {
                             wait_time += 5;
-                            warn!("{} seconds have passed waiting for updated source capabilities!", wait_time);
-                        },
+                            warn!(
+                                "{} seconds have passed waiting for updated source capabilities!",
+                                wait_time
+                            );
+                        }
                     }
                 }
                 State::SendCapabilities
@@ -772,32 +760,29 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
             }
 
             // 8.3.3.19 Dual-Role Port States
-            State::DrSwap(swap_state) => {
-                match swap_state {
-                    SwapState::Data(dr) =>
-                        self.execute_data_role_swap_state(*dr).await?,
-                    SwapState::Power(pr) =>
-                        self.execute_power_role_swap_state(*pr).await?,
-                    SwapState::FastPower(fpr) =>
-                        self.execute_fast_power_role_swap_state(*fpr).await?
-                }
-            }
+            State::DrSwap(swap_state) => match swap_state {
+                SwapState::Data(dr) => self.execute_data_role_swap_state(*dr).await?,
+                SwapState::Power(pr) => self.execute_power_role_swap_state(*pr).await?,
+                SwapState::FastPower(fpr) => self.execute_fast_power_role_swap_state(*fpr).await?,
+            },
             // 8.3.3.19.7.1 (PE_DR_SRC_Get_Source_Cap):
             State::DrGetSourceCap(mode) => {
                 let result = match mode {
                     Mode::Spr => self.get_source_capabilities().await,
                     Mode::Epr => self.get_epr_source_capabilities().await,
                 };
-                
+
                 let caps = match result {
                     Ok(caps) => Some(caps),
                     Err(err) => match err {
                         Error::Protocol(ProtocolError::RxError(RxError::ReceiveTimeout)) => None,
                         _ => return Err(err),
-                    }
+                    },
                 };
 
-                self.device_policy_manager.inform(Info::RemoteSourceCapabilities(caps)).await;
+                self.device_policy_manager
+                    .inform(Info::RemoteSourceCapabilities(caps))
+                    .await;
                 State::Ready
             }
             // 8.3.3.19.8
@@ -816,28 +801,34 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
 
             // Custom State - Exit source running and signal to program to begin Sink
             State::PrSwapToSinkStartup => {
-                // FIXME: Switch to sink policy manager due to power swap 
+                // FIXME: Switch to sink policy manager due to power swap
                 Err(Error::SwapToSink)?
             }
 
             // 8.3.3.20 Source Vconn Swap
             // 8.3.3.20.1 (PE_VCS_Send_Swap):
             State::VcsSendSwap(source) => {
-                self.protocol_layer.transmit_control_message(ControlMessageType::VconnSwap).await?;
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::VconnSwap)
+                    .await?;
 
-                let message = self.protocol_layer.receive_message_type(&[
-                    MessageType::Control(ControlMessageType::Accept),
-                    MessageType::Control(ControlMessageType::Reject),
-                    MessageType::Control(ControlMessageType::Wait),
-                    MessageType::Control(ControlMessageType::NotSupported)
-                    ], 
-                    TimerType::SenderResponse
-                ).await;
+                let message = self
+                    .protocol_layer
+                    .receive_message_type(
+                        &[
+                            MessageType::Control(ControlMessageType::Accept),
+                            MessageType::Control(ControlMessageType::Reject),
+                            MessageType::Control(ControlMessageType::Wait),
+                            MessageType::Control(ControlMessageType::NotSupported),
+                        ],
+                        TimerType::SenderResponse,
+                    )
+                    .await;
 
                 if let Err(err) = message {
                     match err {
                         ProtocolError::RxError(RxError::ReceiveTimeout) => State::Ready,
-                        _ => Err(err)?
+                        _ => Err(err)?,
                     }
                 } else {
                     let message = message.unwrap();
@@ -846,11 +837,11 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                             true => State::VcsWaitForVconn(*source),
                             false => State::VcsTurnOnVconn(*source),
                         },
-                        MessageType::Control(ControlMessageType::Reject) |
-                        MessageType::Control(ControlMessageType::Wait) => State::Ready,
+                        MessageType::Control(ControlMessageType::Reject)
+                        | MessageType::Control(ControlMessageType::Wait) => State::Ready,
                         // May also transition to ForceVconn if NotSupported message and port presently not vconn source
                         MessageType::Control(ControlMessageType::NotSupported) => State::NotSupportedReceived,
-                        _ => unreachable!()
+                        _ => unreachable!(),
                     }
                 }
             }
@@ -863,7 +854,9 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
             }
             // 8.3.3.20.3 (PE_VCS_Accept_Swap):
             State::VcsAcceptSwap(source) => {
-                self.protocol_layer.transmit_control_message(ControlMessageType::Accept).await?;
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::Accept)
+                    .await?;
                 match self.vconn_source {
                     true => State::VcsWaitForVconn(*source),
                     false => State::VcsTurnOnVconn(*source),
@@ -872,7 +865,9 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
             // 8.3.3.20.4 (PE_VCS_Reject_Swap):
             State::VcsRejectSwap(source) => {
                 // FIXME: Wait Message logic
-                self.protocol_layer.transmit_control_message(ControlMessageType::Reject).await?;
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::Reject)
+                    .await?;
                 match source {
                     VcsSwapSource::Message => State::Ready,
                     VcsSwapSource::Epr => State::EprModeDiscoverCable,
@@ -880,16 +875,17 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
             }
             // 8.3.3.20.5 (PE_VCS_Wait_for_Vconn):
             State::VcsWaitForVconn(source) => {
-                self.protocol_layer.receive_message_type(
-                    &[MessageType::Control(ControlMessageType::PsRdy)],
-                    TimerType::VCONNOn
-                ).await?;
+                self.protocol_layer
+                    .receive_message_type(&[MessageType::Control(ControlMessageType::PsRdy)], TimerType::VCONNOn)
+                    .await?;
 
                 State::VcsTurnOffVconn(*source)
             }
             // 8.3.3.20.6 (PE_VCS_Turn_Off_Vconn):
             State::VcsTurnOffVconn(source) => {
-                self.device_policy_manager.drive_vconn(false).await
+                self.device_policy_manager
+                    .drive_vconn(false)
+                    .await
                     .map_err(|_| Error::ReconnectionRequired)?;
                 match source {
                     VcsSwapSource::Message => State::Ready,
@@ -898,13 +894,17 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
             }
             // 8.3.3.20.7 (PE_VCS_Turn_On_Vconn):
             State::VcsTurnOnVconn(source) => {
-                self.device_policy_manager.drive_vconn(true).await
+                self.device_policy_manager
+                    .drive_vconn(true)
+                    .await
                     .map_err(|_| Error::ReconnectionRequired)?;
                 State::VcsSendPsRdy(*source)
             }
             // 8.3.3.20.8 (PE_VCS_Send_PS_Rdy):
             State::VcsSendPsRdy(source) => {
-                self.protocol_layer.transmit_control_message(ControlMessageType::PsRdy).await?;
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::PsRdy)
+                    .await?;
                 match source {
                     VcsSwapSource::Message => State::Ready,
                     VcsSwapSource::Epr => State::EprModeDiscoverCable,
@@ -912,30 +912,32 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
             }
             // 8.3.3.20.9 (PE_VCS_Force_Vconn):
             State::VcsForceVconn(source) => {
-                self.device_policy_manager.drive_vconn(true).await
+                self.device_policy_manager
+                    .drive_vconn(true)
+                    .await
                     .map_err(|_| Error::ReconnectionRequired)?;
                 match source {
                     VcsSwapSource::Message => State::Ready,
                     VcsSwapSource::Epr => State::EprModeDiscoverCable,
                 }
-            }            
+            }
 
             // FIXME: Source EPR
             // 8.3.3.26.1.1 (PE_SRC_Evaluate_EPR_Mode_Entry):
-            State::EprModeEntry => {
-                match self.device_policy_manager.epr_capable() {
-                    true => State::EprModeEntryAck,
-                    false => State::EprModeEntryFailed(epr_mode::DataEnterFailed::SourceUnableToEnterEprMode.into())
-                }
-            }
+            State::EprModeEntry => match self.device_policy_manager.epr_capable() {
+                true => State::EprModeEntryAck,
+                false => State::EprModeEntryFailed(epr_mode::DataEnterFailed::SourceUnableToEnterEprMode.into()),
+            },
             // 8.3.3.26.1.2 (PE_SRC_EPR_Mode_Entry_Ack):
             State::EprModeEntryAck => {
-                self.protocol_layer.transmit_epr_mode(epr_mode::Action::EnterAcknowledged, 0).await?;
+                self.protocol_layer
+                    .transmit_epr_mode(epr_mode::Action::EnterAcknowledged, 0)
+                    .await?;
 
                 match (self.device_policy_manager.epr_cable_good(), self.vconn_source) {
                     (false, true) => State::VcsSendSwap(VcsSwapSource::Epr),
                     (false, false) => State::EprModeDiscoverCable,
-                    (true, _) => State::EprModeEvaluateCable
+                    (true, _) => State::EprModeEvaluateCable,
                 }
             }
             // 8.3.3.26.1.3 (PE_SRC_EPR_Mode_Discover_Cable):
@@ -944,19 +946,21 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                     // FIXME: Discovery is done implicitly through DPM right now,
                     // switch to using PE_INIT_PORT_VDM_Identity_Request
                     true => State::EprModeEvaluateCable,
-                    false => State::EprModeEntryFailed(epr_mode::DataEnterFailed::SourceFailedToBecomeVconnSource.into())
+                    false => {
+                        State::EprModeEntryFailed(epr_mode::DataEnterFailed::SourceFailedToBecomeVconnSource.into())
+                    }
                 }
             }
             // 8.3.3.26.1.4 (PE_SRC_EPR_Mode_Evaluate_Cable_EPR):
-            State::EprModeEvaluateCable => {
-                match self.device_policy_manager.epr_cable_good() {
-                    true => State::EprModeEntrySucceeded,
-                    false => State::EprModeEntryFailed(epr_mode::DataEnterFailed::CableNotEprCapable.into()),
-                }
-            }
+            State::EprModeEvaluateCable => match self.device_policy_manager.epr_cable_good() {
+                true => State::EprModeEntrySucceeded,
+                false => State::EprModeEntryFailed(epr_mode::DataEnterFailed::CableNotEprCapable.into()),
+            },
             // 8.3.3.26.1.5 (PE_SRC_EPR_Mode_Entry_Succeeded):
             State::EprModeEntrySucceeded => {
-                self.protocol_layer.transmit_epr_mode(epr_mode::Action::EnterSucceeded, 0).await?;
+                self.protocol_layer
+                    .transmit_epr_mode(epr_mode::Action::EnterSucceeded, 0)
+                    .await?;
                 // FIXME: Set EPR headers
                 self.mode = Mode::Epr;
                 State::SendCapabilities
@@ -985,14 +989,17 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
 
                         if epr_capabilities.has_epr_pdo_in_spr_positions() {
                             State::HardReset
-                        } else if epr_capabilities.spr_pdos().any(|(pos, _pdo)| pos == power_source.object_position()) {
+                        } else if epr_capabilities
+                            .spr_pdos()
+                            .any(|(pos, _pdo)| pos == power_source.object_position())
+                        {
                             State::SendCapabilities
                         } else {
                             State::HardReset
                         }
-                    },
+                    }
                     Contract::Safe5V | Contract::Implicit => State::Ready,
-                    _ => State::HardReset
+                    _ => State::HardReset,
                 }
             }
 
@@ -1007,56 +1014,65 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
 
         Ok(())
     }
-    
+
     /// 8.3.3.19.1 DFP to UFP Data Role Swap, 8.3.3.19.2 UFP to DFP Data Role Swap
     async fn execute_data_role_swap_state(&mut self, state: DataRoleSwap) -> Result<State, Error> {
         match state {
             // 8.3.3.19.1.2 (PE_DRS_DFP_UFP_Evaluate_Swap, PE_DRS_UFP_DFP_Evaluate_Swap):
-            DataRoleSwap::Evaluate => {
-                match self.device_policy_manager.evaluate_swap_request(SwapType::Data).await {
-                    true => Ok(State::DrSwap(SwapState::Data(DataRoleSwap::Accept))),
-                    false => Ok(State::DrSwap(SwapState::Data(DataRoleSwap::Reject))),
-                }
+            DataRoleSwap::Evaluate => match self.device_policy_manager.evaluate_swap_request(SwapType::Data).await {
+                true => Ok(State::DrSwap(SwapState::Data(DataRoleSwap::Accept))),
+                false => Ok(State::DrSwap(SwapState::Data(DataRoleSwap::Reject))),
             },
             // 8.3.3.19.1.3 (PE_DRS_DFP_UFP_Accept_Swap, PE_DRS_UFP_DFP_Accept_Swap):
             DataRoleSwap::Accept => {
-                self.protocol_layer.transmit_control_message(ControlMessageType::Accept).await?;
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::Accept)
+                    .await?;
                 Ok(State::DrSwap(SwapState::Data(DataRoleSwap::Change)))
-            },
+            }
             // 8.3.3.19.1.4 (PE_DRS_DFP_UFP_Change_to_UFP_Swap, PE_DRS_UFP_DFP_Change_to_DFP_Swap):
             DataRoleSwap::Change => {
                 let new_role = DataRole::from(!bool::from(self.protocol_layer.header().port_data_role()));
                 self.device_policy_manager.swap_data_role(new_role).await;
                 Ok(State::Ready)
-            },
+            }
             // 8.3.3.19.1.5 (PE_DRS_DFP_UFP_Send_Swap, PE_DRS_UFP_DFP_Send_Swap):
             DataRoleSwap::Send => {
-                self.protocol_layer.transmit_control_message(ControlMessageType::DrSwap).await?;
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::DrSwap)
+                    .await?;
 
-                let message = self.protocol_layer.receive_message_type(&[
-                    MessageType::Control(ControlMessageType::Accept),
-                    MessageType::Control(ControlMessageType::Reject),
-                    MessageType::Control(ControlMessageType::Wait)], 
-                    TimerType::SenderResponse
-                ).await?;
+                let message = self
+                    .protocol_layer
+                    .receive_message_type(
+                        &[
+                            MessageType::Control(ControlMessageType::Accept),
+                            MessageType::Control(ControlMessageType::Reject),
+                            MessageType::Control(ControlMessageType::Wait),
+                        ],
+                        TimerType::SenderResponse,
+                    )
+                    .await?;
 
                 match message.header.message_type() {
-                    MessageType::Control(ControlMessageType::Accept) =>
-                        Ok(State::DrSwap(SwapState::Data(DataRoleSwap::Change))),
+                    MessageType::Control(ControlMessageType::Accept) => {
+                        Ok(State::DrSwap(SwapState::Data(DataRoleSwap::Change)))
+                    }
 
-                    MessageType::Control(ControlMessageType::Reject) |
-                    MessageType::Control(ControlMessageType::Wait) =>
-                        Ok(State::Ready),
+                    MessageType::Control(ControlMessageType::Reject)
+                    | MessageType::Control(ControlMessageType::Wait) => Ok(State::Ready),
 
-                    _ => Err(Error::Protocol(ProtocolError::UnexpectedMessage))
+                    _ => Err(Error::Protocol(ProtocolError::UnexpectedMessage)),
                 }
-            },
+            }
             // 8.3.3.19.1.6 (PE_DRS_DFP_UFP_Reject_Swap, PE_DRS_UFP_DFP_Reject_Swap):
             DataRoleSwap::Reject => {
                 // FIXME: Wait Message logic
-                self.protocol_layer.transmit_control_message(ControlMessageType::Reject).await?;
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::Reject)
+                    .await?;
                 Ok(State::Ready)
-            },
+            }
         }
     }
 
@@ -1064,66 +1080,79 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
     async fn execute_power_role_swap_state(&mut self, state: PowerRoleSwap) -> Result<State, Error> {
         match state {
             // 8.3.3.19.3.2 (PE_PRS_SRC_SNK_Evaluate_Swap):
-            PowerRoleSwap::Evaluate => {
-                match self.device_policy_manager.evaluate_swap_request(SwapType::Power).await {
-                    true => Ok(State::DrSwap(SwapState::Power(PowerRoleSwap::Accept))),
-                    false => Ok(State::DrSwap(SwapState::Power(PowerRoleSwap::Reject))),
-                }
+            PowerRoleSwap::Evaluate => match self.device_policy_manager.evaluate_swap_request(SwapType::Power).await {
+                true => Ok(State::DrSwap(SwapState::Power(PowerRoleSwap::Accept))),
+                false => Ok(State::DrSwap(SwapState::Power(PowerRoleSwap::Reject))),
             },
             // 8.3.3.19.3.3 (PE_PRS_SRC_SNK_Accept_Swap):
             PowerRoleSwap::Accept => {
-                self.protocol_layer.transmit_control_message(ControlMessageType::Accept).await?;
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::Accept)
+                    .await?;
                 Ok(State::DrSwap(SwapState::Power(PowerRoleSwap::TransitionToOff)))
-            },
+            }
             // 8.3.3.19.3.4 (PE_PRS_SRC_SNK_Transition_to_off):
             PowerRoleSwap::TransitionToOff => {
                 self.device_policy_manager.disable_source().await;
                 Ok(State::DrSwap(SwapState::Power(PowerRoleSwap::AssertRd)))
-            },
+            }
             // 8.3.3.19.3.5 (PE_PRS_SRC_SNK_Assert_Rd):
             PowerRoleSwap::AssertRd => {
                 self.device_policy_manager.cc_sink().await;
                 Ok(State::DrSwap(SwapState::Power(PowerRoleSwap::WaitSourceOn)))
-            },
+            }
             // 8.3.3.19.3.6 (PE_PRS_SRC_SNK_Wait_Source_on):
             PowerRoleSwap::WaitSourceOn => {
-                self.protocol_layer.transmit_control_message(ControlMessageType::PsRdy).await?;
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::PsRdy)
+                    .await?;
 
-                self.protocol_layer.receive_message_type(
-                    &[MessageType::Control(ControlMessageType::PsRdy)],
-                    TimerType::PSSourceOnSpr
-                ).await?;
-                
+                self.protocol_layer
+                    .receive_message_type(
+                        &[MessageType::Control(ControlMessageType::PsRdy)],
+                        TimerType::PSSourceOnSpr,
+                    )
+                    .await?;
+
                 Ok(State::PrSwapToSinkStartup)
-            },
+            }
             // 8.3.3.19.3.7 (PE_PRS_SRC_SNK_Send_Swap):
             PowerRoleSwap::Send => {
-                self.protocol_layer.transmit_control_message(ControlMessageType::PrSwap).await?;
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::PrSwap)
+                    .await?;
 
-                let message = self.protocol_layer.receive_message_type(&[
-                    MessageType::Control(ControlMessageType::Accept),
-                    MessageType::Control(ControlMessageType::Reject),
-                    MessageType::Control(ControlMessageType::Wait)], 
-                    TimerType::SenderResponse
-                ).await?;
+                let message = self
+                    .protocol_layer
+                    .receive_message_type(
+                        &[
+                            MessageType::Control(ControlMessageType::Accept),
+                            MessageType::Control(ControlMessageType::Reject),
+                            MessageType::Control(ControlMessageType::Wait),
+                        ],
+                        TimerType::SenderResponse,
+                    )
+                    .await?;
 
                 match message.header.message_type() {
-                    MessageType::Control(ControlMessageType::Accept) =>
-                        Ok(State::DrSwap(SwapState::Power(PowerRoleSwap::TransitionToOff))),
+                    MessageType::Control(ControlMessageType::Accept) => {
+                        Ok(State::DrSwap(SwapState::Power(PowerRoleSwap::TransitionToOff)))
+                    }
 
-                    MessageType::Control(ControlMessageType::Reject) |
-                    MessageType::Control(ControlMessageType::Wait) =>
-                        Ok(State::Ready),
+                    MessageType::Control(ControlMessageType::Reject)
+                    | MessageType::Control(ControlMessageType::Wait) => Ok(State::Ready),
 
-                    _ => Err(Error::Protocol(ProtocolError::UnexpectedMessage))
+                    _ => Err(Error::Protocol(ProtocolError::UnexpectedMessage)),
                 }
-            },
+            }
             // 8.3.3.18.3.8 (PE_PRS_SRC_SNK_Reject_Swap):
             PowerRoleSwap::Reject => {
                 // FIXME: Wait Message logic
-                self.protocol_layer.transmit_control_message(ControlMessageType::Reject).await?;
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::Reject)
+                    .await?;
                 Ok(State::Ready)
-            },
+            }
         }
     }
 
@@ -1131,40 +1160,46 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
     async fn execute_fast_power_role_swap_state(&mut self, state: FastPowerRoleSwap) -> Result<State, Error> {
         match state {
             // 8.3.3.19.5.2 (PE_FRS_SRC_SNK_Evaluate_Swap):
-            FastPowerRoleSwap::Evaluate => {
-                match self.device_policy_manager.fr_swap_signaled().await {
-                    true => Ok(State::DrSwap(SwapState::FastPower(FastPowerRoleSwap::Accept))),
-                    false => Ok(State::HardReset),
-                }
+            FastPowerRoleSwap::Evaluate => match self.device_policy_manager.fr_swap_signaled().await {
+                true => Ok(State::DrSwap(SwapState::FastPower(FastPowerRoleSwap::Accept))),
+                false => Ok(State::HardReset),
             },
             // 8.3.3.19.5.3 (PE_FRS_SRC_Accept):
             FastPowerRoleSwap::Accept => {
-                match self.protocol_layer.transmit_control_message(ControlMessageType::Accept).await {
+                match self
+                    .protocol_layer
+                    .transmit_control_message(ControlMessageType::Accept)
+                    .await
+                {
                     Ok(_) => Ok(State::DrSwap(SwapState::FastPower(FastPowerRoleSwap::TransitionToOff))),
-                    _ => Ok(State::HardReset),  // Soft Reset shall **not** be initiated in this case
+                    _ => Ok(State::HardReset), // Soft Reset shall **not** be initiated in this case
                 }
-            },
+            }
             // 8.3.3.19.5.4 (PE_FRS_SRC_Transition_to_off):
             FastPowerRoleSwap::TransitionToOff => {
                 self.device_policy_manager.discharge_vbus().await;
                 Ok(State::DrSwap(SwapState::FastPower(FastPowerRoleSwap::AssertRd)))
-            },
+            }
             // 8.3.3.19.5.5 (PE_FRS_SRC_Assert_Rd):
             FastPowerRoleSwap::AssertRd => {
                 self.device_policy_manager.cc_sink().await;
                 Ok(State::DrSwap(SwapState::FastPower(FastPowerRoleSwap::WaitSourceOn)))
-            },
+            }
             // 8.3.3.19.5.6 (PE_FRS_SRC_Wait_Source_on):
             FastPowerRoleSwap::WaitSourceOn => {
-                self.protocol_layer.transmit_control_message(ControlMessageType::PsRdy).await?;
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::PsRdy)
+                    .await?;
 
-                self.protocol_layer.receive_message_type(
-                    &[MessageType::Control(ControlMessageType::PsRdy)],
-                    TimerType::PSSourceOnSpr
-                ).await?;
-                
+                self.protocol_layer
+                    .receive_message_type(
+                        &[MessageType::Control(ControlMessageType::PsRdy)],
+                        TimerType::PSSourceOnSpr,
+                    )
+                    .await?;
+
                 Ok(State::PrSwapToSinkStartup)
-            },
+            }
         }
     }
 
@@ -1202,11 +1237,11 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                         epr_mode::Action::Enter => match self.mode {
                             Mode::Spr => State::EprModeEntry,
                             Mode::Epr => State::HardReset,
-                        }
+                        },
                         epr_mode::Action::Exit => match self.mode {
                             Mode::Spr => State::HardReset,
                             Mode::Epr => State::EprModeExitReceived,
-                        }
+                        },
                         _ => State::SendNotSupported,
                     }
                 } else {
@@ -1214,18 +1249,14 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                 }
             }
 
-            MessageType::Control(ControlMessageType::SoftReset) => {
-                State::SoftReset
-            }
+            MessageType::Control(ControlMessageType::SoftReset) => State::SoftReset,
 
             MessageType::Control(ControlMessageType::GetSourceCap) => match self.mode {
                 Mode::Spr => State::SendCapabilities,
                 Mode::Epr => State::GiveSourceCap,
             },
 
-            MessageType::Control(ControlMessageType::VconnSwap) => {
-                State::VcsEvaluateSwap(VcsSwapSource::Message)
-            }
+            MessageType::Control(ControlMessageType::VconnSwap) => State::VcsEvaluateSwap(VcsSwapSource::Message),
 
             MessageType::Control(ControlMessageType::DrSwap) => {
                 if !self.dual_role {
@@ -1238,31 +1269,23 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
             }
 
             // 8.3.3.19.3.1
-            MessageType::Control(ControlMessageType::PrSwap) => {
-                match self.dual_role {
-                    true => State::DrSwap(SwapState::Power(PowerRoleSwap::Evaluate)),
-                    false => State::SendNotSupported
-                }
-            }
+            MessageType::Control(ControlMessageType::PrSwap) => match self.dual_role {
+                true => State::DrSwap(SwapState::Power(PowerRoleSwap::Evaluate)),
+                false => State::SendNotSupported,
+            },
 
             // 8.3.3.19.5.1
-            MessageType::Control(ControlMessageType::FrSwap) => {
-                match self.dual_role {
-                    true => State::DrSwap(SwapState::FastPower(FastPowerRoleSwap::Evaluate)),
-                    false => State::SendNotSupported
-                }
-            }
+            MessageType::Control(ControlMessageType::FrSwap) => match self.dual_role {
+                true => State::DrSwap(SwapState::FastPower(FastPowerRoleSwap::Evaluate)),
+                false => State::SendNotSupported,
+            },
 
-            MessageType::Control(ControlMessageType::GetSinkCap) => {
-                match self.dual_role {
-                    true => State::DrGiveSinkCap(Mode::Spr),
-                    false => State::SendNotSupported,
-                }
-            }
+            MessageType::Control(ControlMessageType::GetSinkCap) => match self.dual_role {
+                true => State::DrGiveSinkCap(Mode::Spr),
+                false => State::SendNotSupported,
+            },
 
-            MessageType::Control(ControlMessageType::NotSupported) => {
-                State::NotSupportedReceived
-            }
+            MessageType::Control(ControlMessageType::NotSupported) => State::NotSupportedReceived,
 
             MessageType::Extended(ExtendedMessageType::ExtendedControl) => {
                 if let Some(Payload::Extended(Extended::ExtendedControl(ctrl))) = &message.payload {
@@ -1331,14 +1354,17 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
             .transmit_control_message(ControlMessageType::GetSourceCap)
             .await?;
 
-        let message = self.protocol_layer.receive_message_type(
-            &[MessageType::Data(DataMessageType::SourceCapabilities)],
-            TimerType::SenderResponse
-        ).await?;
+        let message = self
+            .protocol_layer
+            .receive_message_type(
+                &[MessageType::Data(DataMessageType::SourceCapabilities)],
+                TimerType::SenderResponse,
+            )
+            .await?;
 
         match message.payload {
             Some(Payload::Data(Data::SourceCapabilities(caps))) => Ok(caps),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -1348,14 +1374,17 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
             .transmit_extended_control_message(ExtendedControlMessageType::EprGetSourceCap)
             .await?;
 
-        let message = self.protocol_layer.receive_message_type(
-            &[MessageType::Extended(ExtendedMessageType::EprSourceCapabilities)],
-            TimerType::SenderResponse
-        ).await?;
+        let message = self
+            .protocol_layer
+            .receive_message_type(
+                &[MessageType::Extended(ExtendedMessageType::EprSourceCapabilities)],
+                TimerType::SenderResponse,
+            )
+            .await?;
 
         match message.payload {
             Some(Payload::Extended(Extended::EprSourceCapabilities(cap))) => Ok(SourceCapabilities(cap)),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 }
