@@ -102,7 +102,6 @@ use core::fmt::Debug;
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum PowerRole {
     /// The port is a source.
-    /// FIXME: Implement
     Source,
     /// The port is a sink.
     Sink,

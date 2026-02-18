@@ -69,7 +69,8 @@ pub enum SwapType {
 }
 
 /// Trait for the device policy manager. 
-/// Functions labeled **DRP** do not need to be implemented on single-role devices.
+/// Functions labeled **EPR** do not need to be implemented on non-epr sources.
+/// Functions labeled **DRP** do not need to be implemented on source-only devices.
 ///
 /// This entity commands the policy engine and enforces device policy.
 pub trait DevicePolicyManager {
@@ -186,38 +187,7 @@ pub trait DevicePolicyManager {
     }
 }
 
-
-// TODO: Split DPM traits between base & 
-// pub trait DualRoleDevicePolicyManager {
-//     /// **DRP** Respond to the Policy Engine's request for this port's current sink capabilities
-//     /// 
-//     /// Defaults to only default usb capability (5v @ 3A)
-//     fn sink_capabilities(&mut self) -> impl Future<Output = SinkCapabilities> {
-//         async { SinkCapabilities::new_vsafe5v_only(3 * 100) }
-//     }
-
-//     /// **DRP** Discharge the VBUS to vSafe5V
-//     fn discharge_vbus(&mut self) -> impl Future<Output = ()> { async {} }
-
-//     /// **DRP** Turn the Source off.
-//     /// 
-//     /// This will be requested before a Role Swap to Sink
-//     fn disable_source(&mut self) -> impl Future<Output = ()> { async {} }
-
-//     /// **DRP** Set the CC lines to sink configuration
-//     /// 
-//     /// This will be requested before a Role Swap to Sink
-//     fn cc_sink(&mut self) -> impl Future<Output = ()> { async {} }
-
-//     /// **DRP** Detect whether a fast role swap is signaled on the cc lines
-//     /// 
-//     /// Table 1.4 - Fast Role Swap Request: 
-//     /// 
-//     /// An indication from an Initial Source to the Initial Sink that a 
-//     /// Fast Role Swap is needed. The Fast Role Swap Request is indicated by 
-//     /// driving the CC line to ground for a short period.
-//     fn fr_swap_signaled(&mut self) -> impl Future<Output = bool> {
-//         async { true }
-//     }
-
-// }
+// FIXME: Split DPM traits between base, epr, and dual roles
+// pub trait DevicePolicyManager {}
+// pub trait EprDevicePolicyManager {}
+// pub trait DualRoleDevicePolicyManager {}

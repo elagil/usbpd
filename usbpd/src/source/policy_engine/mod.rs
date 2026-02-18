@@ -26,6 +26,9 @@ use crate::source::device_policy_manager::{CapabilityResponse, Info};
 use crate::timers::{Timer, TimerType};
 use crate::{DataRole, PowerRole};
 
+#[cfg(test)]
+mod tests;
+
 /// Source capability
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -210,7 +213,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
     pub fn new(
         driver: DRIVER,
         device_policy_manager: DPM,
-        role_swapped: bool,
+        role_swap: bool,
     ) -> Self {
         Self {
             device_policy_manager,
@@ -218,11 +221,8 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
             hard_reset_counter: Counter::new(crate::counters::CounterType::HardReset),
             caps_counter: Counter::new(crate::counters::CounterType::Caps),
 
-            state: match role_swapped {
-                true => State::SendCapabilities,
-                false => State::Startup { role_swap: true }
-            },
-            contract: match role_swapped {
+            state: State::Startup { role_swap },
+            contract: match role_swap {
                 true => Contract::Implicit,
                 false => Contract::default(),
             },
@@ -336,7 +336,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                 // Unhandled protocol errors - log and continue.
                 (_, _, error) => {
                     error!("Protocol error {:?} in source state transition", error);
-                    None
+                    return Err(Error::Protocol(error));
                 }
             };
 
@@ -374,7 +374,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                     TimerType::get_timer::<TIMER>(TimerType::SwapSourceStart).await;
                 }
 
-                // TODO: Sources shall remain in the Startup state until a plug is Attached
+                // FIXME: Sources shall remain in the Startup state until a plug is Attached
                 // For now, assume that a Source driver will only be ran after an attach occurs
 
                 State::SendCapabilities
@@ -462,11 +462,12 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                     .transition_power(power_request)
                     .await
                     .map_err(|_| Error::PortPartnerUnresponsive)?;
+                self.contract = Contract::Explicit(*power_request);
+
                 self.protocol_layer
                     .transmit_control_message(ControlMessageType::PsRdy)
                     .await?;
 
-                self.contract = Contract::Explicit(*power_request);
                 State::Ready
             }
             // 8.3.3.2.6 (PE_SRC_Ready):
@@ -520,7 +521,8 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                         Event::ExitEprMode => State::EprModeSendExit,
                         Event::RequestVconnSwap => State::VcsSendSwap(VcsSwapSource::Message),
                         Event::RequestDataRoleSwap => State::DrSwap(SwapState::Data(DataRoleSwap::Send)),
-                        Event::RequestPowerRoleSwap => State::DrSwap(SwapState::Power(PowerRoleSwap::Send)),                    },
+                        Event::RequestPowerRoleSwap => State::DrSwap(SwapState::Power(PowerRoleSwap::Send)),
+                    },
 
                     Either3::Third(timeout_source) => match timeout_source {
                         // DiscoverIdentity Timeout
@@ -534,7 +536,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
             }
             // 8.3.3.2.7 (PE_SRC_Disabled):
             State::Disabled => {
-                // This **SHOULD** put the device in a Safe5V default power mode
+                // This **SHOULD** put the device in a vSafe5V default power mode
                 let source_capabilities = self.device_policy_manager.source_capabilities();
                 self.device_policy_manager
                     .transition_power(
@@ -814,7 +816,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
 
             // Custom State - Exit source running and signal to program to begin Sink
             State::PrSwapToSinkStartup => {
-                // TODO: Intentional exit due to power swap 
+                // FIXME: Switch to sink policy manager due to power swap 
                 Err(Error::SwapToSink)?
             }
 
@@ -918,7 +920,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                 }
             }            
 
-            // TODO: Source EPR
+            // FIXME: Source EPR
             // 8.3.3.26.1.1 (PE_SRC_Evaluate_EPR_Mode_Entry):
             State::EprModeEntry => {
                 match self.device_policy_manager.epr_capable() {
@@ -1212,6 +1214,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                 }
             }
 
+            MessageType::Control(ControlMessageType::SoftReset) => {
+                State::SoftReset
+            }
+
             MessageType::Control(ControlMessageType::GetSourceCap) => match self.mode {
                 Mode::Spr => State::SendCapabilities,
                 Mode::Epr => State::GiveSourceCap,
@@ -1270,7 +1276,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                             false => State::SendNotSupported,
                         },
                         ExtendedControlMessageType::EprKeepAlive => State::EprKeepAlive,
-                        ExtendedControlMessageType::EprKeepAliveAck => State::SendNotSupported, // TODO
+                        ExtendedControlMessageType::EprKeepAliveAck => State::SendNotSupported, // FIXME: Source EPR
                     }
                 } else {
                     State::SendNotSupported
@@ -1352,11 +1358,4 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
             _ => unreachable!()
         }
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::Source;
-
-    // TODO
 }
