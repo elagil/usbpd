@@ -156,7 +156,6 @@ impl SourceDevicePolicyManager for DummySourceDevice {
     async fn disable_source(&mut self) {
         // Dummy doesn't need to do anything to simulate this!
     }
-
 }
 
 pub struct DummyDualRoleDevice {}

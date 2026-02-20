@@ -326,7 +326,6 @@ async fn get_drp_policy_engine_at_ready() -> Source<DummyDriver<MAX_DATA_MESSAGE
 
 #[tokio::test]
 async fn test_role_swapping() {
-
     eprintln!("\n<== Starting source power role swap test! ==>\n");
     {
         let mut policy_engine = get_drp_policy_engine_at_ready().await;
@@ -337,19 +336,44 @@ async fn test_role_swapping() {
         simulate_sink_control_message(&mut policy_engine, ControlMessageType::PsRdy, 4);
 
         // `Ready` -> PR_Swap Message Received -> `DrpSwap(SwapState::Power(PowerRoleSwap::Evaluate))`
-        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::Power(PowerRoleSwap::Evaluate)), 1).await;
+        run_test_step(
+            &mut policy_engine,
+            &State::DrpSwap(SwapState::Power(PowerRoleSwap::Evaluate)),
+            1,
+        )
+        .await;
 
         /// `PowerRoleSwap::Evaluate` -> DRP Evaluates to `true` -> `PowerRoleSwap::Accept`
-        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::Power(PowerRoleSwap::Accept)), 2).await;
+        run_test_step(
+            &mut policy_engine,
+            &State::DrpSwap(SwapState::Power(PowerRoleSwap::Accept)),
+            2,
+        )
+        .await;
 
         // `PowerRoleSwap::Accept` -> `Accept` Sent -> `PowerRoleSwap::TransitionToOff`
-        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::Power(PowerRoleSwap::TransitionToOff)), 3).await;
+        run_test_step(
+            &mut policy_engine,
+            &State::DrpSwap(SwapState::Power(PowerRoleSwap::TransitionToOff)),
+            3,
+        )
+        .await;
 
         // `PowerRoleSwap::TransitionToOff` -> DPM turned source off -> `PowerRoleSwap::AssertRd`
-        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::Power(PowerRoleSwap::AssertRd)), 4).await;
+        run_test_step(
+            &mut policy_engine,
+            &State::DrpSwap(SwapState::Power(PowerRoleSwap::AssertRd)),
+            4,
+        )
+        .await;
 
         // `PowerRoleSwap::AssertRd` -> DPM asserted Rd -> `PowerRoleSwap::WaitSourceOn`
-        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::Power(PowerRoleSwap::WaitSourceOn)), 5).await;
+        run_test_step(
+            &mut policy_engine,
+            &State::DrpSwap(SwapState::Power(PowerRoleSwap::WaitSourceOn)),
+            5,
+        )
+        .await;
 
         // `PowerRoleSwap::WaitSourceOn` -> `PS_RDY` Sent, `PS_RDY` Received -> `PrSwapToSinkStartup`
         run_test_step(&mut policy_engine, &State::PrSwapToSinkStartup, 6).await;
@@ -372,19 +396,44 @@ async fn test_role_swapping() {
         simulate_sink_control_message(&mut policy_engine, ControlMessageType::PsRdy, 4);
 
         // `Ready` -> FR_Swap Message Received -> `FastPowerRole::Evaluate`
-        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::Evaluate)), 1).await;
+        run_test_step(
+            &mut policy_engine,
+            &State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::Evaluate)),
+            1,
+        )
+        .await;
 
         // `FastPowerRole::Evaluate` -> DPM: Fast Role Swap Signaled -> `FastPowerRole::Accept`
-        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::Accept)), 2).await;
+        run_test_step(
+            &mut policy_engine,
+            &State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::Accept)),
+            2,
+        )
+        .await;
 
         // `FastPowerRole::Accept` -> `Accept` sent -> `FastPowerRole::TransitionToOff`
-        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::TransitionToOff)), 3).await;
+        run_test_step(
+            &mut policy_engine,
+            &State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::TransitionToOff)),
+            3,
+        )
+        .await;
 
         // `PowerRoleSwap::TransitionToOff` -> DPM turned source off -> `PowerRoleSwap::AssertRd`
-        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::AssertRd)), 4).await;
+        run_test_step(
+            &mut policy_engine,
+            &State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::AssertRd)),
+            4,
+        )
+        .await;
 
         // `PowerRoleSwap::AssertRd` -> DPM asserted Rd -> `PowerRoleSwap::WaitSourceOn`
-        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::WaitSourceOn)), 5).await;
+        run_test_step(
+            &mut policy_engine,
+            &State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::WaitSourceOn)),
+            5,
+        )
+        .await;
 
         // `PowerRoleSwap::WaitSourceOn` -> `PS_RDY` Sent, `PS_RDY` Received -> `PrSwapToSinkStartup`
         run_test_step(&mut policy_engine, &State::PrSwapToSinkStartup, 6);
@@ -404,13 +453,28 @@ async fn test_role_swapping() {
         simulate_sink_control_message(&mut policy_engine, ControlMessageType::GoodCRC, 3); // `GoodCrc` for `Accept`
 
         // `Ready` -> DR_Swap Message Received -> `DataRoleSwap::Evaluate`
-        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::Data(DataRoleSwap::Evaluate)), 1).await;
+        run_test_step(
+            &mut policy_engine,
+            &State::DrpSwap(SwapState::Data(DataRoleSwap::Evaluate)),
+            1,
+        )
+        .await;
 
         // `DataRoleSwap::Evaluate` -> DRP: Data Role Swap ok -> `DataRoleSwap::Accept`
-        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::Data(DataRoleSwap::Accept)), 2).await;
+        run_test_step(
+            &mut policy_engine,
+            &State::DrpSwap(SwapState::Data(DataRoleSwap::Accept)),
+            2,
+        )
+        .await;
 
         // `DataRoleSwap::Accept` -> `Accept` sent -> `DataRoleSwap::Change`
-        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::Data(DataRoleSwap::Change)), 3).await;
+        run_test_step(
+            &mut policy_engine,
+            &State::DrpSwap(SwapState::Data(DataRoleSwap::Change)),
+            3,
+        )
+        .await;
 
         // `DataRoleSwap::Change` -> DPM: Port changed data role -> `Ready`
         run_test_step(&mut policy_engine, &State::Ready, 4).await;
@@ -422,7 +486,6 @@ async fn test_role_swapping() {
         }
     }
     eprintln!("\n==> Finished source data role swap test! <==\n");
-
 }
 
 async fn run_test_step<DPM: crate::source::device_policy_manager::DevicePolicyManager>(
@@ -433,6 +496,9 @@ async fn run_test_step<DPM: crate::source::device_policy_manager::DevicePolicyMa
     policy_engine.run_step().await.unwrap();
     eprintln!("- Ran Step {step_number}: {0:?}", policy_engine.state);
     if !matches!(&policy_engine.state, new_state) {
-        error!("Policy Engine State {0:?} did not match assumed new state {1:?}", policy_engine.state, new_state);
+        error!(
+            "Policy Engine State {0:?} did not match assumed new state {1:?}",
+            policy_engine.state, new_state
+        );
     }
 }
