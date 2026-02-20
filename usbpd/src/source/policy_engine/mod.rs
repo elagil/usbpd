@@ -235,7 +235,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
 
             state: match role_swapped {
                 true => State::SendCapabilities,
-                false => State::Startup { role_swap: true },
+                false => State::Startup { role_swap: false },
             },
             contract: match role_swapped {
                 true => Contract::Implicit,
