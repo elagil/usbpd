@@ -75,10 +75,10 @@ enum State {
     SendNotSupported,
     NotSupportedReceived,
 
-    // 8.3.3.19 Dual-Role Port
-    DrSwap(SwapState),
-    DrGetSourceCap(Mode),
-    DrGiveSinkCap(Mode),
+    // 8.3.3.19 Dual-Role Port (DRP) States
+    DrpSwap(SwapState),
+    DrpGetSourceCap(Mode),
+    DrpGiveSinkCap(Mode),
 
     // Custom state to signal exit out of source to sink from a power swap
     PrSwapToSinkStartup,
@@ -295,8 +295,8 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                 // FastPowerSwap: Per spec 8.3.3.19.5.6, the Policy Engine shall transition to ErrorRecovery on RxTimeout or TxSendFail
                 (
                     _,
-                    State::DrSwap(SwapState::Power(PowerRoleSwap::WaitSourceOn))
-                    | State::DrSwap(SwapState::FastPower(FastPowerRoleSwap::WaitSourceOn)),
+                    State::DrpSwap(SwapState::Power(PowerRoleSwap::WaitSourceOn))
+                    | State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::WaitSourceOn)),
                     ProtocolError::RxError(RxError::ReceiveTimeout) | ProtocolError::TransmitRetriesExceeded(_),
                 ) => Some(State::ErrorRecovery),
 
@@ -499,12 +499,12 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                         Event::None => State::Ready,
                         Event::UpdatedSourceCapabilities => State::SendCapabilities,
                         Event::RequestSinkCapabilities => State::GetSinkCap,
-                        Event::RequestSourceCapabilities => State::DrGetSourceCap(Mode::Spr),
-                        Event::RequestEprSourceCapabilities => State::DrGetSourceCap(Mode::Epr),
+                        Event::RequestSourceCapabilities => State::DrpGetSourceCap(Mode::Spr),
+                        Event::RequestEprSourceCapabilities => State::DrpGetSourceCap(Mode::Epr),
                         Event::ExitEprMode => State::EprModeSendExit,
                         Event::RequestVconnSwap => State::VcsSendSwap(VcsSwapSource::Message),
-                        Event::RequestDataRoleSwap => State::DrSwap(SwapState::Data(DataRoleSwap::Send)),
-                        Event::RequestPowerRoleSwap => State::DrSwap(SwapState::Power(PowerRoleSwap::Send)),
+                        Event::RequestDataRoleSwap => State::DrpSwap(SwapState::Data(DataRoleSwap::Send)),
+                        Event::RequestPowerRoleSwap => State::DrpSwap(SwapState::Power(PowerRoleSwap::Send)),
                     },
 
                     Either3::Third(timeout_source) => match timeout_source {
@@ -760,13 +760,13 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
             }
 
             // 8.3.3.19 Dual-Role Port States
-            State::DrSwap(swap_state) => match swap_state {
+            State::DrpSwap(swap_state) => match swap_state {
                 SwapState::Data(dr) => self.execute_data_role_swap_state(*dr).await?,
                 SwapState::Power(pr) => self.execute_power_role_swap_state(*pr).await?,
                 SwapState::FastPower(fpr) => self.execute_fast_power_role_swap_state(*fpr).await?,
             },
             // 8.3.3.19.7.1 (PE_DR_SRC_Get_Source_Cap):
-            State::DrGetSourceCap(mode) => {
+            State::DrpGetSourceCap(mode) => {
                 let result = match mode {
                     Mode::Spr => self.get_source_capabilities().await,
                     Mode::Epr => self.get_epr_source_capabilities().await,
@@ -786,7 +786,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                 State::Ready
             }
             // 8.3.3.19.8
-            State::DrGiveSinkCap(mode) => {
+            State::DrpGiveSinkCap(mode) => {
                 let sink_caps = self.device_policy_manager.sink_capabilities().await;
                 match mode {
                     Mode::Spr => {
@@ -1020,15 +1020,15 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
         match state {
             // 8.3.3.19.1.2 (PE_DRS_DFP_UFP_Evaluate_Swap, PE_DRS_UFP_DFP_Evaluate_Swap):
             DataRoleSwap::Evaluate => match self.device_policy_manager.evaluate_swap_request(SwapType::Data).await {
-                true => Ok(State::DrSwap(SwapState::Data(DataRoleSwap::Accept))),
-                false => Ok(State::DrSwap(SwapState::Data(DataRoleSwap::Reject))),
+                true => Ok(State::DrpSwap(SwapState::Data(DataRoleSwap::Accept))),
+                false => Ok(State::DrpSwap(SwapState::Data(DataRoleSwap::Reject))),
             },
             // 8.3.3.19.1.3 (PE_DRS_DFP_UFP_Accept_Swap, PE_DRS_UFP_DFP_Accept_Swap):
             DataRoleSwap::Accept => {
                 self.protocol_layer
                     .transmit_control_message(ControlMessageType::Accept)
                     .await?;
-                Ok(State::DrSwap(SwapState::Data(DataRoleSwap::Change)))
+                Ok(State::DrpSwap(SwapState::Data(DataRoleSwap::Change)))
             }
             // 8.3.3.19.1.4 (PE_DRS_DFP_UFP_Change_to_UFP_Swap, PE_DRS_UFP_DFP_Change_to_DFP_Swap):
             DataRoleSwap::Change => {
@@ -1056,7 +1056,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
 
                 match message.header.message_type() {
                     MessageType::Control(ControlMessageType::Accept) => {
-                        Ok(State::DrSwap(SwapState::Data(DataRoleSwap::Change)))
+                        Ok(State::DrpSwap(SwapState::Data(DataRoleSwap::Change)))
                     }
 
                     MessageType::Control(ControlMessageType::Reject)
@@ -1081,25 +1081,25 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
         match state {
             // 8.3.3.19.3.2 (PE_PRS_SRC_SNK_Evaluate_Swap):
             PowerRoleSwap::Evaluate => match self.device_policy_manager.evaluate_swap_request(SwapType::Power).await {
-                true => Ok(State::DrSwap(SwapState::Power(PowerRoleSwap::Accept))),
-                false => Ok(State::DrSwap(SwapState::Power(PowerRoleSwap::Reject))),
+                true => Ok(State::DrpSwap(SwapState::Power(PowerRoleSwap::Accept))),
+                false => Ok(State::DrpSwap(SwapState::Power(PowerRoleSwap::Reject))),
             },
             // 8.3.3.19.3.3 (PE_PRS_SRC_SNK_Accept_Swap):
             PowerRoleSwap::Accept => {
                 self.protocol_layer
                     .transmit_control_message(ControlMessageType::Accept)
                     .await?;
-                Ok(State::DrSwap(SwapState::Power(PowerRoleSwap::TransitionToOff)))
+                Ok(State::DrpSwap(SwapState::Power(PowerRoleSwap::TransitionToOff)))
             }
             // 8.3.3.19.3.4 (PE_PRS_SRC_SNK_Transition_to_off):
             PowerRoleSwap::TransitionToOff => {
                 self.device_policy_manager.disable_source().await;
-                Ok(State::DrSwap(SwapState::Power(PowerRoleSwap::AssertRd)))
+                Ok(State::DrpSwap(SwapState::Power(PowerRoleSwap::AssertRd)))
             }
             // 8.3.3.19.3.5 (PE_PRS_SRC_SNK_Assert_Rd):
             PowerRoleSwap::AssertRd => {
                 self.device_policy_manager.cc_sink().await;
-                Ok(State::DrSwap(SwapState::Power(PowerRoleSwap::WaitSourceOn)))
+                Ok(State::DrpSwap(SwapState::Power(PowerRoleSwap::WaitSourceOn)))
             }
             // 8.3.3.19.3.6 (PE_PRS_SRC_SNK_Wait_Source_on):
             PowerRoleSwap::WaitSourceOn => {
@@ -1136,7 +1136,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
 
                 match message.header.message_type() {
                     MessageType::Control(ControlMessageType::Accept) => {
-                        Ok(State::DrSwap(SwapState::Power(PowerRoleSwap::TransitionToOff)))
+                        Ok(State::DrpSwap(SwapState::Power(PowerRoleSwap::TransitionToOff)))
                     }
 
                     MessageType::Control(ControlMessageType::Reject)
@@ -1161,7 +1161,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
         match state {
             // 8.3.3.19.5.2 (PE_FRS_SRC_SNK_Evaluate_Swap):
             FastPowerRoleSwap::Evaluate => match self.device_policy_manager.fr_swap_signaled().await {
-                true => Ok(State::DrSwap(SwapState::FastPower(FastPowerRoleSwap::Accept))),
+                true => Ok(State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::Accept))),
                 false => Ok(State::HardReset),
             },
             // 8.3.3.19.5.3 (PE_FRS_SRC_Accept):
@@ -1171,19 +1171,19 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                     .transmit_control_message(ControlMessageType::Accept)
                     .await
                 {
-                    Ok(_) => Ok(State::DrSwap(SwapState::FastPower(FastPowerRoleSwap::TransitionToOff))),
+                    Ok(_) => Ok(State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::TransitionToOff))),
                     _ => Ok(State::HardReset), // Soft Reset shall **not** be initiated in this case
                 }
             }
             // 8.3.3.19.5.4 (PE_FRS_SRC_Transition_to_off):
             FastPowerRoleSwap::TransitionToOff => {
                 self.device_policy_manager.discharge_vbus().await;
-                Ok(State::DrSwap(SwapState::FastPower(FastPowerRoleSwap::AssertRd)))
+                Ok(State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::AssertRd)))
             }
             // 8.3.3.19.5.5 (PE_FRS_SRC_Assert_Rd):
             FastPowerRoleSwap::AssertRd => {
                 self.device_policy_manager.cc_sink().await;
-                Ok(State::DrSwap(SwapState::FastPower(FastPowerRoleSwap::WaitSourceOn)))
+                Ok(State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::WaitSourceOn)))
             }
             // 8.3.3.19.5.6 (PE_FRS_SRC_Wait_Source_on):
             FastPowerRoleSwap::WaitSourceOn => {
@@ -1264,24 +1264,24 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                 } else if self.mode == Mode::Epr {
                     State::HardReset
                 } else {
-                    State::DrSwap(SwapState::Data(DataRoleSwap::Evaluate))
+                    State::DrpSwap(SwapState::Data(DataRoleSwap::Evaluate))
                 }
             }
 
             // 8.3.3.19.3.1
             MessageType::Control(ControlMessageType::PrSwap) => match self.dual_role {
-                true => State::DrSwap(SwapState::Power(PowerRoleSwap::Evaluate)),
+                true => State::DrpSwap(SwapState::Power(PowerRoleSwap::Evaluate)),
                 false => State::SendNotSupported,
             },
 
             // 8.3.3.19.5.1
             MessageType::Control(ControlMessageType::FrSwap) => match self.dual_role {
-                true => State::DrSwap(SwapState::FastPower(FastPowerRoleSwap::Evaluate)),
+                true => State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::Evaluate)),
                 false => State::SendNotSupported,
             },
 
             MessageType::Control(ControlMessageType::GetSinkCap) => match self.dual_role {
-                true => State::DrGiveSinkCap(Mode::Spr),
+                true => State::DrpGiveSinkCap(Mode::Spr),
                 false => State::SendNotSupported,
             },
 
@@ -1295,7 +1295,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                             Mode::Epr => State::SendCapabilities,
                         },
                         ExtendedControlMessageType::EprGetSinkCap => match self.dual_role {
-                            true => State::DrGiveSinkCap(Mode::Epr),
+                            true => State::DrpGiveSinkCap(Mode::Epr),
                             false => State::SendNotSupported,
                         },
                         ExtendedControlMessageType::EprKeepAlive => State::EprKeepAlive,
