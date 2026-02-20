@@ -129,7 +129,7 @@ impl FixedSupply {
         ElectricCurrent::new::<centiampere>(self.raw_max_current().into())
     }
 
-    pub fn vSafe5V(max_current_10ma: u16) -> Self {
+    pub fn v_safe_5v(max_current_10ma: u16) -> Self {
         FixedSupply::default()
             .with_raw_voltage(100) // V = 5v = 100_u16 * 50mv
             .with_raw_max_current(max_current_10ma)
@@ -303,7 +303,7 @@ impl SourceCapabilities {
     pub fn new_vsafe5v_only(maximum_current_10ma: u16) -> Self {
         let mut inner = Vec::new();
         inner
-            .push(PowerDataObject::FixedSupply(FixedSupply::vSafe5V(maximum_current_10ma)))
+            .push(PowerDataObject::FixedSupply(FixedSupply::v_safe_5v(maximum_current_10ma)))
             .ok();
         Self(inner)
     }

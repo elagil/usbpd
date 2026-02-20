@@ -42,6 +42,9 @@ enum Contract {
     Implicit, // Only present after fast role swap. Limited to max. type C current.
     TransitionToExplicit,
     Explicit(PowerSource),
+
+    // FIXME: Source EPR support may use this enum
+    #[allow(unused)]
     Invalid,
 }
 
@@ -92,6 +95,8 @@ enum State {
     VcsTurnOffVconn(VcsSwapSource),
     VcsTurnOnVconn(VcsSwapSource),
     VcsSendPsRdy(VcsSwapSource),
+    // FIXME: For now, forcing a different state traversal, resulting in this being unused
+    #[allow(unused)]
     VcsForceVconn(VcsSwapSource),
 
     // 8.3.3.26 EPR States
