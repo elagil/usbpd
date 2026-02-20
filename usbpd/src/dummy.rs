@@ -140,6 +140,23 @@ impl SourceDevicePolicyManager for DummySourceDevice {
     fn source_capabilities(&mut self) -> SourceCapabilities {
         SourceCapabilities(heapless::Vec::from_slice(get_dummy_source_capabilities().as_slice()).unwrap())
     }
+
+    async fn evaluate_swap_request(&mut self, swap_request: crate::source::device_policy_manager::SwapType) -> bool {
+        match swap_request {
+            crate::source::device_policy_manager::SwapType::Vconn => true,
+            crate::source::device_policy_manager::SwapType::Data => true,
+            crate::source::device_policy_manager::SwapType::Power => true,
+        }
+    }
+
+    async fn fr_swap_signaled(&mut self) -> bool {
+        true
+    }
+
+    async fn disable_source(&mut self) {
+        // Dummy doesn't need to do anything to simulate this!
+    }
+
 }
 
 pub struct DummyDualRoleDevice {}

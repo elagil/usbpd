@@ -12,7 +12,7 @@ use crate::protocol_layer::message::data::request::{CurrentRequest, FixedVariabl
 use crate::protocol_layer::message::data::source_capabilities::SourceCapabilities;
 use crate::protocol_layer::message::header::{ControlMessageType, DataMessageType, Header, MessageType};
 use crate::source::device_policy_manager::CapabilityResponse;
-use crate::source::policy_engine::State;
+use crate::source::policy_engine::{DataRoleSwap, FastPowerRoleSwap, PowerRoleSwap, State, SwapState};
 
 fn get_policy_engine() -> Source<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DummySourceDevice> {
     Source::new(DummyDriver::new(), DummySourceDevice {}, false)
@@ -23,7 +23,6 @@ fn simulate_sink_control_message<DPM: crate::source::device_policy_manager::Devi
     control_message_type: ControlMessageType,
     message_id: u8,
 ) {
-    let header = *policy_engine.protocol_layer.header();
     let mut buf = [0u8; MAX_DATA_MESSAGE_SIZE];
 
     Message::new(Header::new_control(
@@ -72,7 +71,7 @@ fn simulate_sink_request<DPM: crate::source::device_policy_manager::DevicePolicy
     message_id: u8,
     highest_power: bool,
 ) {
-    let mut message = request_capability_message(message_id, highest_power);
+    let message = request_capability_message(message_id, highest_power);
     let mut buf = [0u8; MAX_DATA_MESSAGE_SIZE];
     let len = message.to_bytes(&mut buf);
 
@@ -190,7 +189,7 @@ async fn test_negotiation() {
     }
     eprintln!("\n==> Finished source SPR re-negotiation test! <==\n");
 
-    eprintln!("\n==> Starting source SPR soft reset - reject test! <==\n");
+    eprintln!("\n==> Starting source soft reset - reject test! <==\n");
     {
         // Simulate `SoftReset`
         simulate_sink_control_message(&mut policy_engine, ControlMessageType::SoftReset, 6);
@@ -245,7 +244,7 @@ async fn test_negotiation() {
             eprintln!("- SoftReset-Reject message: {:?}", msg.header.message_type());
         }
     }
-    eprintln!("\n==> Finished source SPR soft reset - reject test! <==\n");
+    eprintln!("\n==> Finished source soft reset - reject test! <==\n");
 }
 
 #[tokio::test]
@@ -253,7 +252,7 @@ async fn test_discovery() {
     const MAX_DISCOVERY_ITERS: usize = 52;
     let mut policy_engine = get_policy_engine();
     // HardReset -> Discovery -> Disabled
-    eprintln!("\n==> Starting source SPR discovery test! <==\n");
+    eprintln!("\n<== Starting source discovery test! ==>\n");
     {
         eprintln!("- Ran Step 0: {0:?}", policy_engine.state);
         assert!(matches!(policy_engine.state, State::Startup { role_swap: false }));
@@ -270,7 +269,6 @@ async fn test_discovery() {
         eprintln!("- Ran Step 2: {0:?}", policy_engine.state);
         assert!(matches!(policy_engine.state, State::Discovery));
 
-        // `Discovery` ->
         let mut discovery_iterations = 0;
         loop {
             if !matches!(policy_engine.state, State::Discovery) {
@@ -297,5 +295,144 @@ async fn test_discovery() {
         );
         assert!(matches!(policy_engine.state, State::Disabled));
     }
-    eprintln!("\n==> Finished source SPR discovery test! <==\n");
+    eprintln!("\n==> Finished source discovery test! <==\n");
+}
+
+/// Return a policy engine that has already undergone initial power contract negotiation
+async fn get_drp_policy_engine_at_ready() -> Source<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DummySourceDevice> {
+    let mut policy_engine = Source::new_dual_role(DummyDriver::new(), DummySourceDevice {}, false);
+    assert!(matches!(policy_engine.state, State::Startup { role_swap: false }));
+
+    simulate_sink_control_message(&mut policy_engine, ControlMessageType::GoodCRC, 0);
+    simulate_sink_request(&mut policy_engine, 1, false);
+    simulate_sink_control_message(&mut policy_engine, ControlMessageType::GoodCRC, 1);
+    simulate_sink_control_message(&mut policy_engine, ControlMessageType::GoodCRC, 2);
+
+    policy_engine.run_step().await.unwrap(); // `Startup` -> `SendCapabilities`
+    policy_engine.run_step().await.unwrap(); // `SendCapabilities` -> Get Request -> `NegotiateCapability`
+    policy_engine.run_step().await.unwrap(); // `NegotiateCapability` -> DPM: Accept -> `Transition Supply`
+    policy_engine.run_step().await.unwrap(); // `TransitionSupply` -> Accept -> PsRdy -> `Ready`
+
+    // Flush all messages
+    while policy_engine.protocol_layer.driver().has_transmitted_data() {
+        let msg = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
+        eprintln!("- Initial negotiation: {:?}", msg.header.message_type());
+    }
+
+    assert!(matches!(policy_engine.state, State::Ready));
+
+    policy_engine
+}
+
+#[tokio::test]
+async fn test_role_swapping() {
+
+    eprintln!("\n<== Starting source power role swap test! ==>\n");
+    {
+        let mut policy_engine = get_drp_policy_engine_at_ready().await;
+
+        simulate_sink_control_message(&mut policy_engine, ControlMessageType::PrSwap, 2);
+        simulate_sink_control_message(&mut policy_engine, ControlMessageType::GoodCRC, 3); // `GoodCrc` for `Accept`
+        simulate_sink_control_message(&mut policy_engine, ControlMessageType::GoodCRC, 4); // `GoodCrc` for `PS_RDY` 3 OR 4??
+        simulate_sink_control_message(&mut policy_engine, ControlMessageType::PsRdy, 4);
+
+        // `Ready` -> PR_Swap Message Received -> `DrpSwap(SwapState::Power(PowerRoleSwap::Evaluate))`
+        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::Power(PowerRoleSwap::Evaluate)), 1).await;
+
+        /// `PowerRoleSwap::Evaluate` -> DRP Evaluates to `true` -> `PowerRoleSwap::Accept`
+        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::Power(PowerRoleSwap::Accept)), 2).await;
+
+        // `PowerRoleSwap::Accept` -> `Accept` Sent -> `PowerRoleSwap::TransitionToOff`
+        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::Power(PowerRoleSwap::TransitionToOff)), 3).await;
+
+        // `PowerRoleSwap::TransitionToOff` -> DPM turned source off -> `PowerRoleSwap::AssertRd`
+        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::Power(PowerRoleSwap::AssertRd)), 4).await;
+
+        // `PowerRoleSwap::AssertRd` -> DPM asserted Rd -> `PowerRoleSwap::WaitSourceOn`
+        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::Power(PowerRoleSwap::WaitSourceOn)), 5).await;
+
+        // `PowerRoleSwap::WaitSourceOn` -> `PS_RDY` Sent, `PS_RDY` Received -> `PrSwapToSinkStartup`
+        run_test_step(&mut policy_engine, &State::PrSwapToSinkStartup, 6).await;
+
+        // Flush all messages
+        while policy_engine.protocol_layer.driver().has_transmitted_data() {
+            let msg = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
+            eprintln!("- Power Role Swap Message: {:?}", msg.header.message_type());
+        }
+    }
+    eprintln!("\n==> Finished source power role swap test! <==\n");
+
+    eprintln!("\n<== Starting source fast power role swap test! ==>\n");
+    {
+        let mut policy_engine = get_drp_policy_engine_at_ready().await;
+
+        simulate_sink_control_message(&mut policy_engine, ControlMessageType::FrSwap, 2);
+        simulate_sink_control_message(&mut policy_engine, ControlMessageType::GoodCRC, 3); // `GoodCrc` for `Accept` 3 OR 4??
+        simulate_sink_control_message(&mut policy_engine, ControlMessageType::GoodCRC, 4); // `GoodCrc` for `PS_RDY` 3 OR 4??
+        simulate_sink_control_message(&mut policy_engine, ControlMessageType::PsRdy, 4);
+
+        // `Ready` -> FR_Swap Message Received -> `FastPowerRole::Evaluate`
+        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::Evaluate)), 1).await;
+
+        // `FastPowerRole::Evaluate` -> DPM: Fast Role Swap Signaled -> `FastPowerRole::Accept`
+        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::Accept)), 2).await;
+
+        // `FastPowerRole::Accept` -> `Accept` sent -> `FastPowerRole::TransitionToOff`
+        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::TransitionToOff)), 3).await;
+
+        // `PowerRoleSwap::TransitionToOff` -> DPM turned source off -> `PowerRoleSwap::AssertRd`
+        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::AssertRd)), 4).await;
+
+        // `PowerRoleSwap::AssertRd` -> DPM asserted Rd -> `PowerRoleSwap::WaitSourceOn`
+        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::WaitSourceOn)), 5).await;
+
+        // `PowerRoleSwap::WaitSourceOn` -> `PS_RDY` Sent, `PS_RDY` Received -> `PrSwapToSinkStartup`
+        run_test_step(&mut policy_engine, &State::PrSwapToSinkStartup, 6);
+
+        // Flush all messages
+        while policy_engine.protocol_layer.driver().has_transmitted_data() {
+            let msg = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
+            eprintln!("- Fast Power Role Swap Message: {:?}", msg.header.message_type());
+        }
+    }
+
+    eprintln!("\n<== Starting source data role swap test! ==>\n");
+    {
+        let mut policy_engine = get_drp_policy_engine_at_ready().await;
+
+        simulate_sink_control_message(&mut policy_engine, ControlMessageType::DrSwap, 2);
+        simulate_sink_control_message(&mut policy_engine, ControlMessageType::GoodCRC, 3); // `GoodCrc` for `Accept`
+
+        // `Ready` -> DR_Swap Message Received -> `DataRoleSwap::Evaluate`
+        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::Data(DataRoleSwap::Evaluate)), 1).await;
+
+        // `DataRoleSwap::Evaluate` -> DRP: Data Role Swap ok -> `DataRoleSwap::Accept`
+        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::Data(DataRoleSwap::Accept)), 2).await;
+
+        // `DataRoleSwap::Accept` -> `Accept` sent -> `DataRoleSwap::Change`
+        run_test_step(&mut policy_engine, &State::DrpSwap(SwapState::Data(DataRoleSwap::Change)), 3).await;
+
+        // `DataRoleSwap::Change` -> DPM: Port changed data role -> `Ready`
+        run_test_step(&mut policy_engine, &State::Ready, 4).await;
+
+        // Flush all messages
+        while policy_engine.protocol_layer.driver().has_transmitted_data() {
+            let msg = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
+            eprintln!("- Data Role Swap Message: {:?}", msg.header.message_type());
+        }
+    }
+    eprintln!("\n==> Finished source data role swap test! <==\n");
+
+}
+
+async fn run_test_step<DPM: crate::source::device_policy_manager::DevicePolicyManager>(
+    policy_engine: &mut Source<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DPM>,
+    new_state: &State,
+    step_number: usize,
+) {
+    policy_engine.run_step().await.unwrap();
+    eprintln!("- Ran Step {step_number}: {0:?}", policy_engine.state);
+    if !matches!(&policy_engine.state, new_state) {
+        error!("Policy Engine State {0:?} did not match assumed new state {1:?}", policy_engine.state, new_state);
+    }
 }
