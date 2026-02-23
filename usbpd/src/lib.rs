@@ -30,6 +30,7 @@ pub mod source;
 pub mod timers;
 
 #[cfg(test)]
+#[allow(missing_docs)] // FIXME: Docs for the dummy?
 pub mod dummy;
 
 /// This module defines the CGS (centimeter-gram-second) unit system

@@ -12,8 +12,6 @@ use crate::protocol_layer::message::header::DataMessageType;
 /// Size of a Power Data Object in bytes.
 const PDO_SIZE: usize = size_of::<u32>();
 
-// FIXME: add documentation
-#[allow(missing_docs)]
 pub mod source_capabilities;
 
 pub mod sink_capabilities;

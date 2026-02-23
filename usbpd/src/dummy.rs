@@ -10,7 +10,11 @@ use crate::protocol_layer::message::data::source_capabilities::{
     Augmented, FixedSupply, PowerDataObject, SourceCapabilities, SprProgrammablePowerSupply,
 };
 use crate::sink::device_policy_manager::DevicePolicyManager as SinkDevicePolicyManager;
-use crate::source::device_policy_manager::DevicePolicyManager as SourceDevicePolicyManager;
+use crate::source::device_policy_manager::{
+    CapabilityResponse as SourceCapabilityResponse, DevicePolicyManager as SourceDevicePolicyManager,
+    DualRoleDevicePolicyManager as SourceDrpDevicePolicyManager,
+    EprDevicePolicyManager as SourceEprDevicePolicyManager, SwapType,
+};
 use crate::timers::Timer;
 use crate::units::Power;
 
@@ -63,7 +67,7 @@ impl DummySinkEprDevice {
 impl SinkDevicePolicyManager for DummySinkEprDevice {
     async fn get_event(
         &mut self,
-        source_capabilities: &crate::protocol_layer::message::data::source_capabilities::SourceCapabilities,
+        source_capabilities: &SourceCapabilities,
     ) -> crate::sink::device_policy_manager::Event {
         use crate::sink::device_policy_manager::Event;
 
@@ -81,10 +85,7 @@ impl SinkDevicePolicyManager for DummySinkEprDevice {
         Event::None
     }
 
-    async fn request(
-        &mut self,
-        source_capabilities: &crate::protocol_layer::message::data::source_capabilities::SourceCapabilities,
-    ) -> crate::protocol_layer::message::data::request::PowerSource {
+    async fn request(&mut self, source_capabilities: &SourceCapabilities) -> request::PowerSource {
         use crate::protocol_layer::message::data::request::{CurrentRequest, PowerSource, VoltageRequest};
         use crate::protocol_layer::message::data::source_capabilities::PowerDataObject;
 
@@ -121,46 +122,87 @@ impl SinkDevicePolicyManager for DummySinkEprDevice {
     }
 }
 
-pub struct DummySourceDevice {}
+pub struct DummySourceDevice;
 
 impl SourceDevicePolicyManager for DummySourceDevice {
-    fn evaluate_request(
-        &mut self,
-        request: &crate::protocol_layer::message::data::request::PowerSource,
-    ) -> impl Future<Output = crate::source::device_policy_manager::CapabilityResponse> {
-        async {
-            if request.object_position() < 8 {
-                crate::source::device_policy_manager::CapabilityResponse::Accept
-            } else {
-                crate::source::device_policy_manager::CapabilityResponse::Reject
-            }
+    async fn evaluate_request(&mut self, request: &request::PowerSource) -> SourceCapabilityResponse {
+        if request.object_position() < 8 {
+            SourceCapabilityResponse::Accept
+        } else {
+            SourceCapabilityResponse::Reject
         }
     }
 
     fn source_capabilities(&mut self) -> SourceCapabilities {
         SourceCapabilities(heapless::Vec::from_slice(get_dummy_source_capabilities().as_slice()).unwrap())
     }
+}
 
-    async fn evaluate_swap_request(&mut self, swap_request: crate::source::device_policy_manager::SwapType) -> bool {
+impl SourceDrpDevicePolicyManager for DummySourceDevice {}
+impl SourceEprDevicePolicyManager for DummySourceDevice {}
+
+pub struct DummyDualRoleNoSwapsDevice;
+
+impl SourceDevicePolicyManager for DummyDualRoleNoSwapsDevice {
+    async fn evaluate_request(&mut self, request: &request::PowerSource) -> SourceCapabilityResponse {
+        if request.object_position() < 8 {
+            SourceCapabilityResponse::Accept
+        } else {
+            SourceCapabilityResponse::Reject
+        }
+    }
+
+    fn source_capabilities(&mut self) -> SourceCapabilities {
+        SourceCapabilities(heapless::Vec::from_slice(get_dummy_source_capabilities().as_slice()).unwrap())
+    }
+}
+
+impl SourceDrpDevicePolicyManager for DummyDualRoleNoSwapsDevice {
+    async fn evaluate_swap_request(&mut self, swap_request: SwapType) -> bool {
         match swap_request {
-            crate::source::device_policy_manager::SwapType::Vconn => true,
-            crate::source::device_policy_manager::SwapType::Data => true,
-            crate::source::device_policy_manager::SwapType::Power => true,
+            SwapType::Data => false,
+            SwapType::Power => false,
+        }
+    }
+
+    async fn fr_swap_signaled(&mut self) -> bool {
+        false
+    }
+}
+
+impl SourceEprDevicePolicyManager for DummyDualRoleNoSwapsDevice {}
+
+pub struct DummyDualRoleDevice;
+
+impl SourceDevicePolicyManager for DummyDualRoleDevice {
+    async fn evaluate_request(&mut self, request: &request::PowerSource) -> SourceCapabilityResponse {
+        const MAX_SPR_OBJ_POS: u8 = 8;
+        if request.object_position() < MAX_SPR_OBJ_POS {
+            SourceCapabilityResponse::Accept
+        } else {
+            SourceCapabilityResponse::Reject
+        }
+    }
+
+    fn source_capabilities(&mut self) -> SourceCapabilities {
+        SourceCapabilities(heapless::Vec::from_slice(get_dummy_source_capabilities().as_slice()).unwrap())
+    }
+}
+
+impl SourceDrpDevicePolicyManager for DummyDualRoleDevice {
+    async fn evaluate_swap_request(&mut self, swap_request: SwapType) -> bool {
+        match swap_request {
+            SwapType::Data => true,
+            SwapType::Power => true,
         }
     }
 
     async fn fr_swap_signaled(&mut self) -> bool {
         true
     }
-
-    async fn disable_source(&mut self) {
-        // Dummy doesn't need to do anything to simulate this!
-    }
 }
 
-pub struct DummyDualRoleDevice {}
-
-impl SourceDevicePolicyManager for DummyDualRoleDevice {}
+impl SourceEprDevicePolicyManager for DummyDualRoleDevice {}
 
 impl SinkDevicePolicyManager for DummyDualRoleDevice {}
 
@@ -300,9 +342,7 @@ pub fn get_source_capability_request() -> request::PowerSource {
     request::PowerSource::new_fixed(
         request::CurrentRequest::Highest,
         request::VoltageRequest::Safe5V,
-        &crate::protocol_layer::message::data::source_capabilities::SourceCapabilities(
-            heapless::Vec::from_slice(&get_dummy_source_capabilities()).unwrap(),
-        ),
+        &SourceCapabilities(heapless::Vec::from_slice(&get_dummy_source_capabilities()).unwrap()),
     )
     .unwrap()
 }

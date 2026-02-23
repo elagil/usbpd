@@ -16,7 +16,7 @@ use crate::protocol_layer::message::header::{
     ControlMessageType, DataMessageType, ExtendedMessageType, Header, MessageType, SpecificationRevision,
 };
 use crate::protocol_layer::message::{Payload, extended};
-use crate::protocol_layer::{ProtocolError, ProtocolLayer, RxError, TxError};
+use crate::protocol_layer::{ProtocolError, RxError, SinkProtocolLayer, TxError};
 use crate::sink::device_policy_manager::Event;
 use crate::timers::{Timer, TimerType};
 use crate::{DataRole, PowerRole, units};
@@ -80,7 +80,7 @@ enum State {
 #[derive(Debug)]
 pub struct Sink<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> {
     device_policy_manager: DPM,
-    protocol_layer: ProtocolLayer<DRIVER, TIMER>,
+    protocol_layer: SinkProtocolLayer<DRIVER, TIMER>,
     contract: Contract,
     hard_reset_counter: Counter,
     source_capabilities: Option<SourceCapabilities>,
@@ -113,9 +113,9 @@ impl From<ProtocolError> for Error {
 
 impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER, DPM> {
     /// Create a fresh protocol layer with initial state.
-    fn new_protocol_layer(driver: DRIVER) -> ProtocolLayer<DRIVER, TIMER> {
+    fn new_protocol_layer(driver: DRIVER) -> SinkProtocolLayer<DRIVER, TIMER> {
         let header = Header::new_template(DataRole::Ufp, PowerRole::Sink, SpecificationRevision::R3_X);
-        ProtocolLayer::new(driver, header)
+        SinkProtocolLayer::new(driver, header)
     }
 
     /// Create a new sink policy engine with a given `driver`.
@@ -229,7 +229,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
     /// Per spec section 6.4.1.2.2, after a Soft Reset while in EPR Mode, the source sends
     /// EPR_Source_Capabilities. Therefore this function must handle both message types.
     async fn wait_for_source_capabilities(
-        protocol_layer: &mut ProtocolLayer<DRIVER, TIMER>,
+        protocol_layer: &mut SinkProtocolLayer<DRIVER, TIMER>,
     ) -> Result<SourceCapabilities, Error> {
         let message = protocol_layer.wait_for_source_capabilities().await?;
         trace!("Source capabilities: {:?}", message);

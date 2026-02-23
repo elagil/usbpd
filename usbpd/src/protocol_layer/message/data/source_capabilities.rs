@@ -121,14 +121,17 @@ impl Default for FixedSupply {
 }
 
 impl FixedSupply {
+    /// The voltage in 50 millivolts
     pub fn voltage(&self) -> ElectricPotential {
         ElectricPotential::new::<_50millivolts>(self.raw_voltage().into())
     }
 
+    /// The current in centiamperes
     pub fn max_current(&self) -> ElectricCurrent {
         ElectricCurrent::new::<centiampere>(self.raw_max_current().into())
     }
 
+    /// Create a new Fixed Supply at vSafe5V with the rated current
     pub fn v_safe_5v(max_current_10ma: u16) -> Self {
         FixedSupply::default()
             .with_raw_voltage(100) // V = 5v = 100_u16 * 50mv
@@ -138,6 +141,7 @@ impl FixedSupply {
 }
 
 bitfield! {
+    /// A battery supply PDO.
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -154,20 +158,24 @@ bitfield! {
 }
 
 impl Battery {
+    /// The maximum voltage the battery can supply in 50 millivolts
     pub fn max_voltage(&self) -> ElectricPotential {
         ElectricPotential::new::<_50millivolts>(self.raw_max_voltage().into())
     }
 
+    /// The minimum voltage the battery can supply in 50 millivolts
     pub fn min_voltage(&self) -> ElectricPotential {
         ElectricPotential::new::<_50millivolts>(self.raw_min_voltage().into())
     }
 
+    /// The maximum power the battery can supply in 250 milliwatts
     pub fn max_power(&self) -> Power {
         Power::new::<_250milliwatts>(self.raw_max_power().into())
     }
 }
 
 bitfield! {
+    /// A variable supply PDO.
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -184,41 +192,52 @@ bitfield! {
 }
 
 impl VariableSupply {
+    /// The maximum voltage the variable supply can do in 50 millivolts
     pub fn max_voltage(&self) -> ElectricPotential {
         ElectricPotential::new::<_50millivolts>(self.raw_max_voltage().into())
     }
 
+    /// The minimum voltage the variable supply can do in 50 millivolts
     pub fn min_voltage(&self) -> ElectricPotential {
         ElectricPotential::new::<_50millivolts>(self.raw_min_voltage().into())
     }
 
+    /// The maximum current the variable supply can offer in centiamperes
     pub fn max_current(&self) -> ElectricCurrent {
         ElectricCurrent::new::<centiampere>(self.raw_max_current().into())
     }
 }
 
+/// An augmented PDO.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Augmented {
+    /// SPR PPS
     Spr(SprProgrammablePowerSupply),
+    /// EPR AVS
     Epr(EprAdjustableVoltageSupply),
+    /// Unknown
     Unknown(u32),
 }
 
 bitfield! {
+    /// Augmented power data object
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub struct AugmentedRaw(pub u32): Debug, FromStorage, IntoStorage {
         /// Augmented power data object
         pub kind: u8 @ 30..=31,
+        /// FIXME
         pub supply: u8 @ 28..=29,
+        /// FIXME
         pub power_capabilities: u32 @ 0..=27,
     }
 }
 
 bitfield! {
+    /// SPR PPS
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -227,6 +246,7 @@ bitfield! {
         pub kind: u8 @ 30..=31,
         /// SPR programmable power supply
         pub supply: u8 @ 28..=29,
+        /// Whether or not the PPS will limit the current to meet a certain power limit
         pub pps_power_limited: bool @ 27,
         /// Maximum voltage in 100 mV increments
         pub raw_max_voltage: u8 @ 17..=24,
@@ -244,20 +264,24 @@ impl Default for SprProgrammablePowerSupply {
 }
 
 impl SprProgrammablePowerSupply {
+    /// The maximum voltage in decivolts the PPS can be requested to supply
     pub fn max_voltage(&self) -> ElectricPotential {
         ElectricPotential::new::<decivolt>(self.raw_max_voltage().into())
     }
 
+    /// The minimum voltage in decivolts the PPS can be requested to supply
     pub fn min_voltage(&self) -> ElectricPotential {
         ElectricPotential::new::<decivolt>(self.raw_min_voltage().into())
     }
 
+    /// The maximum current the PPS can supply.
     pub fn max_current(&self) -> ElectricCurrent {
         ElectricCurrent::new::<_50milliamperes>(self.raw_max_current().into())
     }
 }
 
 bitfield! {
+    /// EPR AVS PDO
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -266,6 +290,7 @@ bitfield! {
         pub kind: u8 @ 30..=31,
         /// EPR adjustable voltage supply
         pub supply: u8 @ 28..=29,
+        /// Peak current capability during the Overload Period
         pub peak_current: u8 @ 26..=27,
         /// Maximum voltage in 100 mV increments
         pub raw_max_voltage: u16 @ 17..=25,
@@ -277,37 +302,51 @@ bitfield! {
 }
 
 impl EprAdjustableVoltageSupply {
+    /// Maximum voltage in decivolts
     pub fn max_voltage(&self) -> ElectricPotential {
         ElectricPotential::new::<decivolt>(self.raw_max_voltage().into())
     }
 
+    /// Minimum voltage in decivolts
     pub fn min_voltage(&self) -> ElectricPotential {
         ElectricPotential::new::<decivolt>(self.raw_min_voltage().into())
     }
 
+    /// PDP in 1 W increments
     pub fn pd_power(&self) -> Power {
         Power::new::<watt>(self.raw_pd_power().into())
     }
 }
 
+const MAX_CAPABILITIES_LEN: usize = 16;
+
+/// List of `PDOs` that the `Source` lists as capabilities
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SourceCapabilities(pub(crate) Vec<PowerDataObject, 16>);
+pub struct SourceCapabilities(pub(crate) Vec<PowerDataObject, MAX_CAPABILITIES_LEN>);
 
 impl SourceCapabilities {
-    pub fn new_with_pdos(pdos: Vec<PowerDataObject, 16>) -> Self {
+    /// Create a new `SourceCapabilities` from a `Vec` of PDOs
+    pub fn new_with_pdos(pdos: Vec<PowerDataObject, MAX_CAPABILITIES_LEN>) -> Self {
         Self(pdos)
     }
 
+    /// Create a new `SourceCapabilities` with only the required
+    /// `vSafe5V` fixed PDO in the first position.
     pub fn new_vsafe5v_only(maximum_current_10ma: u16) -> Self {
         let mut inner = Vec::new();
         inner
-            .push(PowerDataObject::FixedSupply(FixedSupply::v_safe_5v(maximum_current_10ma)))
+            .push(PowerDataObject::FixedSupply(FixedSupply::v_safe_5v(
+                maximum_current_10ma,
+            )))
             .ok();
         Self(inner)
     }
 
+    /// Get the required `vSafe5V` PDO in the first position. Returns:
+    /// - `Some(vSafe5V):` if the PDO exists and is in the first position
+    /// - `None:` otherwise
     pub fn vsafe_5v(&self) -> Option<&FixedSupply> {
         self.0.first().and_then(|supply| {
             if let PowerDataObject::FixedSupply(supply) = supply {
@@ -318,16 +357,19 @@ impl SourceCapabilities {
         })
     }
 
+    /// Determine, whether or not this device is `dual role`.
     pub fn dual_role_power(&self) -> bool {
         self.vsafe_5v().map(FixedSupply::dual_role_power).unwrap_or_default()
     }
 
+    /// Determine, whether or not USB suspends are supported by the source.
     pub fn usb_suspend_supported(&self) -> bool {
         self.vsafe_5v()
             .map(FixedSupply::usb_suspend_supported)
             .unwrap_or_default()
     }
 
+    /// Determine, whether or not this device constrains the power to a certain level.
     pub fn unconstrained_power(&self) -> bool {
         self.vsafe_5v()
             .map(FixedSupply::unconstrained_power)

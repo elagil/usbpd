@@ -4,7 +4,10 @@ use core::marker::PhantomData;
 use embassy_futures::select::{Either, Either3, select, select3};
 use usbpd_traits::Driver;
 
-use super::device_policy_manager::{DevicePolicyManager, Event};
+use super::device_policy_manager::{
+    CapabilityResponse, DevicePolicyManager as DPM, DualRoleDevicePolicyManager as DRP_DPM,
+    EprDevicePolicyManager as EPR_DPM, Event, Info, SwapType,
+};
 use crate::counters::Counter;
 use crate::protocol_layer::message::data::request::PowerSource;
 use crate::protocol_layer::message::data::sink_capabilities::SinkCapabilities;
@@ -16,8 +19,7 @@ use crate::protocol_layer::message::header::{
     ControlMessageType, DataMessageType, ExtendedMessageType, Header, MessageType, SpecificationRevision,
 };
 use crate::protocol_layer::message::{Message, Payload};
-use crate::protocol_layer::{ProtocolError, ProtocolLayer, RxError, TxError};
-use crate::source::device_policy_manager::{CapabilityResponse, Info, SwapType};
+use crate::protocol_layer::{ProtocolError, RxError, SourceProtocolLayer, TxError};
 use crate::timers::{Timer, TimerType};
 use crate::{DataRole, PowerRole};
 
@@ -54,7 +56,9 @@ enum Contract {
 enum State {
     // States of the policy engine as given by specification.
     // 8.3.3.2 Policy Engine Source Port State Diagram
-    Startup { role_swap: bool },
+    Startup {
+        role_swap: bool,
+    },
     Discovery,
     SendCapabilities,
     NegotiateCapability(PowerSource),
@@ -163,12 +167,15 @@ enum FastPowerRoleSwap {
     WaitSourceOn,
 }
 
+// FIXME: Allow trait aliasing?
+// trait FullDevicePolicyManager = DevicePolicyManager + EprDevicePolicyManager + DualRoleDevicePolicyManager;
+
 /// Implementation of the source policy engine.
 /// See spec, [8.3.3.2]
 #[derive(Debug)]
-pub struct Source<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> {
-    device_policy_manager: DPM,
-    protocol_layer: ProtocolLayer<DRIVER, TIMER>,
+pub struct Source<DRIVER: Driver, TIMER: Timer, SOURCEDPM: DPM + EPR_DPM + DRP_DPM> {
+    device_policy_manager: SOURCEDPM,
+    protocol_layer: SourceProtocolLayer<DRIVER, TIMER>,
     hard_reset_counter: Counter,
     caps_counter: Counter,
     state: State,
@@ -201,14 +208,14 @@ impl From<ProtocolError> for Error {
     }
 }
 
-impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIMER, DPM> {
-    fn new_protocol_layer(driver: DRIVER) -> ProtocolLayer<DRIVER, TIMER> {
+impl<DRIVER: Driver, TIMER: Timer, SOURCEDPM: DPM + EPR_DPM + DRP_DPM> Source<DRIVER, TIMER, SOURCEDPM> {
+    fn new_protocol_layer(driver: DRIVER) -> SourceProtocolLayer<DRIVER, TIMER> {
         let header = Header::new_template(DataRole::Dfp, PowerRole::Source, SpecificationRevision::R3_X);
-        ProtocolLayer::new(driver, header)
+        SourceProtocolLayer::new(driver, header)
     }
 
     /// Create a new source policy engine with a given `driver` and set of `source_capabilities`.
-    pub fn new(driver: DRIVER, device_policy_manager: DPM, role_swap: bool) -> Self {
+    pub fn new(driver: DRIVER, device_policy_manager: SOURCEDPM, role_swap: bool) -> Self {
         Self {
             device_policy_manager,
             protocol_layer: Self::new_protocol_layer(driver),
@@ -231,7 +238,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
     /// Create a new source policy engine with dual role capabilities,
     /// with a given `driver`, and set of `source_capabilities`, and set of `sink_capabilities`
     /// for the port
-    pub fn new_dual_role(driver: DRIVER, device_policy_manager: DPM, role_swapped: bool) -> Self {
+    pub fn new_dual_role(driver: DRIVER, device_policy_manager: SOURCEDPM, role_swapped: bool) -> Self {
         Self {
             device_policy_manager,
             protocol_layer: Self::new_protocol_layer(driver),
@@ -790,9 +797,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                     .await;
                 State::Ready
             }
-            // 8.3.3.19.8
+            // 8.3.3.19.8.1 (PE_DR_SRC_Give_Sink_Cap):
             State::DrpGiveSinkCap(mode) => {
                 let sink_caps = self.device_policy_manager.sink_capabilities().await;
+
                 match mode {
                     Mode::Spr => {
                         self.protocol_layer.transmit_sink_capabilities(sink_caps).await?;
@@ -851,12 +859,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Source<DRIVER, TIME
                 }
             }
             // 8.3.3.20.2 (PE_VCS_Evaluate_Swap):
-            State::VcsEvaluateSwap(source) => {
-                match self.device_policy_manager.evaluate_swap_request(SwapType::Vconn).await {
-                    true => State::VcsAcceptSwap(*source),
-                    false => State::VcsRejectSwap(*source),
-                }
-            }
+            State::VcsEvaluateSwap(source) => match self.device_policy_manager.evaluate_vconn_swap_request().await {
+                true => State::VcsAcceptSwap(*source),
+                false => State::VcsRejectSwap(*source),
+            },
             // 8.3.3.20.3 (PE_VCS_Accept_Swap):
             State::VcsAcceptSwap(source) => {
                 self.protocol_layer

@@ -244,6 +244,9 @@ impl SinkPowerDataObject {
     }
 }
 
+/// Maximum 7 PDOs for SPR mode
+const MAX_CAPABILITIES_LEN: usize = 7;
+
 /// Sink capabilities message content.
 ///
 /// Contains a list of Power Data Objects describing what power levels the sink
@@ -253,7 +256,7 @@ impl SinkPowerDataObject {
 #[derive(Clone, Debug, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct SinkCapabilities(pub Vec<SinkPowerDataObject, 7>);
+pub struct SinkCapabilities(pub Vec<SinkPowerDataObject, MAX_CAPABILITIES_LEN>);
 
 impl SinkCapabilities {
     /// Create new sink capabilities with a single vSafe5V PDO.
@@ -269,7 +272,7 @@ impl SinkCapabilities {
     }
 
     /// Create sink capabilities from a list of PDOs.
-    pub fn new(pdos: Vec<SinkPowerDataObject, 7>) -> Self {
+    pub fn new(pdos: Vec<SinkPowerDataObject, MAX_CAPABILITIES_LEN>) -> Self {
         Self(pdos)
     }
 

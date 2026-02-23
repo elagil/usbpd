@@ -641,18 +641,6 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         self.driver.wait_for_vbus().await
     }
 
-    /// Wait for the source to provide its capabilities.
-    pub async fn wait_for_source_capabilities(&mut self) -> Result<Message, ProtocolError> {
-        self.receive_message_type(
-            &[
-                MessageType::Data(message::header::DataMessageType::SourceCapabilities),
-                MessageType::Extended(ExtendedMessageType::EprSourceCapabilities),
-            ],
-            TimerType::SinkWaitCap,
-        )
-        .await
-    }
-
     /// Transmit a control message of the provided type.
     pub async fn transmit_control_message(&mut self, message_type: ControlMessageType) -> Result<(), ProtocolError> {
         let message = Message::new(Header::new_control(
@@ -701,43 +689,6 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         let mdo = EprModeDataObject::default().with_action(action).with_data(data);
 
         self.transmit(Message::new_with_data(header, Data::EprMode(mdo))).await
-    }
-
-    /// Wait for the sink to request a capability with the a Request Message.
-    pub async fn wait_for_request(&mut self) -> Result<Message, ProtocolError> {
-        // Only sources await a sink power request
-        debug_assert!(matches!(self.default_header.port_power_role(), PowerRole::Source));
-
-        self.receive_message_type(
-            &[MessageType::Data(message::header::DataMessageType::Request)],
-            TimerType::SenderResponse,
-        )
-        .await
-    }
-
-    /// Wait for the sink to request a capability with an EPR_Request Message
-    pub async fn wait_for_epr_request(&mut self) -> Result<Message, ProtocolError> {
-        // Only sources await a sink power request
-        debug_assert!(matches!(self.default_header.port_power_role(), PowerRole::Source));
-
-        self.receive_message_type(
-            &[MessageType::Data(message::header::DataMessageType::EprRequest)],
-            TimerType::SenderResponse,
-        )
-        .await
-    }
-
-    /// Request a certain power level from the source.
-    pub async fn request_power(&mut self, power_source_request: request::PowerSource) -> Result<(), ProtocolError> {
-        // Only sinks can request from a supply.
-        assert!(matches!(self.default_header.port_power_role(), PowerRole::Sink));
-
-        let message_type = power_source_request.message_type();
-        let num_objects = power_source_request.num_objects();
-        let header = Header::new_data(self.default_header, self.counters.tx_message, message_type, num_objects);
-
-        self.transmit(Message::new_with_data(header, Data::Request(power_source_request)))
-            .await
     }
 
     /// Transmit a chunk request message per USB PD spec 6.12.2.1.2.4.
@@ -838,6 +789,9 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         self.transmit(message).await
     }
 
+    /// Transmit the device's Source Capabilities
+    ///
+    /// Could be sent from a Source or Dual Role Device
     pub async fn transmit_source_capabilities(
         &mut self,
         source_capabilities: &SourceCapabilities,
@@ -860,6 +814,9 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         self.transmit(message).await
     }
 
+    /// Transmit the device's EPR Source Capabilities
+    ///
+    /// Could be sent from a Source or Dual Role Device
     pub async fn transmit_epr_source_capabilities(
         &mut self,
         source_capabilities: &SourceCapabilities,
@@ -880,6 +837,108 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         message.payload = Some(Payload::Extended(extended_payload));
 
         self.transmit(message).await
+    }
+}
+
+#[repr(transparent)]
+#[derive(Debug)]
+/// The USB PD Protocol Layer for a `Sink`
+pub(crate) struct SinkProtocolLayer<DRIVER: Driver, TIMER: Timer>(ProtocolLayer<DRIVER, TIMER>);
+
+impl<DRIVER: Driver, TIMER: Timer> core::ops::Deref for SinkProtocolLayer<DRIVER, TIMER> {
+    type Target = ProtocolLayer<DRIVER, TIMER>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<DRIVER: Driver, TIMER: Timer> core::ops::DerefMut for SinkProtocolLayer<DRIVER, TIMER> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<DRIVER: Driver, TIMER: Timer> SinkProtocolLayer<DRIVER, TIMER> {
+    /// Create a new protocol layer from a driver and default header.
+    pub fn new(driver: DRIVER, default_header: Header) -> Self {
+        Self(ProtocolLayer::new(driver, default_header))
+    }
+
+    /// Wait for the source to provide its capabilities.
+    pub async fn wait_for_source_capabilities(&mut self) -> Result<Message, ProtocolError> {
+        // Only sinks can await capabilities.
+        debug_assert!(matches!(self.default_header.port_power_role(), PowerRole::Sink));
+
+        self.receive_message_type(
+            &[
+                MessageType::Data(message::header::DataMessageType::SourceCapabilities),
+                MessageType::Extended(ExtendedMessageType::EprSourceCapabilities),
+            ],
+            TimerType::SinkWaitCap,
+        )
+        .await
+    }
+
+    /// Request a certain power level from the source.
+    pub async fn request_power(&mut self, power_source_request: request::PowerSource) -> Result<(), ProtocolError> {
+        // Only sinks can request from a supply.
+        debug_assert!(matches!(self.default_header.port_power_role(), PowerRole::Sink));
+
+        let message_type = power_source_request.message_type();
+        let num_objects = power_source_request.num_objects();
+        let header = Header::new_data(self.default_header, self.counters.tx_message, message_type, num_objects);
+
+        self.transmit(Message::new_with_data(header, Data::Request(power_source_request)))
+            .await
+    }
+}
+
+#[repr(transparent)]
+#[derive(Debug)]
+/// The USB PD Protocol Layer for a `Source`
+pub(crate) struct SourceProtocolLayer<DRIVER: Driver, TIMER: Timer>(ProtocolLayer<DRIVER, TIMER>);
+
+impl<DRIVER: Driver, TIMER: Timer> core::ops::Deref for SourceProtocolLayer<DRIVER, TIMER> {
+    type Target = ProtocolLayer<DRIVER, TIMER>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<DRIVER: Driver, TIMER: Timer> core::ops::DerefMut for SourceProtocolLayer<DRIVER, TIMER> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<DRIVER: Driver, TIMER: Timer> SourceProtocolLayer<DRIVER, TIMER> {
+    /// Create a new protocol layer from a driver and default header.
+    pub fn new(driver: DRIVER, default_header: Header) -> Self {
+        Self(ProtocolLayer::new(driver, default_header))
+    }
+
+    /// Wait for the sink to request a capability with a Request Message.
+    pub async fn wait_for_request(&mut self) -> Result<Message, ProtocolError> {
+        // Only sources await a sink power request
+        debug_assert!(matches!(self.default_header.port_power_role(), PowerRole::Source));
+
+        self.receive_message_type(
+            &[MessageType::Data(message::header::DataMessageType::Request)],
+            TimerType::SenderResponse,
+        )
+        .await
+    }
+
+    /// Wait for the sink to request a capability with an EPR_Request Message
+    pub async fn wait_for_epr_request(&mut self) -> Result<Message, ProtocolError> {
+        // Only sources await a sink power request
+        debug_assert!(matches!(self.default_header.port_power_role(), PowerRole::Source));
+
+        self.receive_message_type(
+            &[MessageType::Data(message::header::DataMessageType::EprRequest)],
+            TimerType::SenderResponse,
+        )
+        .await
     }
 }
 
