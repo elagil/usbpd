@@ -5,8 +5,7 @@ use embassy_futures::select::{Either, Either3, select, select3};
 use usbpd_traits::Driver;
 
 use super::device_policy_manager::{
-    CapabilityResponse, DevicePolicyManager as DPM, DualRoleDevicePolicyManager as DRP_DPM,
-    EprDevicePolicyManager as EPR_DPM, Event, Info, SwapType,
+    CapabilityResponse, SourceDpm, Event, Info, SwapType,
 };
 use crate::counters::Counter;
 use crate::protocol_layer::message::data::request::PowerSource;
@@ -167,14 +166,11 @@ enum FastPowerRoleSwap {
     WaitSourceOn,
 }
 
-// FIXME: Allow trait aliasing?
-// trait FullDevicePolicyManager = DevicePolicyManager + EprDevicePolicyManager + DualRoleDevicePolicyManager;
-
 /// Implementation of the source policy engine.
 /// See spec, [8.3.3.2]
 #[derive(Debug)]
-pub struct Source<DRIVER: Driver, TIMER: Timer, SOURCEDPM: DPM + EPR_DPM + DRP_DPM> {
-    device_policy_manager: SOURCEDPM,
+pub struct Source<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> {
+    device_policy_manager: DPM,
     protocol_layer: SourceProtocolLayer<DRIVER, TIMER>,
     hard_reset_counter: Counter,
     caps_counter: Counter,
@@ -208,14 +204,14 @@ impl From<ProtocolError> for Error {
     }
 }
 
-impl<DRIVER: Driver, TIMER: Timer, SOURCEDPM: DPM + EPR_DPM + DRP_DPM> Source<DRIVER, TIMER, SOURCEDPM> {
+impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
     fn new_protocol_layer(driver: DRIVER) -> SourceProtocolLayer<DRIVER, TIMER> {
         let header = Header::new_template(DataRole::Dfp, PowerRole::Source, SpecificationRevision::R3_X);
         SourceProtocolLayer::new(driver, header)
     }
 
     /// Create a new source policy engine with a given `driver` and set of `source_capabilities`.
-    pub fn new(driver: DRIVER, device_policy_manager: SOURCEDPM, role_swap: bool) -> Self {
+    pub fn new(driver: DRIVER, device_policy_manager: DPM, role_swap: bool) -> Self {
         Self {
             device_policy_manager,
             protocol_layer: Self::new_protocol_layer(driver),
@@ -238,7 +234,7 @@ impl<DRIVER: Driver, TIMER: Timer, SOURCEDPM: DPM + EPR_DPM + DRP_DPM> Source<DR
     /// Create a new source policy engine with dual role capabilities,
     /// with a given `driver`, and set of `source_capabilities`, and set of `sink_capabilities`
     /// for the port
-    pub fn new_dual_role(driver: DRIVER, device_policy_manager: SOURCEDPM, role_swapped: bool) -> Self {
+    pub fn new_dual_role(driver: DRIVER, device_policy_manager: DPM, role_swapped: bool) -> Self {
         Self {
             device_policy_manager,
             protocol_layer: Self::new_protocol_layer(driver),

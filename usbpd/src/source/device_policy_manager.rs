@@ -65,9 +65,12 @@ pub enum SwapType {
     Power,
 }
 
+// FIXME: Use trait aliasing once stable: https://github.com/rust-lang/rust/issues/41517
+/// Full implementation for the source device policy manager.
+/// The default implementations of the traits will handle the case where a feature is unsupported.
+pub trait SourceDpm: DevicePolicyManager + EprDevicePolicyManager + DualRoleDevicePolicyManager {}
+
 /// Trait for the device policy manager.
-/// Functions labeled **EPR** do not need to be implemented on non-epr sources.
-/// Functions labeled **DRP** do not need to be implemented on source-only devices.
 ///
 /// This entity commands the policy engine and enforces device policy.
 pub trait DevicePolicyManager {
