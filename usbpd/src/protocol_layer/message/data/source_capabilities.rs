@@ -121,12 +121,12 @@ impl Default for FixedSupply {
 }
 
 impl FixedSupply {
-    /// The voltage in 50 millivolts
+    /// Voltage of the Fixed Supply
     pub fn voltage(&self) -> ElectricPotential {
         ElectricPotential::new::<_50millivolts>(self.raw_voltage().into())
     }
 
-    /// The current in centiamperes
+    /// Maximum current of the Fixed Supply
     pub fn max_current(&self) -> ElectricCurrent {
         ElectricCurrent::new::<centiampere>(self.raw_max_current().into())
     }
@@ -158,17 +158,17 @@ bitfield! {
 }
 
 impl Battery {
-    /// The maximum voltage the battery can supply in 50 millivolts
+    /// The maximum voltage the battery can supply
     pub fn max_voltage(&self) -> ElectricPotential {
         ElectricPotential::new::<_50millivolts>(self.raw_max_voltage().into())
     }
 
-    /// The minimum voltage the battery can supply in 50 millivolts
+    /// The minimum voltage the battery can supply
     pub fn min_voltage(&self) -> ElectricPotential {
         ElectricPotential::new::<_50millivolts>(self.raw_min_voltage().into())
     }
 
-    /// The maximum power the battery can supply in 250 milliwatts
+    /// The maximum power the battery can supply
     pub fn max_power(&self) -> Power {
         Power::new::<_250milliwatts>(self.raw_max_power().into())
     }
@@ -192,17 +192,17 @@ bitfield! {
 }
 
 impl VariableSupply {
-    /// The maximum voltage the variable supply can do in 50 millivolts
+    /// The maximum voltage the variable supply is capable of
     pub fn max_voltage(&self) -> ElectricPotential {
         ElectricPotential::new::<_50millivolts>(self.raw_max_voltage().into())
     }
 
-    /// The minimum voltage the variable supply can do in 50 millivolts
+    /// The minimum voltage the variable supply is capable of
     pub fn min_voltage(&self) -> ElectricPotential {
         ElectricPotential::new::<_50millivolts>(self.raw_min_voltage().into())
     }
 
-    /// The maximum current the variable supply can offer in centiamperes
+    /// The maximum current the variable supply can offer
     pub fn max_current(&self) -> ElectricCurrent {
         ElectricCurrent::new::<centiampere>(self.raw_max_current().into())
     }
@@ -222,16 +222,16 @@ pub enum Augmented {
 }
 
 bitfield! {
-    /// Augmented power data object
+    /// Augmented power data object, see PD Spec `6.4.1.2.4`
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     pub struct AugmentedRaw(pub u32): Debug, FromStorage, IntoStorage {
         /// Augmented power data object
         pub kind: u8 @ 30..=31,
-        /// FIXME
+        /// Supply type
         pub supply: u8 @ 28..=29,
-        /// FIXME
+        /// Field for augmented capabilities
         pub power_capabilities: u32 @ 0..=27,
     }
 }
@@ -264,12 +264,12 @@ impl Default for SprProgrammablePowerSupply {
 }
 
 impl SprProgrammablePowerSupply {
-    /// The maximum voltage in decivolts the PPS can be requested to supply
+    /// The maximum voltage the PPS can be requested to supply
     pub fn max_voltage(&self) -> ElectricPotential {
         ElectricPotential::new::<decivolt>(self.raw_max_voltage().into())
     }
 
-    /// The minimum voltage in decivolts the PPS can be requested to supply
+    /// The minimum voltage the PPS can be requested to supply
     pub fn min_voltage(&self) -> ElectricPotential {
         ElectricPotential::new::<decivolt>(self.raw_min_voltage().into())
     }
@@ -302,17 +302,17 @@ bitfield! {
 }
 
 impl EprAdjustableVoltageSupply {
-    /// Maximum voltage in decivolts
+    /// The maximum voltage the PPS can be requested to supply
     pub fn max_voltage(&self) -> ElectricPotential {
         ElectricPotential::new::<decivolt>(self.raw_max_voltage().into())
     }
 
-    /// Minimum voltage in decivolts
+    /// The minimum voltage the PPS can be requested to supply
     pub fn min_voltage(&self) -> ElectricPotential {
         ElectricPotential::new::<decivolt>(self.raw_min_voltage().into())
     }
 
-    /// PDP in 1 W increments
+    /// Rated power the PPS can supply
     pub fn pd_power(&self) -> Power {
         Power::new::<watt>(self.raw_pd_power().into())
     }
