@@ -4,9 +4,7 @@ use core::marker::PhantomData;
 use embassy_futures::select::{Either, Either3, select, select3};
 use usbpd_traits::Driver;
 
-use super::device_policy_manager::{
-    CapabilityResponse, SourceDpm, Event, Info, SwapType,
-};
+use super::device_policy_manager::{CapabilityResponse, Event, Info, SourceDpm, SwapType};
 use crate::counters::Counter;
 use crate::protocol_layer::message::data::request::PowerSource;
 use crate::protocol_layer::message::data::sink_capabilities::SinkCapabilities;
@@ -55,9 +53,7 @@ enum Contract {
 enum State {
     // States of the policy engine as given by specification.
     // 8.3.3.2 Policy Engine Source Port State Diagram
-    Startup {
-        role_swap: bool,
-    },
+    Startup { role_swap: bool },
     Discovery,
     SendCapabilities,
     NegotiateCapability(PowerSource),
@@ -72,54 +68,23 @@ enum State {
     WaitNewCapabilities,
     EprKeepAlive,
     GiveSourceCap,
-
     // 8.3.3.4 Source Port Soft Reset
     SendSoftReset,
     SoftReset,
-
     // 8.3.3.6 Not Supported Message State
     SendNotSupported,
     NotSupportedReceived,
-
     // 8.3.3.19 Dual-Role Port (DRP) States
     DrpSwap(SwapState),
     DrpGetSourceCap(Mode),
     DrpGiveSinkCap(Mode),
-
+    // 8.3.3.20 Vconn Swap
+    VconnSwap { source: VcsSwapSource, state: VcsState },
+    // 8.3.3.26 EPR States
+    EprMode(EprState),
     // Custom state to signal exit out of source to sink from a power swap
     PrSwapToSinkStartup,
-
-    // 8.3.3.20 Vconn Swap
-    VcsSendSwap(VcsSwapSource),
-    VcsEvaluateSwap(VcsSwapSource),
-    VcsAcceptSwap(VcsSwapSource),
-    VcsRejectSwap(VcsSwapSource),
-    VcsWaitForVconn(VcsSwapSource),
-    VcsTurnOffVconn(VcsSwapSource),
-    VcsTurnOnVconn(VcsSwapSource),
-    VcsSendPsRdy(VcsSwapSource),
-    // FIXME: For now, forcing a different state traversal, resulting in this being unused
-    #[allow(unused)]
-    VcsForceVconn(VcsSwapSource),
-
-    // 8.3.3.26 EPR States
-    EprModeEntry,
-    EprModeEntryAck,
-    EprModeDiscoverCable,
-    EprModeEvaluateCable,
-    EprModeEntrySucceeded,
-    EprModeEntryFailed(u8),
-    EprModeSendExit,
-    EprModeExitReceived,
-
     ErrorRecovery,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-enum VcsSwapSource {
-    Message,
-    Epr,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -164,6 +129,42 @@ enum FastPowerRoleSwap {
     TransitionToOff,
     AssertRd,
     WaitSourceOn,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+enum VcsSwapSource {
+    Message,
+    Epr,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+enum VcsState {
+    SendSwap,
+    EvaluateSwap,
+    AcceptSwap,
+    RejectSwap,
+    WaitForVconn,
+    TurnOffVconn,
+    TurnOnVconn,
+    SendPsRdy,
+    // FIXME: For now, forcing a different state traversal, resulting in this being unused
+    #[allow(unused)]
+    VcsForceVconn,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+enum EprState {
+    Entry,
+    EntryAck,
+    DiscoverCable,
+    EvaluateCable,
+    EntrySucceeded,
+    EntryFailed(u8),
+    SendExit,
+    ExitReceived,
 }
 
 /// Implementation of the source policy engine.
@@ -509,8 +510,11 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                         Event::RequestSinkCapabilities => State::GetSinkCap,
                         Event::RequestSourceCapabilities => State::DrpGetSourceCap(Mode::Spr),
                         Event::RequestEprSourceCapabilities => State::DrpGetSourceCap(Mode::Epr),
-                        Event::ExitEprMode => State::EprModeSendExit,
-                        Event::RequestVconnSwap => State::VcsSendSwap(VcsSwapSource::Message),
+                        Event::ExitEprMode => State::EprMode(EprState::SendExit),
+                        Event::RequestVconnSwap => State::VconnSwap {
+                            source: VcsSwapSource::Message,
+                            state: VcsState::SendSwap,
+                        },
                         Event::RequestDataRoleSwap => State::DrpSwap(SwapState::Data(DataRoleSwap::Send)),
                         Event::RequestPowerRoleSwap => State::DrpSwap(SwapState::Power(PowerRoleSwap::Send)),
                     },
@@ -815,200 +819,11 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
             }
 
             // 8.3.3.20 Source Vconn Swap
-            // 8.3.3.20.1 (PE_VCS_Send_Swap):
-            State::VcsSendSwap(source) => {
-                self.protocol_layer
-                    .transmit_control_message(ControlMessageType::VconnSwap)
-                    .await?;
+            State::VconnSwap { source, state } => self.execute_vconn_swap_state(*source, *state).await?,
 
-                let message = self
-                    .protocol_layer
-                    .receive_message_type(
-                        &[
-                            MessageType::Control(ControlMessageType::Accept),
-                            MessageType::Control(ControlMessageType::Reject),
-                            MessageType::Control(ControlMessageType::Wait),
-                            MessageType::Control(ControlMessageType::NotSupported),
-                        ],
-                        TimerType::SenderResponse,
-                    )
-                    .await;
-
-                if let Err(err) = message {
-                    match err {
-                        ProtocolError::RxError(RxError::ReceiveTimeout) => State::Ready,
-                        _ => Err(err)?,
-                    }
-                } else {
-                    let message = message.unwrap();
-                    match message.header.message_type() {
-                        MessageType::Control(ControlMessageType::Accept) => match self.vconn_source {
-                            true => State::VcsWaitForVconn(*source),
-                            false => State::VcsTurnOnVconn(*source),
-                        },
-                        MessageType::Control(ControlMessageType::Reject)
-                        | MessageType::Control(ControlMessageType::Wait) => State::Ready,
-                        // May also transition to ForceVconn if NotSupported message and port presently not vconn source
-                        MessageType::Control(ControlMessageType::NotSupported) => State::NotSupportedReceived,
-                        _ => unreachable!(),
-                    }
-                }
-            }
-            // 8.3.3.20.2 (PE_VCS_Evaluate_Swap):
-            State::VcsEvaluateSwap(source) => match self.device_policy_manager.evaluate_vconn_swap_request().await {
-                true => State::VcsAcceptSwap(*source),
-                false => State::VcsRejectSwap(*source),
-            },
-            // 8.3.3.20.3 (PE_VCS_Accept_Swap):
-            State::VcsAcceptSwap(source) => {
-                self.protocol_layer
-                    .transmit_control_message(ControlMessageType::Accept)
-                    .await?;
-                match self.vconn_source {
-                    true => State::VcsWaitForVconn(*source),
-                    false => State::VcsTurnOnVconn(*source),
-                }
-            }
-            // 8.3.3.20.4 (PE_VCS_Reject_Swap):
-            State::VcsRejectSwap(source) => {
-                // FIXME: Wait Message logic
-                self.protocol_layer
-                    .transmit_control_message(ControlMessageType::Reject)
-                    .await?;
-                match source {
-                    VcsSwapSource::Message => State::Ready,
-                    VcsSwapSource::Epr => State::EprModeDiscoverCable,
-                }
-            }
-            // 8.3.3.20.5 (PE_VCS_Wait_for_Vconn):
-            State::VcsWaitForVconn(source) => {
-                self.protocol_layer
-                    .receive_message_type(&[MessageType::Control(ControlMessageType::PsRdy)], TimerType::VCONNOn)
-                    .await?;
-
-                State::VcsTurnOffVconn(*source)
-            }
-            // 8.3.3.20.6 (PE_VCS_Turn_Off_Vconn):
-            State::VcsTurnOffVconn(source) => {
-                self.device_policy_manager
-                    .drive_vconn(false)
-                    .await
-                    .map_err(|_| Error::ReconnectionRequired)?;
-                match source {
-                    VcsSwapSource::Message => State::Ready,
-                    VcsSwapSource::Epr => State::EprModeDiscoverCable,
-                }
-            }
-            // 8.3.3.20.7 (PE_VCS_Turn_On_Vconn):
-            State::VcsTurnOnVconn(source) => {
-                self.device_policy_manager
-                    .drive_vconn(true)
-                    .await
-                    .map_err(|_| Error::ReconnectionRequired)?;
-                State::VcsSendPsRdy(*source)
-            }
-            // 8.3.3.20.8 (PE_VCS_Send_PS_Rdy):
-            State::VcsSendPsRdy(source) => {
-                self.protocol_layer
-                    .transmit_control_message(ControlMessageType::PsRdy)
-                    .await?;
-                match source {
-                    VcsSwapSource::Message => State::Ready,
-                    VcsSwapSource::Epr => State::EprModeDiscoverCable,
-                }
-            }
-            // 8.3.3.20.9 (PE_VCS_Force_Vconn):
-            State::VcsForceVconn(source) => {
-                self.device_policy_manager
-                    .drive_vconn(true)
-                    .await
-                    .map_err(|_| Error::ReconnectionRequired)?;
-                match source {
-                    VcsSwapSource::Message => State::Ready,
-                    VcsSwapSource::Epr => State::EprModeDiscoverCable,
-                }
-            }
-
+            // 8.3.3.26 EPR States
             // FIXME: Source EPR
-            // 8.3.3.26.1.1 (PE_SRC_Evaluate_EPR_Mode_Entry):
-            State::EprModeEntry => match self.device_policy_manager.epr_capable() {
-                true => State::EprModeEntryAck,
-                false => State::EprModeEntryFailed(epr_mode::DataEnterFailed::SourceUnableToEnterEprMode.into()),
-            },
-            // 8.3.3.26.1.2 (PE_SRC_EPR_Mode_Entry_Ack):
-            State::EprModeEntryAck => {
-                self.protocol_layer
-                    .transmit_epr_mode(epr_mode::Action::EnterAcknowledged, 0)
-                    .await?;
-
-                match (self.device_policy_manager.epr_cable_good(), self.vconn_source) {
-                    (false, true) => State::VcsSendSwap(VcsSwapSource::Epr),
-                    (false, false) => State::EprModeDiscoverCable,
-                    (true, _) => State::EprModeEvaluateCable,
-                }
-            }
-            // 8.3.3.26.1.3 (PE_SRC_EPR_Mode_Discover_Cable):
-            State::EprModeDiscoverCable => {
-                match self.vconn_source {
-                    // FIXME: Discovery is done implicitly through DPM right now,
-                    // switch to using PE_INIT_PORT_VDM_Identity_Request
-                    true => State::EprModeEvaluateCable,
-                    false => {
-                        State::EprModeEntryFailed(epr_mode::DataEnterFailed::SourceFailedToBecomeVconnSource.into())
-                    }
-                }
-            }
-            // 8.3.3.26.1.4 (PE_SRC_EPR_Mode_Evaluate_Cable_EPR):
-            State::EprModeEvaluateCable => match self.device_policy_manager.epr_cable_good() {
-                true => State::EprModeEntrySucceeded,
-                false => State::EprModeEntryFailed(epr_mode::DataEnterFailed::CableNotEprCapable.into()),
-            },
-            // 8.3.3.26.1.5 (PE_SRC_EPR_Mode_Entry_Succeeded):
-            State::EprModeEntrySucceeded => {
-                self.protocol_layer
-                    .transmit_epr_mode(epr_mode::Action::EnterSucceeded, 0)
-                    .await?;
-                // FIXME: Set EPR headers
-                self.mode = Mode::Epr;
-                State::SendCapabilities
-            }
-            // 8.3.3.26.1.6 (PE_SRC_EPR_Mode_Entry_Failed):
-            State::EprModeEntryFailed(data) => {
-                self.protocol_layer
-                    .transmit_epr_mode(epr_mode::Action::EnterFailed, *data)
-                    .await?;
-                State::Ready
-            }
-            // 8.3.3.26.3.1 (PE_SRC_Send_EPR_Mode_Exit):
-            State::EprModeSendExit => {
-                self.protocol_layer.transmit_epr_mode(epr_mode::Action::Exit, 0).await?;
-                // FIXME: Clear EPR headers
-                self.mode = Mode::Spr;
-                State::SendCapabilities
-            }
-            // 8.3.3.26.3.2 (PE_SRC_EPR_Mode_Exit_Received):
-            State::EprModeExitReceived => {
-                self.mode = Mode::Spr;
-                // FIXME: Clear EPR headers
-                match self.contract {
-                    Contract::Explicit(power_source) => {
-                        let epr_capabilities = self.device_policy_manager.epr_source_capabilities();
-
-                        if epr_capabilities.has_epr_pdo_in_spr_positions() {
-                            State::HardReset
-                        } else if epr_capabilities
-                            .spr_pdos()
-                            .any(|(pos, _pdo)| pos == power_source.object_position())
-                        {
-                            State::SendCapabilities
-                        } else {
-                            State::HardReset
-                        }
-                    }
-                    Contract::Safe5V | Contract::Implicit => State::Ready,
-                    _ => State::HardReset,
-                }
-            }
+            State::EprMode(state) => self.execute_epr_state(*state).await?,
 
             // 8.3.3.28.1
             State::ErrorRecovery => {
@@ -1210,6 +1025,241 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
         }
     }
 
+    // 8.3.3.20 Vconn Swap
+    async fn execute_vconn_swap_state(&mut self, source: VcsSwapSource, state: VcsState) -> Result<State, Error> {
+        match state {
+            // 8.3.3.20.1 (PE_VCS_Send_Swap):
+            VcsState::SendSwap => {
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::VconnSwap)
+                    .await?;
+
+                let message = self
+                    .protocol_layer
+                    .receive_message_type(
+                        &[
+                            MessageType::Control(ControlMessageType::Accept),
+                            MessageType::Control(ControlMessageType::Reject),
+                            MessageType::Control(ControlMessageType::Wait),
+                            MessageType::Control(ControlMessageType::NotSupported),
+                        ],
+                        TimerType::SenderResponse,
+                    )
+                    .await;
+
+                if let Err(err) = message {
+                    match err {
+                        ProtocolError::RxError(RxError::ReceiveTimeout) => Ok(State::Ready),
+                        _ => Err(err)?,
+                    }
+                } else {
+                    let message = message.unwrap();
+                    match message.header.message_type() {
+                        MessageType::Control(ControlMessageType::Accept) => match self.vconn_source {
+                            true => Ok(State::VconnSwap {
+                                source,
+                                state: VcsState::WaitForVconn,
+                            }),
+                            false => Ok(State::VconnSwap {
+                                source,
+                                state: VcsState::TurnOnVconn,
+                            }),
+                        },
+                        MessageType::Control(ControlMessageType::Reject)
+                        | MessageType::Control(ControlMessageType::Wait) => Ok(State::Ready),
+                        // May also transition to ForceVconn if NotSupported message and port presently not vconn source
+                        MessageType::Control(ControlMessageType::NotSupported) => Ok(State::NotSupportedReceived),
+                        _ => unreachable!(),
+                    }
+                }
+            }
+            // 8.3.3.20.2 (PE_VCS_Evaluate_Swap):
+            VcsState::EvaluateSwap => match self.device_policy_manager.evaluate_vconn_swap_request().await {
+                true => Ok(State::VconnSwap {
+                    source,
+                    state: VcsState::AcceptSwap,
+                }),
+                false => Ok(State::VconnSwap {
+                    source,
+                    state: VcsState::RejectSwap,
+                }),
+            },
+            // 8.3.3.20.3 (PE_VCS_Accept_Swap):
+            VcsState::AcceptSwap => {
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::Accept)
+                    .await?;
+                match self.vconn_source {
+                    true => Ok(State::VconnSwap {
+                        source,
+                        state: VcsState::WaitForVconn,
+                    }),
+                    false => Ok(State::VconnSwap {
+                        source,
+                        state: VcsState::TurnOnVconn,
+                    }),
+                }
+            }
+            // 8.3.3.20.4 (PE_VCS_Reject_Swap):
+            VcsState::RejectSwap => {
+                // FIXME: Wait Message logic
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::Reject)
+                    .await?;
+                match source {
+                    VcsSwapSource::Message => Ok(State::Ready),
+                    VcsSwapSource::Epr => Ok(State::EprMode(EprState::DiscoverCable)),
+                }
+            }
+            // 8.3.3.20.5 (PE_VCS_Wait_for_Vconn):
+            VcsState::WaitForVconn => {
+                self.protocol_layer
+                    .receive_message_type(&[MessageType::Control(ControlMessageType::PsRdy)], TimerType::VCONNOn)
+                    .await?;
+
+                Ok(State::VconnSwap {
+                    source,
+                    state: VcsState::TurnOffVconn,
+                })
+            }
+            // 8.3.3.20.6 (PE_VCS_Turn_Off_Vconn):
+            VcsState::TurnOffVconn => {
+                self.device_policy_manager
+                    .drive_vconn(false)
+                    .await
+                    .map_err(|_| Error::ReconnectionRequired)?;
+                match source {
+                    VcsSwapSource::Message => Ok(State::Ready),
+                    VcsSwapSource::Epr => Ok(State::EprMode(EprState::DiscoverCable)),
+                }
+            }
+            // 8.3.3.20.7 (PE_VCS_Turn_On_Vconn):
+            VcsState::TurnOnVconn => {
+                self.device_policy_manager
+                    .drive_vconn(true)
+                    .await
+                    .map_err(|_| Error::ReconnectionRequired)?;
+                Ok(State::VconnSwap {
+                    source,
+                    state: VcsState::SendPsRdy,
+                })
+            }
+            // 8.3.3.20.8 (PE_VCS_Send_PS_Rdy):
+            VcsState::SendPsRdy => {
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::PsRdy)
+                    .await?;
+                match source {
+                    VcsSwapSource::Message => Ok(State::Ready),
+                    VcsSwapSource::Epr => Ok(State::EprMode(EprState::DiscoverCable)),
+                }
+            }
+            // 8.3.3.20.9 (PE_VCS_Force_Vconn):
+            VcsState::VcsForceVconn => {
+                self.device_policy_manager
+                    .drive_vconn(true)
+                    .await
+                    .map_err(|_| Error::ReconnectionRequired)?;
+                match source {
+                    VcsSwapSource::Message => Ok(State::Ready),
+                    VcsSwapSource::Epr => Ok(State::EprMode(EprState::DiscoverCable)),
+                }
+            }
+        }
+    }
+
+    // 8.3.3.26 EPR States
+    async fn execute_epr_state(&mut self, state: EprState) -> Result<State, Error> {
+        match state {
+            // 8.3.3.26.1.1 (PE_SRC_Evaluate_EPR_Mode_Entry):
+            EprState::Entry => match self.device_policy_manager.epr_capable() {
+                true => Ok(State::EprMode(EprState::EntryAck)),
+                false => Ok(State::EprMode(EprState::EntryFailed(
+                    epr_mode::DataEnterFailed::SourceUnableToEnterEprMode.into(),
+                ))),
+            },
+            // 8.3.3.26.1.2 (PE_SRC_EPR_Mode_Entry_Ack):
+            EprState::EntryAck => {
+                self.protocol_layer
+                    .transmit_epr_mode(epr_mode::Action::EnterAcknowledged, 0)
+                    .await?;
+
+                match (self.device_policy_manager.epr_cable_good(), self.vconn_source) {
+                    (false, true) => Ok(State::VconnSwap {
+                        source: VcsSwapSource::Epr,
+                        state: VcsState::SendSwap,
+                    }),
+                    (false, false) => Ok(State::EprMode(EprState::DiscoverCable)),
+                    (true, _) => Ok(State::EprMode(EprState::EvaluateCable)),
+                }
+            }
+            // 8.3.3.26.1.3 (PE_SRC_EPR_Mode_Discover_Cable):
+            EprState::DiscoverCable => {
+                match self.vconn_source {
+                    // FIXME: Discovery is done implicitly through DPM right now,
+                    // switch to using PE_INIT_PORT_VDM_Identity_Request
+                    true => Ok(State::EprMode(EprState::EvaluateCable)),
+                    false => Ok(State::EprMode(EprState::EntryFailed(
+                        epr_mode::DataEnterFailed::SourceFailedToBecomeVconnSource.into(),
+                    ))),
+                }
+            }
+            // 8.3.3.26.1.4 (PE_SRC_EPR_Mode_Evaluate_Cable_EPR):
+            EprState::EvaluateCable => match self.device_policy_manager.epr_cable_good() {
+                true => Ok(State::EprMode(EprState::EntrySucceeded)),
+                false => Ok(State::EprMode(EprState::EntryFailed(
+                    epr_mode::DataEnterFailed::CableNotEprCapable.into(),
+                ))),
+            },
+            // 8.3.3.26.1.5 (PE_SRC_EPR_Mode_Entry_Succeeded):
+            EprState::EntrySucceeded => {
+                self.protocol_layer
+                    .transmit_epr_mode(epr_mode::Action::EnterSucceeded, 0)
+                    .await?;
+                // FIXME: Set EPR headers
+                self.mode = Mode::Epr;
+                Ok(State::SendCapabilities)
+            }
+            // 8.3.3.26.1.6 (PE_SRC_EPR_Mode_Entry_Failed):
+            EprState::EntryFailed(data) => {
+                self.protocol_layer
+                    .transmit_epr_mode(epr_mode::Action::EnterFailed, data)
+                    .await?;
+                Ok(State::Ready)
+            }
+            // 8.3.3.26.3.1 (PE_SRC_Send_EPR_Mode_Exit):
+            EprState::SendExit => {
+                self.protocol_layer.transmit_epr_mode(epr_mode::Action::Exit, 0).await?;
+                // FIXME: Clear EPR headers
+                self.mode = Mode::Spr;
+                Ok(State::SendCapabilities)
+            }
+            // 8.3.3.26.3.2 (PE_SRC_EPR_Mode_Exit_Received):
+            EprState::ExitReceived => {
+                self.mode = Mode::Spr;
+                // FIXME: Clear EPR headers
+                match self.contract {
+                    Contract::Explicit(power_source) => {
+                        let epr_capabilities = self.device_policy_manager.epr_source_capabilities();
+
+                        if epr_capabilities.has_epr_pdo_in_spr_positions() {
+                            Ok(State::HardReset)
+                        } else if epr_capabilities
+                            .spr_pdos()
+                            .any(|(pos, _pdo)| pos == power_source.object_position())
+                        {
+                            Ok(State::SendCapabilities)
+                        } else {
+                            Ok(State::HardReset)
+                        }
+                    }
+                    Contract::Safe5V | Contract::Implicit => Ok(State::Ready),
+                    _ => Ok(State::HardReset),
+                }
+            }
+        }
+    }
+
     async fn match_message_to_state(&mut self, message: Message) -> Result<State, Error> {
         let state = match message.header.message_type() {
             MessageType::Data(DataMessageType::Request) => {
@@ -1242,12 +1292,12 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                 if let Some(Payload::Data(Data::EprMode(epr_data))) = message.payload {
                     match epr_data.action() {
                         epr_mode::Action::Enter => match self.mode {
-                            Mode::Spr => State::EprModeEntry,
+                            Mode::Spr => State::EprMode(EprState::Entry),
                             Mode::Epr => State::HardReset,
                         },
                         epr_mode::Action::Exit => match self.mode {
                             Mode::Spr => State::HardReset,
-                            Mode::Epr => State::EprModeExitReceived,
+                            Mode::Epr => State::EprMode(EprState::ExitReceived),
                         },
                         _ => State::SendNotSupported,
                     }
@@ -1263,7 +1313,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                 Mode::Epr => State::GiveSourceCap,
             },
 
-            MessageType::Control(ControlMessageType::VconnSwap) => State::VcsEvaluateSwap(VcsSwapSource::Message),
+            MessageType::Control(ControlMessageType::VconnSwap) => State::VconnSwap {
+                source: VcsSwapSource::Message,
+                state: VcsState::EvaluateSwap,
+            },
 
             MessageType::Control(ControlMessageType::DrSwap) => {
                 if !self.dual_role {
