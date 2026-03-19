@@ -42,9 +42,8 @@ enum Contract {
     TransitionToExplicit,
     Explicit(PowerSource),
 
-    // FIXME: Source EPR support may use this enum
-    #[allow(unused)]
-    Invalid,
+    // Source EPR support may use this enum
+    _Invalid,
 }
 
 /// Source states.
@@ -211,7 +210,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
         SourceProtocolLayer::new(driver, header)
     }
 
-    /// Create a new source policy engine with a given `driver` and set of `source_capabilities`.
+    /// Create a new source policy engine with a given `driver` that implements SourceDPM.
     pub fn new(driver: DRIVER, device_policy_manager: DPM, role_swap: bool) -> Self {
         Self {
             device_policy_manager,
@@ -220,10 +219,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
             caps_counter: Counter::new(crate::counters::CounterType::Caps),
 
             state: State::Startup { role_swap },
-            contract: match role_swap {
-                true => Contract::Implicit,
-                false => Contract::default(),
-            },
+            contract: Contract::default(),
             mode: Mode::default(),
             dual_role: false,
             vconn_source: true,
@@ -233,8 +229,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
     }
 
     /// Create a new source policy engine with dual role capabilities,
-    /// with a given `driver`, and set of `source_capabilities`, and set of `sink_capabilities`
-    /// for the port
+    /// with a given `driver` that implements both SourceDPM and SinkDPM (at least to some extent).
     pub fn new_dual_role(driver: DRIVER, device_policy_manager: DPM, role_swapped: bool) -> Self {
         Self {
             device_policy_manager,
@@ -357,6 +352,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
             // 8.3.3.2.1 (PE_SR_Startup):
             State::Startup { role_swap } => {
                 self.contract = Default::default();
+                self.mode = Default::default();
                 self.protocol_layer.reset();
                 self.caps_counter.reset();
 
@@ -365,8 +361,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     TimerType::get_timer::<TIMER>(TimerType::SwapSourceStart).await;
                 }
 
-                // FIXME: Sources shall remain in the Startup state until a plug is Attached
-                // For now, assume that a Source driver will only be ran after an attach occurs
+                self.protocol_layer.wait_for_vbus().await;
 
                 State::SendCapabilities
             }
@@ -562,15 +557,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                 };
                 self.protocol_layer.transmit_control_message(message_type).await?;
 
-                match self.contract {
-                    Contract::Invalid => {
-                        if message_type == ControlMessageType::Reject {
-                            State::HardReset
-                        } else {
-                            State::WaitNewCapabilities
-                        }
-                    }
-                    Contract::Explicit(_) => State::Ready,
+                match (self.contract, message_type) {
+                    (Contract::_Invalid, ControlMessageType::Reject) => State::HardReset,
+                    (Contract::_Invalid, _) => State::WaitNewCapabilities,
+                    (Contract::Explicit(_), _) => State::Ready,
                     _ => State::WaitNewCapabilities,
                 }
             }
@@ -612,11 +602,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     .await
                     .map_err(|_| Error::PortPartnerUnresponsive)?;
 
-                // Hard Reset shall cause EPR Mode to be exited
-                self.mode = Mode::Spr;
-
-                // Reset contract to default
-                self.contract = Contract::Safe5V;
+                // Done in State::Startup
+                // Hard Reset shall:
+                // - Exit EPR mode
+                // - Reset contract to default
 
                 State::Startup { role_swap: false }
             }
@@ -656,21 +645,14 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     }
                 };
 
-                let response = if let Ok(message) = message {
-                    // Message success, deal with payload:
-                    let capabilities = match message.payload {
-                        Some(Payload::Data(Data::SinkCapabilities(caps))) => caps,
-                        Some(Payload::Extended(Extended::EprSinkCapabilities(pdos))) => SinkCapabilities(pdos),
+                let response = match message {
+                    Ok(message) => match message.payload {
+                        Some(Payload::Data(Data::SinkCapabilities(caps))) => Some(caps),
+                        Some(Payload::Extended(Extended::EprSinkCapabilities(pdos))) => Some(SinkCapabilities(pdos)),
                         _ => unreachable!(),
-                    };
-                    Some(capabilities)
-                } else if let Err(ProtocolError::RxError(RxError::ReceiveTimeout)) = message {
-                    // Did not receive a capability, which should be handled explicitly here
-                    None
-                } else {
-                    // Propogate the error if it wasn't the receive timeout
-                    message?;
-                    unreachable!()
+                    },
+                    Err(ProtocolError::RxError(RxError::ReceiveTimeout)) => None,
+                    Err(err) => return Err(Error::Protocol(err)),
                 };
 
                 let info = match self.mode {
@@ -684,19 +666,26 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
             // 8.3.3.2.13 (PE_SRC_Wait_New_Capabilities):
             State::WaitNewCapabilities => {
                 // Transition to SendCapabilities only when the DPM indicates the source capabilities have changed
-                let mut wait_time: usize = 0;
+                const WAIT_TIME_INCREMENT_S: usize = 5;
+                let mut wait_time_s: usize = 0;
                 loop {
-                    match select(self.device_policy_manager.get_event(), TIMER::after_millis(5000)).await {
+                    // FIXME: Determine whether to also .await upon Hard/SoftResets
+                    match select(
+                        self.device_policy_manager.get_event(),
+                        TIMER::after_millis(1000 * WAIT_TIME_INCREMENT_S as u64),
+                    )
+                    .await
+                    {
                         Either::First(event) => {
                             if event == Event::UpdatedSourceCapabilities {
                                 break;
                             }
                         }
                         Either::Second(_timeout) => {
-                            wait_time += 5;
+                            wait_time_s += WAIT_TIME_INCREMENT_S;
                             warn!(
                                 "{} seconds have passed waiting for updated source capabilities!",
-                                wait_time
+                                wait_time_s
                             );
                         }
                     }
@@ -1047,14 +1036,8 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     )
                     .await;
 
-                if let Err(err) = message {
-                    match err {
-                        ProtocolError::RxError(RxError::ReceiveTimeout) => Ok(State::Ready),
-                        _ => Err(err)?,
-                    }
-                } else {
-                    let message = message.unwrap();
-                    match message.header.message_type() {
+                match message {
+                    Ok(message) => match message.header.message_type() {
                         MessageType::Control(ControlMessageType::Accept) => match self.vconn_source {
                             true => Ok(State::VconnSwap {
                                 source,
@@ -1070,7 +1053,9 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                         // May also transition to ForceVconn if NotSupported message and port presently not vconn source
                         MessageType::Control(ControlMessageType::NotSupported) => Ok(State::NotSupportedReceived),
                         _ => unreachable!(),
-                    }
+                    },
+                    Err(ProtocolError::RxError(RxError::ReceiveTimeout)) => Ok(State::Ready),
+                    Err(err) => Err(Error::Protocol(err)),
                 }
             }
             // 8.3.3.20.2 (PE_VCS_Evaluate_Swap):
@@ -1195,22 +1180,26 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
             }
             // 8.3.3.26.1.3 (PE_SRC_EPR_Mode_Discover_Cable):
             EprState::DiscoverCable => {
-                match self.vconn_source {
+                if self.vconn_source {
                     // FIXME: Discovery is done implicitly through DPM right now,
                     // switch to using PE_INIT_PORT_VDM_Identity_Request
-                    true => Ok(State::EprMode(EprState::EvaluateCable)),
-                    false => Ok(State::EprMode(EprState::EntryFailed(
+                    Ok(State::EprMode(EprState::EvaluateCable))
+                } else {
+                    Ok(State::EprMode(EprState::EntryFailed(
                         epr_mode::DataEnterFailed::SourceFailedToBecomeVconnSource.into(),
-                    ))),
+                    )))
                 }
             }
             // 8.3.3.26.1.4 (PE_SRC_EPR_Mode_Evaluate_Cable_EPR):
-            EprState::EvaluateCable => match self.device_policy_manager.epr_cable_good() {
-                true => Ok(State::EprMode(EprState::EntrySucceeded)),
-                false => Ok(State::EprMode(EprState::EntryFailed(
-                    epr_mode::DataEnterFailed::CableNotEprCapable.into(),
-                ))),
-            },
+            EprState::EvaluateCable => {
+                if self.device_policy_manager.epr_cable_good() {
+                    Ok(State::EprMode(EprState::EntrySucceeded))
+                } else {
+                    Ok(State::EprMode(EprState::EntryFailed(
+                        epr_mode::DataEnterFailed::CableNotEprCapable.into(),
+                    )))
+                }
+            }
             // 8.3.3.26.1.5 (PE_SRC_EPR_Mode_Entry_Succeeded):
             EprState::EntrySucceeded => {
                 self.protocol_layer
@@ -1267,12 +1256,11 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     return Err(Error::Protocol(ProtocolError::RxError(RxError::HardReset)));
                 }
 
-                let request = match message.payload {
-                    Some(Payload::Data(Data::Request(power_source))) => power_source,
-                    _ => unreachable!(),
+                let Some(Payload::Data(Data::Request(power_source))) = message.payload else {
+                    unreachable!();
                 };
 
-                State::NegotiateCapability(request)
+                State::NegotiateCapability(power_source)
             }
 
             MessageType::Data(DataMessageType::EprRequest) => {
@@ -1280,31 +1268,27 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     return Err(Error::Protocol(ProtocolError::RxError(RxError::HardReset)));
                 }
 
-                let request = match message.payload {
-                    Some(Payload::Data(Data::Request(power_source))) => power_source,
-                    _ => unreachable!(),
+                let Some(Payload::Data(Data::Request(power_source))) = message.payload else {
+                    unreachable!();
                 };
 
-                State::NegotiateCapability(request)
+                State::NegotiateCapability(power_source)
             }
 
-            MessageType::Data(DataMessageType::EprMode) => {
-                if let Some(Payload::Data(Data::EprMode(epr_data))) = message.payload {
-                    match epr_data.action() {
-                        epr_mode::Action::Enter => match self.mode {
-                            Mode::Spr => State::EprMode(EprState::Entry),
-                            Mode::Epr => State::HardReset,
-                        },
-                        epr_mode::Action::Exit => match self.mode {
-                            Mode::Spr => State::HardReset,
-                            Mode::Epr => State::EprMode(EprState::ExitReceived),
-                        },
-                        _ => State::SendNotSupported,
-                    }
-                } else {
-                    State::SendNotSupported
-                }
-            }
+            MessageType::Data(DataMessageType::EprMode) => match message.payload {
+                Some(Payload::Data(Data::EprMode(epr_data))) => match epr_data.action() {
+                    epr_mode::Action::Enter => match self.mode {
+                        Mode::Spr => State::EprMode(EprState::Entry),
+                        Mode::Epr => State::HardReset,
+                    },
+                    epr_mode::Action::Exit => match self.mode {
+                        Mode::Spr => State::HardReset,
+                        Mode::Epr => State::EprMode(EprState::ExitReceived),
+                    },
+                    _ => State::SendNotSupported,
+                },
+                _ => State::SendNotSupported,
+            },
 
             MessageType::Control(ControlMessageType::SoftReset) => State::SoftReset,
 
@@ -1329,42 +1313,48 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
             }
 
             // 8.3.3.19.3.1
-            MessageType::Control(ControlMessageType::PrSwap) => match self.dual_role {
-                true => State::DrpSwap(SwapState::Power(PowerRoleSwap::Evaluate)),
-                false => State::SendNotSupported,
-            },
-
-            // 8.3.3.19.5.1
-            MessageType::Control(ControlMessageType::FrSwap) => match self.dual_role {
-                true => State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::Evaluate)),
-                false => State::SendNotSupported,
-            },
-
-            MessageType::Control(ControlMessageType::GetSinkCap) => match self.dual_role {
-                true => State::DrpGiveSinkCap(Mode::Spr),
-                false => State::SendNotSupported,
-            },
-
-            MessageType::Control(ControlMessageType::NotSupported) => State::NotSupportedReceived,
-
-            MessageType::Extended(ExtendedMessageType::ExtendedControl) => {
-                if let Some(Payload::Extended(Extended::ExtendedControl(ctrl))) = &message.payload {
-                    match ctrl.message_type() {
-                        ExtendedControlMessageType::EprGetSourceCap => match self.mode {
-                            Mode::Spr => State::GiveSourceCap,
-                            Mode::Epr => State::SendCapabilities,
-                        },
-                        ExtendedControlMessageType::EprGetSinkCap => match self.dual_role {
-                            true => State::DrpGiveSinkCap(Mode::Epr),
-                            false => State::SendNotSupported,
-                        },
-                        ExtendedControlMessageType::EprKeepAlive => State::EprKeepAlive,
-                        ExtendedControlMessageType::EprKeepAliveAck => State::SendNotSupported, // FIXME: Source EPR
-                    }
+            MessageType::Control(ControlMessageType::PrSwap) => {
+                if self.dual_role {
+                    State::DrpSwap(SwapState::Power(PowerRoleSwap::Evaluate))
                 } else {
                     State::SendNotSupported
                 }
             }
+
+            // 8.3.3.19.5.1
+            MessageType::Control(ControlMessageType::FrSwap) => {
+                if self.dual_role {
+                    State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::Evaluate))
+                } else {
+                    State::SendNotSupported
+                }
+            }
+
+            MessageType::Control(ControlMessageType::GetSinkCap) => {
+                if self.dual_role {
+                    State::DrpGiveSinkCap(Mode::Spr)
+                } else {
+                    State::SendNotSupported
+                }
+            }
+
+            MessageType::Control(ControlMessageType::NotSupported) => State::NotSupportedReceived,
+
+            MessageType::Extended(ExtendedMessageType::ExtendedControl) => match message.payload {
+                Some(Payload::Extended(Extended::ExtendedControl(ctrl))) => match ctrl.message_type() {
+                    ExtendedControlMessageType::EprGetSourceCap => match self.mode {
+                        Mode::Spr => State::GiveSourceCap,
+                        Mode::Epr => State::SendCapabilities,
+                    },
+                    ExtendedControlMessageType::EprGetSinkCap => match self.dual_role {
+                        true => State::DrpGiveSinkCap(Mode::Epr),
+                        false => State::SendNotSupported,
+                    },
+                    ExtendedControlMessageType::EprKeepAlive => State::EprKeepAlive,
+                    ExtendedControlMessageType::EprKeepAliveAck => State::SendNotSupported, // FIXME: Source EPR
+                },
+                _ => State::SendNotSupported,
+            },
 
             _ => State::SendNotSupported,
         };
@@ -1379,33 +1369,26 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
         let message = match self.mode {
             Mode::Spr => {
                 let message = self.protocol_layer.wait_for_request().await?;
+                debug_assert!(message.header.message_type() == MessageType::Data(DataMessageType::Request));
+
                 trace!("Sink Request {:?}", message);
-
-                if message.header.message_type() != MessageType::Data(DataMessageType::Request) {
-                    unreachable!()
-                }
-
                 message
             }
             Mode::Epr => {
                 let message = self.protocol_layer.wait_for_epr_request().await?;
+                debug_assert!(message.header.message_type() == MessageType::Data(DataMessageType::EprRequest));
+
                 trace!("Sink EPR Request {:?}", message);
-
-                if message.header.message_type() != MessageType::Data(DataMessageType::EprRequest) {
-                    unreachable!()
-                }
-
                 message
             }
         };
 
         // Extract the power source from the request
-        let request = match message.payload {
-            Some(Payload::Data(Data::Request(power_source))) => power_source,
-            _ => unreachable!(),
+        let Some(Payload::Data(Data::Request(power_source))) = message.payload else {
+            unreachable!();
         };
 
-        Ok(request)
+        Ok(power_source)
     }
 
     /// GetSourceCap
@@ -1422,10 +1405,11 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
             )
             .await?;
 
-        match message.payload {
-            Some(Payload::Data(Data::SourceCapabilities(caps))) => Ok(caps),
-            _ => unreachable!(),
-        }
+        let Some(Payload::Data(Data::SourceCapabilities(caps))) = message.payload else {
+            unreachable!()
+        };
+
+        Ok(caps)
     }
 
     /// GetSourceCap
