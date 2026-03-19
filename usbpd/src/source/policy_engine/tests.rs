@@ -13,12 +13,12 @@ use crate::protocol_layer::message::data::source_capabilities::SourceCapabilitie
 use crate::protocol_layer::message::header::{ControlMessageType, DataMessageType, Header, MessageType};
 use crate::source::device_policy_manager::{
     CapabilityResponse, DevicePolicyManager as DPM, DualRoleDevicePolicyManager as DRP_DPM,
-    EprDevicePolicyManager as EPR_DPM,
+    EprDevicePolicyManager as EPR_DPM, SourceDpm,
 };
 use crate::source::policy_engine::{DataRoleSwap, FastPowerRoleSwap, PowerRoleSwap, State, SwapState};
 
-fn simulate_sink_control_message<SOURCEDPM: DPM + DRP_DPM + EPR_DPM>(
-    policy_engine: &mut Source<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, SOURCEDPM>,
+fn simulate_sink_control_message<DPM: SourceDpm>(
+    policy_engine: &mut Source<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DPM>,
     control_message_type: ControlMessageType,
     message_id: u8,
 ) {
@@ -65,8 +65,8 @@ fn request_capability_message(message_id: u8, highest_power: bool) -> Message {
     Message::new_with_data(header, data)
 }
 
-fn simulate_sink_request<SOURCEDPM: DPM + DRP_DPM + EPR_DPM>(
-    policy_engine: &mut Source<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, SOURCEDPM>,
+fn simulate_sink_request<DPM: SourceDpm>(
+    policy_engine: &mut Source<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DPM>,
     message_id: u8,
     highest_power: bool,
 ) {
@@ -77,8 +77,8 @@ fn simulate_sink_request<SOURCEDPM: DPM + DRP_DPM + EPR_DPM>(
     policy_engine.protocol_layer.driver().inject_received_data(&buf[..len]);
 }
 
-async fn run_test_step<SOURCEDPM: DPM + DRP_DPM + EPR_DPM>(
-    policy_engine: &mut Source<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, SOURCEDPM>,
+async fn run_test_step<DPM: SourceDpm>(
+    policy_engine: &mut Source<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DPM>,
     _new_state: &State,
     step_number: usize,
 ) {
@@ -299,8 +299,8 @@ async fn test_discovery() {
 
 /// Take a new policy engine and skip the initial negotation:
 /// `Startup -> ... -> Ready`
-async fn skip_to_ready<SOURCEDPM: DPM + DRP_DPM + EPR_DPM>(
-    policy_engine: &mut Source<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, SOURCEDPM>,
+async fn skip_to_ready<DPM: SourceDpm>(
+    policy_engine: &mut Source<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DPM>,
 ) {
     assert!(matches!(policy_engine.state, State::Startup { role_swap: false }));
 

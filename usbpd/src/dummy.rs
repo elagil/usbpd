@@ -13,7 +13,7 @@ use crate::sink::device_policy_manager::DevicePolicyManager as SinkDevicePolicyM
 use crate::source::device_policy_manager::{
     CapabilityResponse as SourceCapabilityResponse, DevicePolicyManager as SourceDevicePolicyManager,
     DualRoleDevicePolicyManager as SourceDrpDevicePolicyManager,
-    EprDevicePolicyManager as SourceEprDevicePolicyManager, SwapType,
+    EprDevicePolicyManager as SourceEprDevicePolicyManager, SourceDpm, SwapType,
 };
 use crate::timers::Timer;
 use crate::units::Power;
@@ -140,6 +140,7 @@ impl SourceDevicePolicyManager for DummySourceDevice {
 
 impl SourceDrpDevicePolicyManager for DummySourceDevice {}
 impl SourceEprDevicePolicyManager for DummySourceDevice {}
+impl SourceDpm for DummySourceDevice {}
 
 pub struct DummyDualRoleNoSwapsDevice;
 
@@ -172,6 +173,10 @@ impl SourceDrpDevicePolicyManager for DummyDualRoleNoSwapsDevice {
 
 impl SourceEprDevicePolicyManager for DummyDualRoleNoSwapsDevice {}
 
+impl SourceDpm for DummyDualRoleNoSwapsDevice {}
+
+impl SinkDevicePolicyManager for DummyDualRoleNoSwapsDevice {}
+
 pub struct DummyDualRoleDevice;
 
 impl SourceDevicePolicyManager for DummyDualRoleDevice {
@@ -203,6 +208,8 @@ impl SourceDrpDevicePolicyManager for DummyDualRoleDevice {
 }
 
 impl SourceEprDevicePolicyManager for DummyDualRoleDevice {}
+
+impl SourceDpm for DummyDualRoleDevice {}
 
 impl SinkDevicePolicyManager for DummyDualRoleDevice {}
 
