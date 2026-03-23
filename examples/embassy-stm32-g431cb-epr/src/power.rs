@@ -1,9 +1,11 @@
 //! Handles USB PD negotiation with EPR (Extended Power Range) support.
 use defmt::{Format, info, warn};
+use defmt_rtt as _;
 use embassy_futures::select::{Either, select};
 use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
 use embassy_stm32::{Peri, bind_interrupts, dma, peripherals};
 use embassy_time::{Duration, Timer, with_timeout};
+use panic_probe as _;
 use uom::si::electric_current::{centiampere, milliampere};
 use uom::si::electric_potential::millivolt;
 use uom::si::power::{milliwatt, watt};
@@ -19,7 +21,6 @@ use usbpd::sink::policy_engine::Sink;
 use usbpd::timers::Timer as SinkTimer;
 use usbpd::units::Power;
 use usbpd_traits::Driver as SinkDriver;
-use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
     UCPD1 => ucpd::InterruptHandler<peripherals::UCPD1>;

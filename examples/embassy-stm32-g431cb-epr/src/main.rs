@@ -2,9 +2,10 @@
 #![no_main]
 
 use defmt::info;
+use defmt_rtt as _;
 use embassy_executor::Spawner;
+use panic_probe as _;
 use usbpd_epr_example::power::{self, UcpdResources};
-use {defmt_rtt as _, panic_probe as _};
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {

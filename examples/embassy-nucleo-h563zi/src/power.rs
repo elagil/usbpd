@@ -1,11 +1,13 @@
 //! Handles USB PD negotiation.
 
 use defmt::{Format, info, warn};
+use defmt_rtt as _;
 use embassy_futures::select::{Either, select};
 use embassy_stm32::gpio::Output;
 use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
 use embassy_stm32::{Peri, bind_interrupts, dma, peripherals};
 use embassy_time::{Duration, Ticker, Timer, with_timeout};
+use panic_probe as _;
 use uom::si::electric_potential;
 use usbpd::protocol_layer::message::data::request::{self, CurrentRequest, VoltageRequest};
 use usbpd::protocol_layer::message::data::source_capabilities::SourceCapabilities;
@@ -14,7 +16,6 @@ use usbpd::sink::policy_engine::Sink;
 use usbpd::timers::Timer as SinkTimer;
 use usbpd::units::ElectricPotential;
 use usbpd_traits::Driver as SinkDriver;
-use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
     UCPD1 => ucpd::InterruptHandler<peripherals::UCPD1>;
