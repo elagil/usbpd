@@ -170,12 +170,12 @@ impl SourceDPM for DummyDualRoleNoSwapsDevice {
 }
 impl SourceEprDPM for DummyDualRoleNoSwapsDevice {}
 impl SourceDrpDPM for DummyDualRoleNoSwapsDevice {}
-impl SourceDpm for DummyDualRoleNoSwapsDevice {}    // Defaults to rejecting swaps
+impl SourceDpm for DummyDualRoleNoSwapsDevice {} // Defaults to rejecting swaps
 
 impl SinkDPM for DummyDualRoleNoSwapsDevice {}
 impl SinkDrpDPM for DummyDualRoleNoSwapsDevice {}
 impl SinkEprDPM for DummyDualRoleNoSwapsDevice {}
-impl SinkDpm for DummyDualRoleNoSwapsDevice {}      // Defaults to rejecting swaps
+impl SinkDpm for DummyDualRoleNoSwapsDevice {} // Defaults to rejecting swaps
 
 pub struct DummyDualRoleDevice;
 
