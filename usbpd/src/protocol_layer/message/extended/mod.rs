@@ -24,8 +24,10 @@ pub enum Extended {
     /// Extended control message payload.
     ExtendedControl(extended_control::ExtendedControl),
     /// EPR source capabilities list.
+    #[cfg(feature = "epr")]
     EprSourceCapabilities(Vec<PowerDataObject, 16>),
     /// EPR sink capabilities list.
+    #[cfg(feature = "epr")]
     EprSinkCapabilities(Vec<SinkPowerDataObject, 7>),
     /// Unknown data type.
     Unknown,
@@ -37,7 +39,9 @@ impl Extended {
         match self {
             Self::SourceCapabilitiesExtended => 0,
             Self::ExtendedControl(_payload) => 2,
+            #[cfg(feature = "epr")]
             Self::EprSourceCapabilities(pdos) => (pdos.len() * core::mem::size_of::<u32>()) as u16,
+            #[cfg(feature = "epr")]
             Self::EprSinkCapabilities(pdos) => (pdos.len() * core::mem::size_of::<u32>()) as u16,
             Self::Unknown => 0,
         }
@@ -49,6 +53,7 @@ impl Extended {
             Self::Unknown => 0,
             Self::SourceCapabilitiesExtended => unimplemented!(),
             Self::ExtendedControl(control) => control.to_bytes(payload),
+            #[cfg(feature = "epr")]
             Self::EprSourceCapabilities(pdos) => {
                 let mut written = 0;
                 for pdo in pdos {
@@ -58,6 +63,7 @@ impl Extended {
                         PowerDataObject::VariableSupply(p) => p.0,
                         PowerDataObject::Augmented(a) => match a {
                             crate::protocol_layer::message::data::source_capabilities::Augmented::Spr(p) => p.0,
+                            #[cfg(feature = "epr")]
                             crate::protocol_layer::message::data::source_capabilities::Augmented::Epr(p) => p.0,
                             crate::protocol_layer::message::data::source_capabilities::Augmented::Unknown(p) => *p,
                         },
@@ -68,6 +74,7 @@ impl Extended {
                 }
                 written
             }
+            #[cfg(feature = "epr")]
             Self::EprSinkCapabilities(pdos) => {
                 let mut written = 0;
                 for pdo in pdos {

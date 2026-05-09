@@ -39,18 +39,22 @@ pub enum TimerType {
     /// PSSourceOffTimer, SPR Mode (tPSSourceOff, 750–920 ms).
     PSSourceOffSpr,
     /// PSSourceOffTimer, EPR Mode (tPSSourceOff, 1120–1400 ms).
+    #[cfg(feature = "epr")]
     PSSourceOffEpr,
     /// PSSourceOnTimer, SPR Mode (tPSSourceOn, 390–480 ms).
     PSSourceOnSpr,
     /// PSTransitionTimer, SPR Mode (tPSTransition, 450–550 ms).
     PSTransitionSpr,
     /// PSTransitionTimer, EPR Mode (tPSTransition, 830–1020 ms).
+    #[cfg(feature = "epr")]
     PSTransitionEpr,
     /// SenderResponseTimer (tSenderResponse, 27–33 ms).
     SenderResponse,
     /// SinkEPREnterTimer (tEnterEPR, 450–550 ms).
+    #[cfg(feature = "epr")]
     SinkEPREnter,
     /// SinkEPRKeepAliveTimer (tSinkEPRKeepAlive, 0.25–0.5 s).
+    #[cfg(feature = "epr")]
     SinkEPRKeepAlive,
     /// SinkPPSPeriodicTimer (tPPSRequest, max 10 s).
     SinkPPSPeriodic,
@@ -61,6 +65,7 @@ pub enum TimerType {
     /// SourceCapabilityTimer (tTypeCSendSourceCap, 100–200 ms).
     SourceCapability,
     /// SourceEPRKeepAliveTimer (tSourceEPRKeepAlive, 0.75–1.0 s).
+    #[cfg(feature = "epr")]
     SourceEPRKeepAlive,
     /// SourcePPSCommTimer (tPPSTimeout, 12–15 s).
     SourcePPSComm,
@@ -98,17 +103,22 @@ impl TimerType {
             TimerType::NoResponse => TIMER::after_millis(5000),
             TimerType::PSHardReset => TIMER::after_millis(30),
             TimerType::PSSourceOffSpr => TIMER::after_millis(835),
+            #[cfg(feature = "epr")]
             TimerType::PSSourceOffEpr => TIMER::after_millis(1260),
             TimerType::PSSourceOnSpr => TIMER::after_millis(435),
             TimerType::PSTransitionSpr => TIMER::after_millis(500),
+            #[cfg(feature = "epr")]
             TimerType::PSTransitionEpr => TIMER::after_millis(925),
             TimerType::SenderResponse => TIMER::after_millis(30),
+            #[cfg(feature = "epr")]
             TimerType::SinkEPREnter => TIMER::after_millis(500),
+            #[cfg(feature = "epr")]
             TimerType::SinkEPRKeepAlive => TIMER::after_millis(375),
             TimerType::SinkPPSPeriodic => TIMER::after_millis(5000), // Max. 10 s
             TimerType::SinkRequest => TIMER::after_millis(100),
             TimerType::SinkWaitCap => TIMER::after_millis(465),
             TimerType::SourceCapability => TIMER::after_millis(150),
+            #[cfg(feature = "epr")]
             TimerType::SourceEPRKeepAlive => TIMER::after_millis(875),
             TimerType::SourcePPSComm => TIMER::after_millis(13500),
             TimerType::SinkTx => TIMER::after_millis(18),

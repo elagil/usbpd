@@ -25,6 +25,7 @@ use usbpd_traits::{Driver, DriverRxError, DriverTxError};
 
 use crate::PowerRole;
 use crate::counters::{Counter, CounterType, Error as CounterError};
+#[cfg(feature = "epr")]
 use crate::protocol_layer::message::data::epr_mode::EprModeDataObject;
 use crate::protocol_layer::message::data::source_capabilities;
 use crate::protocol_layer::message::data::source_capabilities::SourceCapabilities;
@@ -331,6 +332,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                         return Err(TxError::UnchunkedExtendedMessagesNotSupported);
                     }
                 }
+                #[cfg(feature = "epr")]
                 PowerSource::EprRequest(epr) => {
                     // Check the raw RDO for validation
                     let rdo_bits = epr.rdo;
@@ -606,6 +608,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                                 message::extended::extended_control::ExtendedControl::from_bytes(ext_payload),
                             ))
                         }
+                        #[cfg(feature = "epr")]
                         ExtendedMessageType::EprSourceCapabilities => {
                             Payload::Extended(message::extended::Extended::EprSourceCapabilities(
                                 ext_payload
@@ -813,6 +816,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     }
 
     /// Transmit an EPR mode data message.
+    #[cfg(feature = "epr")]
     pub async fn transmit_epr_mode(
         &mut self,
         action: message::data::epr_mode::Action,
@@ -907,6 +911,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     ///
     /// Per PD 3.2 Sec. 8.3.3.3.10, sinks respond to EPR_Get_Sink_Cap
     /// messages with an EPR_Sink_Capabilities message.
+    #[cfg(feature = "epr")]
     pub async fn transmit_epr_sink_capabilities(
         &mut self,
         capabilities: message::data::sink_capabilities::SinkCapabilities,
@@ -937,6 +942,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     ) -> Result<(), ProtocolError> {
         // Only sources can send capabilities
         debug_assert!(matches!(self.default_header.port_power_role(), PowerRole::Source));
+        #[cfg(feature = "epr")]
         if source_capabilities.has_epr_pdo_in_spr_positions() {
             return Err(ProtocolError::TxError(TxError::HardReset));
         }
@@ -956,6 +962,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     /// Transmit the device's EPR Source Capabilities
     ///
     /// Could be sent from a Source or Dual Role Device
+    #[cfg(feature = "epr")]
     pub async fn transmit_epr_source_capabilities(
         &mut self,
         source_capabilities: &SourceCapabilities,
@@ -1015,6 +1022,7 @@ impl<DRIVER: Driver, TIMER: Timer> SinkProtocolLayer<DRIVER, TIMER> {
         self.receive_message_type(
             &[
                 MessageType::Data(message::header::DataMessageType::SourceCapabilities),
+                #[cfg(feature = "epr")]
                 MessageType::Extended(ExtendedMessageType::EprSourceCapabilities),
             ],
             TimerType::SinkWaitCap,
@@ -1077,6 +1085,7 @@ impl<DRIVER: Driver, TIMER: Timer> SourceProtocolLayer<DRIVER, TIMER> {
     }
 
     /// Wait for the sink to request a capability with an EPR_Request Message
+    #[cfg(feature = "epr")]
     pub async fn wait_for_epr_request(&mut self) -> Result<Message, ProtocolError> {
         // Only sources await a sink power request
         debug_assert!(matches!(self.default_header.port_power_role(), PowerRole::Source));

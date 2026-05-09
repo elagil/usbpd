@@ -191,6 +191,7 @@ impl Avs {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg(feature = "epr")]
 pub struct EprRequestDataObject {
     /// The raw Request Data Object (format depends on PDO type being requested).
     /// This could be a FixedVariableSupply RDO, Avs RDO, or other EPR RDO type.
@@ -199,6 +200,7 @@ pub struct EprRequestDataObject {
     pub pdo: source_capabilities::PowerDataObject,
 }
 
+#[cfg(feature = "epr")]
 impl EprRequestDataObject {
     /// Get the object position from the RDO
     pub fn object_position(&self) -> u8 {
@@ -217,6 +219,7 @@ pub enum PowerSource {
     Pps(Pps),
     Avs(Avs),
     /// EPR Request: RDO + copy of requested PDO for source verification.
+    #[cfg(feature = "epr")]
     EprRequest(EprRequestDataObject),
     Unknown(RawDataObject),
 }
@@ -262,6 +265,7 @@ impl PowerSource {
             PowerSource::Battery(p) => p.object_position(),
             PowerSource::Pps(p) => p.object_position(),
             PowerSource::Avs(p) => p.object_position(),
+            #[cfg(feature = "epr")]
             PowerSource::EprRequest(epr) => epr.object_position(),
             PowerSource::Unknown(p) => p.object_position(),
         }
@@ -269,18 +273,20 @@ impl PowerSource {
 
     /// Determine the data message type to use for this request.
     pub fn message_type(&self) -> crate::protocol_layer::message::header::DataMessageType {
-        match self {
-            PowerSource::EprRequest { .. } => crate::protocol_layer::message::header::DataMessageType::EprRequest,
-            _ => crate::protocol_layer::message::header::DataMessageType::Request,
+        #[cfg(feature = "epr")]
+        if let PowerSource::EprRequest { .. } = self {
+            return crate::protocol_layer::message::header::DataMessageType::EprRequest;
         }
+        crate::protocol_layer::message::header::DataMessageType::Request
     }
 
     /// Number of data objects required to encode this request.
     pub fn num_objects(&self) -> u8 {
-        match self {
-            PowerSource::EprRequest { .. } => 2,
-            _ => 1,
+        #[cfg(feature = "epr")]
+        if let PowerSource::EprRequest { .. } = self {
+            return 2;
         }
+        1
     }
 
     /// Find the highest fixed voltage that can be found in the source capabilities.
@@ -351,6 +357,7 @@ impl PowerSource {
                         trace!("Skip PDO, voltage out of range. {:?}", augmented);
                     }
                 }
+                #[cfg(feature = "epr")]
                 source_capabilities::Augmented::Epr(avs) => {
                     if avs.min_voltage() <= voltage && avs.max_voltage() >= voltage {
                         return Some(IndexedAugmented(augmented, index));
@@ -479,6 +486,7 @@ impl PowerSource {
     ///
     /// Per PD 3.2 Sec. 6.4.9, this creates an EPR_Request with an AVS RDO
     /// and a copy of the requested PDO.
+    #[cfg(feature = "epr")]
     pub fn new_epr_avs(
         current_request: CurrentRequest,
         voltage: ElectricPotential,

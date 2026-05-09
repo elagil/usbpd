@@ -6,18 +6,23 @@ use uom::si::power::watt;
 use usbpd_traits::Driver;
 
 use crate::SwapType;
-use crate::protocol_layer::message::data::request::{self, EprRequestDataObject, PowerSource};
+use crate::protocol_layer::message::data::request::{self, PowerSource};
+#[cfg(feature = "epr")]
+use crate::protocol_layer::message::data::request::EprRequestDataObject;
 use crate::protocol_layer::message::data::source_capabilities::{
     Augmented, FixedSupply, PowerDataObject, SourceCapabilities, SprProgrammablePowerSupply,
 };
 use crate::sink::device_policy_manager::{
-    DevicePolicyManager as SinkDPM, DrpDevicePolicyManager as SinkDrpDPM, EprDevicePolicyManager as SinkEprDPM,
-    Event as SinkEvent, SinkDpm,
+    DevicePolicyManager as SinkDPM, DrpDevicePolicyManager as SinkDrpDPM, Event as SinkEvent, SinkDpm,
 };
+#[cfg(feature = "epr")]
+use crate::sink::device_policy_manager::EprDevicePolicyManager as SinkEprDPM;
 use crate::source::device_policy_manager::{
     CapabilityResponse as SourceCapabilityResponse, DevicePolicyManager as SourceDPM,
-    DrpDevicePolicyManager as SourceDrpDPM, EprDevicePolicyManager as SourceEprDPM, SourceDpm,
+    DrpDevicePolicyManager as SourceDrpDPM, SourceDpm,
 };
+#[cfg(feature = "epr")]
+use crate::source::device_policy_manager::EprDevicePolicyManager as SourceEprDPM;
 use crate::timers::Timer;
 use crate::units::Power;
 
@@ -54,6 +59,7 @@ pub struct DummySinkDevice {}
 
 impl SinkDPM for DummySinkDevice {}
 impl SinkDrpDPM for DummySinkDevice {}
+#[cfg(feature = "epr")]
 impl SinkEprDPM for DummySinkDevice {}
 impl SinkDpm for DummySinkDevice {}
 
@@ -63,10 +69,12 @@ impl SinkDpm for DummySinkDevice {}
 /// 1. Request EPR source capabilities after initial SPR negotiation
 /// 2. Select the highest available EPR voltage when EPR caps are available
 #[derive(Default)]
+#[cfg(feature = "epr")]
 pub struct DummySinkEprDevice {
     requested_epr_caps: bool,
 }
 
+#[cfg(feature = "epr")]
 impl DummySinkEprDevice {
     /// Create a new EPR-capable dummy sink device.
     pub fn new() -> Self {
@@ -74,6 +82,7 @@ impl DummySinkEprDevice {
     }
 }
 
+#[cfg(feature = "epr")]
 impl SinkDPM for DummySinkEprDevice {
     async fn get_event(&mut self, source_capabilities: &SourceCapabilities) -> SinkEvent {
         // After initial SPR negotiation, enter EPR mode if source is EPR capable
@@ -127,8 +136,11 @@ impl SinkDPM for DummySinkEprDevice {
     }
 }
 
+#[cfg(feature = "epr")]
 impl SinkDrpDPM for DummySinkEprDevice {}
+#[cfg(feature = "epr")]
 impl SinkEprDPM for DummySinkEprDevice {}
+#[cfg(feature = "epr")]
 impl SinkDpm for DummySinkEprDevice {}
 
 /// A dummy capable of sourcing non-EPR power
@@ -149,6 +161,7 @@ impl SourceDPM for DummySourceDevice {
 }
 
 impl SourceDrpDPM for DummySourceDevice {}
+#[cfg(feature = "epr")]
 impl SourceEprDPM for DummySourceDevice {}
 impl SourceDpm for DummySourceDevice {}
 
@@ -181,11 +194,13 @@ impl SourceDrpDPM for DummyDualRoleDevice {
     }
 }
 
+#[cfg(feature = "epr")]
 impl SourceEprDPM for DummyDualRoleDevice {}
 impl SourceDpm for DummyDualRoleDevice {}
 
 impl SinkDPM for DummyDualRoleDevice {}
 impl SinkDrpDPM for DummyDualRoleDevice {}
+#[cfg(feature = "epr")]
 impl SinkEprDPM for DummyDualRoleDevice {}
 impl SinkDpm for DummyDualRoleDevice {}
 
