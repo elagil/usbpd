@@ -16,6 +16,7 @@ pub mod source_capabilities;
 
 pub mod sink_capabilities;
 
+#[cfg(feature = "epr")]
 pub mod epr_mode;
 
 // FIXME: add documentation
@@ -54,6 +55,7 @@ pub enum Data {
     /// Request for a power level from the source.
     Request(request::PowerSource),
     /// Used to enter, acknowledge or exit EPR mode.
+    #[cfg(feature = "epr")]
     EprMode(epr_mode::EprModeDataObject),
     /// Vendor defined messages (VDM).
     ///
@@ -102,6 +104,7 @@ impl Data {
                     }
                 }
             }
+            #[cfg(feature = "epr")]
             DataMessageType::EprRequest => {
                 let num_objects = message.header.num_objects();
                 trace!("EprRequest: num_objects={}, len={}", num_objects, len);
@@ -123,6 +126,7 @@ impl Data {
                     Data::Unknown
                 }
             }
+            #[cfg(feature = "epr")]
             DataMessageType::EprMode => {
                 if len != PDO_SIZE {
                     Data::Unknown
@@ -199,6 +203,7 @@ impl Data {
                     source_capabilities::PowerDataObject::VariableSupply(p) => p.0,
                     source_capabilities::PowerDataObject::Augmented(a) => match a {
                         source_capabilities::Augmented::Spr(p) => p.0,
+                        #[cfg(feature = "epr")]
                         source_capabilities::Augmented::Epr(p) => p.0,
                         source_capabilities::Augmented::Unknown(p) => *p,
                     },
@@ -208,6 +213,7 @@ impl Data {
                 2 * PDO_SIZE
             }
             Self::Request(_) => unimplemented!(),
+            #[cfg(feature = "epr")]
             Self::EprMode(epr_mode::EprModeDataObject(data_object)) => {
                 LittleEndian::write_u32(payload, *data_object);
                 PDO_SIZE

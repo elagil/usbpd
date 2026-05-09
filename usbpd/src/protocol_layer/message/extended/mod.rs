@@ -59,6 +59,7 @@ impl Extended {
                         PowerDataObject::VariableSupply(p) => p.0,
                         PowerDataObject::Augmented(a) => match a {
                             crate::protocol_layer::message::data::source_capabilities::Augmented::Spr(p) => p.0,
+                            #[cfg(feature = "epr")]
                             crate::protocol_layer::message::data::source_capabilities::Augmented::Epr(p) => p.0,
                             crate::protocol_layer::message::data::source_capabilities::Augmented::Unknown(p) => *p,
                         },

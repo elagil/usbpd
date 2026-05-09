@@ -61,6 +61,7 @@ impl PowerDataObject {
             PowerDataObject::VariableSupply(v) => v.0,
             PowerDataObject::Augmented(a) => match a {
                 Augmented::Spr(s) => s.0,
+                #[cfg(feature = "epr")]
                 Augmented::Epr(e) => e.0,
                 Augmented::Unknown(u) => *u,
             },
@@ -216,6 +217,7 @@ pub enum Augmented {
     /// SPR PPS
     Spr(SprProgrammablePowerSupply),
     /// EPR AVS
+    #[cfg(feature = "epr")]
     Epr(EprAdjustableVoltageSupply),
     /// Unknown
     Unknown(u32),
@@ -280,6 +282,7 @@ impl SprProgrammablePowerSupply {
     }
 }
 
+#[cfg(feature = "epr")]
 bitfield! {
     /// EPR AVS PDO
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -301,6 +304,7 @@ bitfield! {
     }
 }
 
+#[cfg(feature = "epr")]
 impl EprAdjustableVoltageSupply {
     /// The maximum voltage the PPS can be requested to supply
     pub fn max_voltage(&self) -> ElectricPotential {
@@ -389,6 +393,7 @@ impl SourceCapabilities {
     }
 
     /// Determine, whether the source is EPR mode capable.
+    #[cfg(feature = "epr")]
     pub fn epr_mode_capable(&self) -> bool {
         self.vsafe_5v().map(FixedSupply::epr_mode_capable).unwrap_or_default()
     }
@@ -402,6 +407,7 @@ impl SourceCapabilities {
     ///
     /// Per USB PD Spec R3.2 Section 6.5.15.1, EPR Capabilities Messages have
     /// SPR PDOs in positions 1-7 and EPR PDOs starting at position 8.
+    #[cfg(feature = "epr")]
     pub fn is_epr_capabilities(&self) -> bool {
         self.0.len() > 7
     }
@@ -429,6 +435,7 @@ impl SourceCapabilities {
     /// - Only valid in EPR Capabilities Messages
     ///
     /// Returns iterator of (position, PDO) tuples where position is 1-indexed (8, 9, 10, 11).
+    #[cfg(feature = "epr")]
     pub fn epr_pdos(&self) -> impl Iterator<Item = (u8, &PowerDataObject)> {
         self.0.iter().skip(7).enumerate().map(|(i, pdo)| ((i + 8) as u8, pdo))
     }
@@ -442,6 +449,7 @@ impl SourceCapabilities {
     /// EPR (A)PDOs per spec:
     /// - Fixed Supply PDOs offering 28V, 36V, or 48V (voltage > 20V)
     /// - EPR AVS APDOs
+    #[cfg(feature = "epr")]
     pub fn has_epr_pdo_in_spr_positions(&self) -> bool {
         let max_spr_voltage = ElectricPotential::new::<volt>(20);
         self.0.iter().take(7).any(|pdo| match pdo {
@@ -477,6 +485,7 @@ impl PdoKind for SourceCapabilities {
                 PowerDataObject::VariableSupply(_) => Some(Kind::VariableSupply),
                 PowerDataObject::Augmented(augmented) => match augmented {
                     Augmented::Spr(_) => Some(Kind::Pps),
+                    #[cfg(feature = "epr")]
                     Augmented::Epr(_) => Some(Kind::Avs),
                     Augmented::Unknown(_) => None,
                 },
@@ -509,6 +518,7 @@ pub fn parse_raw_pdo(raw: u32) -> PowerDataObject {
         0b10 => PowerDataObject::VariableSupply(VariableSupply(raw)),
         0b11 => PowerDataObject::Augmented(match AugmentedRaw(raw).supply() {
             0b00 => Augmented::Spr(SprProgrammablePowerSupply(raw)),
+            #[cfg(feature = "epr")]
             0b01 => Augmented::Epr(EprAdjustableVoltageSupply(raw)),
             x => {
                 warn!("Unknown AugmentedPowerDataObject supply {}", x);

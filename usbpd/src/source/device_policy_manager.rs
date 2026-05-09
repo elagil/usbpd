@@ -23,8 +23,10 @@ pub enum Event {
     /// Indicate a Vconn swap needs to be done
     RequestVconnSwap,
     /// **EPR** Get the Remote DRP's Source EPR capabilities
+    #[cfg(feature = "epr")]
     RequestEprSourceCapabilities,
     /// **EPR**
+    #[cfg(feature = "epr")]
     ExitEprMode,
     /// **DRP** Indicate a data swap needs to be done
     RequestDataRoleSwap,

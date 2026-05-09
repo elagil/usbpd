@@ -30,8 +30,9 @@ serde = { version = "1.0.228", default-features = false, features = [
 tokio = { version = "1.49.0", features = ["rt", "macros"] }
 
 [features]
-default = []
+default = ["epr"]
 
 log = ["dep:log"]
 defmt = ["dep:defmt", "heapless/defmt"]
 serde = ["dep:serde", "heapless/serde"]
+epr = []
