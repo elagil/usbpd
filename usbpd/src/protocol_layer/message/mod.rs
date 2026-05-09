@@ -5,6 +5,7 @@ pub mod extended;
 pub mod header;
 
 #[cfg(test)]
+#[cfg(feature = "epr")]
 mod epr_messages_test;
 
 use byteorder::{ByteOrder, LittleEndian};
@@ -136,6 +137,7 @@ impl Message {
                     extended::Extended::Unknown
                 }
             }
+            #[cfg(feature = "epr")]
             header::ExtendedMessageType::EprSourceCapabilities => extended::Extended::EprSourceCapabilities(
                 payload
                     .as_chunks::<4>()
@@ -223,6 +225,7 @@ impl Message {
                         header::ExtendedMessageType::ExtendedControl => extended::Extended::ExtendedControl(
                             extended::extended_control::ExtendedControl(LittleEndian::read_u16(payload_bytes)),
                         ),
+                        #[cfg(feature = "epr")]
                         header::ExtendedMessageType::EprSourceCapabilities => {
                             extended::Extended::EprSourceCapabilities(
                                 payload_bytes

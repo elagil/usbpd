@@ -9,7 +9,9 @@ use crate::counters::Counter;
 use crate::protocol_layer::message::data::request::PowerSource;
 use crate::protocol_layer::message::data::sink_capabilities::SinkCapabilities;
 use crate::protocol_layer::message::data::source_capabilities::{Kind, SourceCapabilities};
-use crate::protocol_layer::message::data::{Data, PdoKind, epr_mode, request};
+use crate::protocol_layer::message::data::{Data, PdoKind, request};
+#[cfg(feature = "epr")]
+use crate::protocol_layer::message::data::epr_mode;
 use crate::protocol_layer::message::extended::Extended;
 use crate::protocol_layer::message::extended::extended_control::ExtendedControlMessageType;
 use crate::protocol_layer::message::header::{
@@ -21,6 +23,7 @@ use crate::timers::{Timer, TimerType};
 use crate::{Contract, DataRole, PolicyEngineResult, PowerRole, RunResult, SwapType};
 
 #[cfg(test)]
+#[cfg(feature = "epr")]
 mod tests;
 
 /// Source capability
@@ -56,6 +59,8 @@ enum State {
     TransitionToDefault,
     GetSinkCap,
     WaitNewCapabilities,
+    /// PD 3.2 Sec. 8.3.3.3.11 source EPR keep-alive. Only used in EPR mode.
+    #[cfg(feature = "epr")]
     EprKeepAlive,
     GiveSourceCap,
     /// 8.3.3.4 Source Port Soft Reset
@@ -74,6 +79,7 @@ enum State {
         state: VcsState,
     },
     /// 8.3.3.26 EPR States
+    #[cfg(feature = "epr")]
     EprMode(EprState),
     /// Custom state to signal exit out of source to sink from a power swap
     PrSwapToSinkStartup,
@@ -128,6 +134,7 @@ enum FastPowerRoleSwap {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum VcsSwapSource {
     Message,
+    #[cfg(feature = "epr")]
     Epr,
 }
 
@@ -148,6 +155,7 @@ enum VcsState {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[cfg(feature = "epr")]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum EprState {
     Entry,
@@ -409,9 +417,16 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                             .transmit_source_capabilities(&self.device_policy_manager.source_capabilities())
                             .await?
                     }
+                    #[cfg(feature = "epr")]
                     Mode::Epr => {
                         self.protocol_layer
                             .transmit_epr_source_capabilities(&self.device_policy_manager.epr_source_capabilities())
+                            .await?
+                    }
+                    #[cfg(not(feature = "epr"))]
+                    Mode::Epr => {
+                        self.protocol_layer
+                            .transmit_source_capabilities(&self.device_policy_manager.source_capabilities())
                             .await?
                     }
                 };
@@ -502,7 +517,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                 // Entry: If current Explicit Contract is for EPR Mode, then run the SourceEPRKeepAliveTimer
                 let epr_keep_alive_fut = async {
                     match self.mode {
+                        #[cfg(feature = "epr")]
                         Mode::Epr => TimerType::get_timer::<TIMER>(TimerType::SourceEPRKeepAlive).await,
+                        #[cfg(not(feature = "epr"))]
+                        Mode::Epr => core::future::pending::<()>().await,
                         Mode::Spr => core::future::pending().await,
                     }
                 };
@@ -526,7 +544,9 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                         Event::UpdatedSourceCapabilities => State::SendCapabilities,
                         Event::RequestSinkCapabilities => State::GetSinkCap,
                         Event::RequestSourceCapabilities => State::DrpGetSourceCap(Mode::Spr),
+                        #[cfg(feature = "epr")]
                         Event::RequestEprSourceCapabilities => State::DrpGetSourceCap(Mode::Epr),
+                        #[cfg(feature = "epr")]
                         Event::ExitEprMode => State::EprMode(EprState::SendExit),
                         Event::RequestVconnSwap => State::VconnSwap {
                             source: VcsSwapSource::Message,
@@ -640,9 +660,16 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                             .transmit_control_message(ControlMessageType::GetSinkCap)
                             .await?
                     }
+                    #[cfg(feature = "epr")]
                     Mode::Epr => {
                         self.protocol_layer
                             .transmit_extended_control_message(ExtendedControlMessageType::EprGetSinkCap)
+                            .await?
+                    }
+                    #[cfg(not(feature = "epr"))]
+                    Mode::Epr => {
+                        self.protocol_layer
+                            .transmit_control_message(ControlMessageType::GetSinkCap)
                             .await?
                     }
                 }
@@ -657,10 +684,20 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                             )
                             .await
                     }
+                    #[cfg(feature = "epr")]
                     Mode::Epr => {
                         self.protocol_layer
                             .receive_message_type(
                                 &[MessageType::Extended(ExtendedMessageType::EprSinkCapabilities)],
+                                TimerType::SenderResponse,
+                            )
+                            .await
+                    }
+                    #[cfg(not(feature = "epr"))]
+                    Mode::Epr => {
+                        self.protocol_layer
+                            .receive_message_type(
+                                &[MessageType::Data(DataMessageType::SinkCapabilities)],
                                 TimerType::SenderResponse,
                             )
                             .await
@@ -670,6 +707,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                 let response = match message {
                     Ok(message) => match message.payload {
                         Some(Payload::Data(Data::SinkCapabilities(caps))) => Some(caps),
+                        #[cfg(feature = "epr")]
                         Some(Payload::Extended(Extended::EprSinkCapabilities(pdos))) => Some(SinkCapabilities(pdos)),
                         // Handle malformed payload gracefully.
                         _ => None,
@@ -680,7 +718,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
 
                 let info = match self.mode {
                     Mode::Spr => Info::SprSinkCapabilities(response),
+                    #[cfg(feature = "epr")]
                     Mode::Epr => Info::EprSinkCapabilities(response),
+                    #[cfg(not(feature = "epr"))]
+                    Mode::Epr => Info::SprSinkCapabilities(response),
                 };
                 self.device_policy_manager.inform(info).await;
 
@@ -719,6 +760,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
             //
             // Per PD 3.2 Sec. 6.5.14.4, a Source operating in EPR Mode responds to a received `EPR_KeepAlive` Message with
             // an `EPR_KeepAlive_Ack` Message.
+            #[cfg(feature = "epr")]
             State::EprKeepAlive => {
                 self.protocol_layer
                     .transmit_extended_control_message(ExtendedControlMessageType::EprKeepAliveAck)
@@ -733,9 +775,16 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                             .transmit_source_capabilities(&self.device_policy_manager.source_capabilities())
                             .await?
                     }
+                    #[cfg(feature = "epr")]
                     Mode::Epr => {
                         self.protocol_layer
                             .transmit_epr_source_capabilities(&self.device_policy_manager.epr_source_capabilities())
+                            .await?
+                    }
+                    #[cfg(not(feature = "epr"))]
+                    Mode::Epr => {
+                        self.protocol_layer
+                            .transmit_source_capabilities(&self.device_policy_manager.source_capabilities())
                             .await?
                     }
                 }
@@ -796,7 +845,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
             State::DrpGetSourceCap(mode) => {
                 let result = match mode {
                     Mode::Spr => self.get_source_capabilities().await,
+                    #[cfg(feature = "epr")]
                     Mode::Epr => self.get_epr_source_capabilities().await,
+                    #[cfg(not(feature = "epr"))]
+                    Mode::Epr => self.get_source_capabilities().await,
                 };
 
                 let caps = match result {
@@ -820,8 +872,13 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     Mode::Spr => {
                         self.protocol_layer.transmit_sink_capabilities(sink_caps).await?;
                     }
+                    #[cfg(feature = "epr")]
                     Mode::Epr => {
                         self.protocol_layer.transmit_epr_sink_capabilities(sink_caps).await?;
+                    }
+                    #[cfg(not(feature = "epr"))]
+                    Mode::Epr => {
+                        self.protocol_layer.transmit_sink_capabilities(sink_caps).await?;
                     }
                 }
                 State::Ready
@@ -837,6 +894,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
 
             // PD 3.2 Sec. 8.3.3.26 EPR States
             // FIXME: Source EPR
+            #[cfg(feature = "epr")]
             State::EprMode(state) => self.execute_epr_state(*state).await?,
 
             // PD 3.2 Sec. 8.3.3.28.1
@@ -1119,6 +1177,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     .await?;
                 match source {
                     VcsSwapSource::Message => Ok(State::Ready),
+                    #[cfg(feature = "epr")]
                     VcsSwapSource::Epr => Ok(State::EprMode(EprState::DiscoverCable)),
                 }
             }
@@ -1141,6 +1200,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     .map_err(|_| Error::ReconnectionRequired)?;
                 match source {
                     VcsSwapSource::Message => Ok(State::Ready),
+                    #[cfg(feature = "epr")]
                     VcsSwapSource::Epr => Ok(State::EprMode(EprState::DiscoverCable)),
                 }
             }
@@ -1162,6 +1222,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     .await?;
                 match source {
                     VcsSwapSource::Message => Ok(State::Ready),
+                    #[cfg(feature = "epr")]
                     VcsSwapSource::Epr => Ok(State::EprMode(EprState::DiscoverCable)),
                 }
             }
@@ -1173,6 +1234,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     .map_err(|_| Error::ReconnectionRequired)?;
                 match source {
                     VcsSwapSource::Message => Ok(State::Ready),
+                    #[cfg(feature = "epr")]
                     VcsSwapSource::Epr => Ok(State::EprMode(EprState::DiscoverCable)),
                 }
             }
@@ -1180,6 +1242,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
     }
 
     // PD 3.2 Sec. 8.3.3.26 EPR States
+    #[cfg(feature = "epr")]
     async fn execute_epr_state(&mut self, state: EprState) -> Result<State, Error> {
         match state {
             // PD 3.2 Sec. 8.3.3.26.1.1 (PE_SRC_Evaluate_EPR_Mode_Entry):
@@ -1288,6 +1351,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                 }
             }
 
+            #[cfg(feature = "epr")]
             MessageType::Data(DataMessageType::EprRequest) => {
                 if self.mode != Mode::Epr {
                     return Err(Error::Protocol(ProtocolError::RxError(RxError::HardReset)));
@@ -1299,6 +1363,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                 }
             }
 
+            #[cfg(feature = "epr")]
             MessageType::Data(DataMessageType::EprMode) => match message.payload {
                 Some(Payload::Data(Data::EprMode(epr_data))) => match epr_data.action() {
                     epr_mode::Action::Enter => match self.mode {
@@ -1318,7 +1383,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
 
             MessageType::Control(ControlMessageType::GetSourceCap) => match self.mode {
                 Mode::Spr => State::SendCapabilities,
+                #[cfg(feature = "epr")]
                 Mode::Epr => State::GiveSourceCap,
+                #[cfg(not(feature = "epr"))]
+                Mode::Epr => State::SendCapabilities,
             },
 
             MessageType::Control(ControlMessageType::VconnSwap) => State::VconnSwap {
@@ -1369,18 +1437,24 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     // Per PD 3.2 Tab. 6.67, values not explicitly defined are Reserved.
                     // They are answered with `Not_Supported`.
                     Err(()) => State::SendNotSupported,
+                    #[cfg(feature = "epr")]
                     Ok(ExtendedControlMessageType::EprGetSourceCap) => match self.mode {
                         Mode::Spr => State::GiveSourceCap,
                         Mode::Epr => State::SendCapabilities,
                     },
+                    #[cfg(feature = "epr")]
                     Ok(ExtendedControlMessageType::EprGetSinkCap) => match self.dual_role {
                         true => State::DrpGiveSinkCap(Mode::Epr),
                         false => State::SendNotSupported,
                     },
+                    #[cfg(feature = "epr")]
                     Ok(ExtendedControlMessageType::EprKeepAlive) => State::EprKeepAlive,
                     // Per PD 3.2 Tab. 6.67, an `EPR_KeepAlive_Ack` is only sent by a Sink.
                     // A Source receiving one answers `Not_Supported`.
+                    #[cfg(feature = "epr")]
                     Ok(ExtendedControlMessageType::EprKeepAliveAck) => State::SendNotSupported,
+                    #[cfg(not(feature = "epr"))]
+                    Ok(_) => State::SendNotSupported,
                 },
                 _ => State::SendNotSupported,
             },
@@ -1403,11 +1477,20 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                 trace!("Sink Request {:?}", message);
                 message
             }
+            #[cfg(feature = "epr")]
             Mode::Epr => {
                 let message = self.protocol_layer.wait_for_epr_request().await?;
                 debug_assert!(message.header.message_type() == MessageType::Data(DataMessageType::EprRequest));
 
                 trace!("Sink EPR Request {:?}", message);
+                message
+            }
+            #[cfg(not(feature = "epr"))]
+            Mode::Epr => {
+                let message = self.protocol_layer.wait_for_request().await?;
+                debug_assert!(message.header.message_type() == MessageType::Data(DataMessageType::Request));
+
+                trace!("Sink Request {:?}", message);
                 message
             }
         };
@@ -1445,6 +1528,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
     }
 
     /// GetSourceCap
+    #[cfg(feature = "epr")]
     async fn get_epr_source_capabilities(&mut self) -> Result<SourceCapabilities, Error> {
         self.protocol_layer
             .transmit_extended_control_message(ExtendedControlMessageType::EprGetSourceCap)

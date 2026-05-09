@@ -7,6 +7,7 @@ use usbpd_traits::Driver;
 
 use super::device_policy_manager::{Event, Info, SinkDpm};
 use crate::counters::Counter;
+#[cfg(feature = "epr")]
 use crate::protocol_layer::message::data::epr_mode::{self, Action};
 use crate::protocol_layer::message::data::request::PowerSource;
 use crate::protocol_layer::message::data::source_capabilities::SourceCapabilities;
@@ -21,6 +22,7 @@ use crate::timers::{Timer, TimerType};
 use crate::{Contract, DataRole, PolicyEngineResult, PowerRole, RunResult, SwapType, units};
 
 #[cfg(test)]
+#[cfg(feature = "epr")]
 mod tests;
 
 /// Sink capability
@@ -61,6 +63,7 @@ enum State {
     /// 8.3.3.20 Vconn Swap
     VconnSwap(VcsState),
     /// EPR states
+    #[cfg(feature = "epr")]
     EprMode(EprState),
     /// Custom state to signal exit out of sink to source from a power swap
     PrSwapToSourceStartup,
@@ -132,6 +135,7 @@ enum VcsState {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[cfg(feature = "epr")]
 enum EprState {
     Entry(units::Power),
     EntryWaitForResponse,
@@ -266,6 +270,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
 
                     // Per PD 3.2 Sec. 6.6.3.2: In EPR mode, tTypeCSinkWaitCap timeout Shall
                     // issue Hard Reset Signaling to exit EPR Mode.
+                    #[cfg(feature = "epr")]
                     (
                         _,
                         State::EprMode(EprState::WaitForCapabilities),
@@ -275,6 +280,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                     // Per PD 3.2 Sec. 8.3.3.26.2.1: The SenderResponseTimer or
                     // SinkEPREnterTimer timing out during EPR Mode entry transitions
                     // to Send_Soft_Reset.
+                    #[cfg(feature = "epr")]
                     (
                         _,
                         State::EprMode(EprState::Entry(_) | EprState::EntryWaitForResponse),
@@ -388,6 +394,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
 
         let capabilities = match message.payload {
             Some(Payload::Data(Data::SourceCapabilities(caps))) => caps,
+            #[cfg(feature = "epr")]
             Some(Payload::Extended(extended::Extended::EprSourceCapabilities(pdos))) => SourceCapabilities(pdos),
             _ => return Err(Error::Protocol(ProtocolError::UnexpectedMessage)),
         };
@@ -466,7 +473,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                     .receive_message_type(
                         &[MessageType::Control(ControlMessageType::PsRdy)],
                         match self.mode {
+                            #[cfg(feature = "epr")]
                             Mode::Epr => TimerType::PSTransitionEpr,
+                            #[cfg(not(feature = "epr"))]
+                            Mode::Epr => TimerType::PSTransitionSpr,
                             Mode::Spr => TimerType::PSTransitionSpr,
                         },
                     )
@@ -503,7 +513,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                 };
                 let epr_keep_alive_fut = async {
                     match self.mode {
+                        #[cfg(feature = "epr")]
                         Mode::Epr => TimerType::get_timer::<TIMER>(TimerType::SinkEPRKeepAlive).await,
+                        #[cfg(not(feature = "epr"))]
+                        Mode::Epr => core::future::pending::<()>().await,
                         Mode::Spr => core::future::pending().await,
                     }
                 };
@@ -529,7 +542,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                                 // Per PD 3.2 Sec. 8.3.3.3.8:
                                 // In EPR Mode, if a Source_Capabilities Message is received that
                                 // has not been requested using a Get_Source_Cap Message, trigger Hard Reset.
-                                if self.mode == Mode::Epr && !self.get_source_cap_pending {
+                                if self.mode == Mode::Epr
+                                    && !self.get_source_cap_pending
+                                    && cfg!(feature = "epr")
+                                {
                                     State::HardReset
                                 } else {
                                     self.get_source_cap_pending = false;
@@ -542,6 +558,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                                     }
                                 }
                             }
+                            #[cfg(feature = "epr")]
                             MessageType::Extended(ExtendedMessageType::EprSourceCapabilities) => {
                                 if let Some(Payload::Extended(extended::Extended::EprSourceCapabilities(pdos))) =
                                     message.payload
@@ -561,6 +578,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                                     State::HardReset
                                 }
                             }
+                            #[cfg(feature = "epr")]
                             MessageType::Data(DataMessageType::EprMode) => {
                                 // Handle source exit notification.
                                 State::EprMode(EprState::ExitReceived)
@@ -583,11 +601,17 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                                 if let Some(Payload::Extended(extended::Extended::ExtendedControl(ctrl))) =
                                     &message.payload
                                 {
-                                    // Per PD 3.2 Tab. 6.67, values not explicitly defined are `Reserved`, answer `Not_Supported`.
-                                    if matches!(ctrl.try_message_type(), Ok(ExtendedControlMessageType::EprGetSinkCap))
-                                    {
+                                    #[cfg(feature = "epr")]
+                                    if matches!(
+                                        ctrl.try_message_type(),
+                                        Ok(ExtendedControlMessageType::EprGetSinkCap)
+                                    ) {
                                         State::GiveSinkCap(Mode::Epr)
                                     } else {
+                                        State::SendNotSupported
+                                    }
+                                    #[cfg(not(feature = "epr"))]
+                                    {
                                         State::SendNotSupported
                                     }
                                 } else {
@@ -600,8 +624,11 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                     // Event from device policy manager.
                     Either3::Second(event) => match event {
                         Event::RequestSprSourceCapabilities => State::GetSourceCap(Mode::Spr),
+                        #[cfg(feature = "epr")]
                         Event::RequestEprSourceCapabilities => State::GetSourceCap(Mode::Epr),
+                        #[cfg(feature = "epr")]
                         Event::EnterEprMode(pdp) => State::EprMode(EprState::Entry(pdp)),
+                        #[cfg(feature = "epr")]
                         Event::ExitEprMode => State::EprMode(EprState::SendExit),
                         Event::RequestPower(power_source) => State::SelectCapability(power_source),
                         Event::RequestVconnSwap => State::VconnSwap(VcsState::SendSwap),
@@ -621,7 +648,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                         // PPS periodic timeout -> select capability again as keep-alive.
                         Either3::First(_) => State::SelectCapability(power_source),
                         // EPR keep-alive timeout
+                        #[cfg(feature = "epr")]
                         Either3::Second(_) => State::EprMode(EprState::KeepAlive),
+                        #[cfg(not(feature = "epr"))]
+                        Either3::Second(_) => State::SelectCapability(power_source),
                         // SinkRequest timeout -> re-request power after Wait response
                         Either3::Third(_) => State::SelectCapability(power_source),
                     },
@@ -737,8 +767,13 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                     Mode::Spr => {
                         self.protocol_layer.transmit_sink_capabilities(sink_caps).await?;
                     }
+                    #[cfg(feature = "epr")]
                     Mode::Epr => {
                         self.protocol_layer.transmit_epr_sink_capabilities(sink_caps).await?;
+                    }
+                    #[cfg(not(feature = "epr"))]
+                    Mode::Epr => {
+                        self.protocol_layer.transmit_sink_capabilities(sink_caps).await?;
                     }
                 }
 
@@ -762,11 +797,18 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                             .transmit_control_message(ControlMessageType::GetSourceCap)
                             .await?;
                     }
+                    #[cfg(feature = "epr")]
                     Mode::Epr => {
                         self.protocol_layer
                             .transmit_extended_control_message(
                                 crate::protocol_layer::message::extended::extended_control::ExtendedControlMessageType::EprGetSourceCap,
                             )
+                            .await?;
+                    }
+                    #[cfg(not(feature = "epr"))]
+                    Mode::Epr => {
+                        self.protocol_layer
+                            .transmit_control_message(ControlMessageType::GetSourceCap)
                             .await?;
                     }
                 };
@@ -777,6 +819,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                     .receive_message_type(
                         &[
                             MessageType::Data(DataMessageType::SourceCapabilities),
+                            #[cfg(feature = "epr")]
                             MessageType::Extended(ExtendedMessageType::EprSourceCapabilities),
                         ],
                         TimerType::SenderResponse,
@@ -809,10 +852,13 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                     message.header.message_type(),
                     MessageType::Data(DataMessageType::SourceCapabilities)
                 );
+                #[cfg(feature = "epr")]
                 let received_epr = matches!(
                     message.header.message_type(),
                     MessageType::Extended(ExtendedMessageType::EprSourceCapabilities)
                 );
+                #[cfg(not(feature = "epr"))]
+                let received_epr = false;
 
                 let mode_matches = (*requested_mode == Mode::Spr && self.mode == Mode::Spr && received_spr)
                     || (*requested_mode == Mode::Epr && self.mode == Mode::Epr && received_epr);
@@ -820,6 +866,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                 // Extract capabilities from the message
                 let capabilities = match message.payload {
                     Some(Payload::Data(Data::SourceCapabilities(caps))) => caps,
+                    #[cfg(feature = "epr")]
                     Some(Payload::Extended(extended::Extended::EprSourceCapabilities(pdos))) => {
                         SourceCapabilities(pdos)
                     }
@@ -838,7 +885,6 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                     State::Ready(false)
                 }
             }
-
             // PD 3.2 Sec. 8.3.3.19 Dual-Role Port States
             State::DrpSwap(swap_state) => match swap_state {
                 SwapState::Data(dr) => self.execute_data_role_swap_state(*dr).await?,
@@ -850,6 +896,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
             State::VconnSwap(vcs_state) => self.execute_vconn_swap_state(*vcs_state).await?,
 
             // PD 3.2 Sec. 8.3.3.26.2/4 Sink EPR Mode Entry/Exit, 8.3.3.3.3, 8.3.3.3.11
+            #[cfg(feature = "epr")]
             State::EprMode(epr_state) => self.execute_epr_state(*epr_state).await?,
 
             // Custom State - Exit sink running and signal to program to begin Source
@@ -961,7 +1008,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
 
                 let timer_type = match self.mode {
                     Mode::Spr => TimerType::PSSourceOffSpr,
+                    #[cfg(feature = "epr")]
                     Mode::Epr => TimerType::PSSourceOffEpr,
+                    #[cfg(not(feature = "epr"))]
+                    Mode::Epr => TimerType::PSSourceOffSpr,
                 };
 
                 self.protocol_layer
@@ -1057,7 +1107,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
 
                 let timer_type = match self.mode {
                     Mode::Spr => TimerType::PSSourceOffSpr,
+                    #[cfg(feature = "epr")]
                     Mode::Epr => TimerType::PSSourceOffEpr,
+                    #[cfg(not(feature = "epr"))]
+                    Mode::Epr => TimerType::PSSourceOffSpr,
                 };
 
                 self.protocol_layer
@@ -1198,6 +1251,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
         Ok(new_state)
     }
 
+    #[cfg(feature = "epr")]
     async fn execute_epr_state(&mut self, state: EprState) -> Result<State, Error> {
         let new_state = match state {
             // PD 3.2 Sec. 8.3.3.26.2.1 (PE_SNK_Send_EPR_Mode_Entry):
@@ -1342,6 +1396,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
             }
             // PD 3.2 Sec. 8.3.3.3.11 (PE_SNK_EPR_Keep_Alive):
             EprState::KeepAlive => {
+                // Per PD 3.2 Sec. 8.3.3.3.11 (PE_SNK_EPR_Keep_Alive):
                 // - Entry: Send EPR_KeepAlive message, start SenderResponseTimer
                 // - On EPR_KeepAlive_Ack: transition to Ready (which restarts SinkEPRKeepAliveTimer)
                 // - On timeout: transition to HardReset

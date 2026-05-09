@@ -4,7 +4,9 @@
 //! or renegotiate the power contract.
 use core::future::Future;
 
-use crate::protocol_layer::message::data::{epr_mode, request, sink_capabilities, source_capabilities};
+use crate::protocol_layer::message::data::{request, sink_capabilities, source_capabilities};
+#[cfg(feature = "epr")]
+use crate::protocol_layer::message::data::epr_mode;
 use crate::units::Power;
 use crate::{DataRole, SwapType};
 
@@ -19,6 +21,7 @@ pub enum Event {
     ///
     /// Sends EprGetSourceCap extended control message.
     /// Per PD 3.2 Sec. 8.3.3.8.1.
+    #[cfg(feature = "epr")]
     RequestEprSourceCapabilities,
     /// Enter EPR mode with the specified operational PDP.
     ///
@@ -29,12 +32,14 @@ pub enum Event {
     /// EPR Sink Operational PDP. For example, a 28V × 5A = 140W device should pass 140W.
     ///
     /// Per PD 3.2 Tab. 8.39, "Steps for Entering EPR Mode (Success)"
+    #[cfg(feature = "epr")]
     EnterEprMode(Power),
     /// Exit EPR mode (sink-initiated).
     ///
     /// Sends EPR_Mode (Exit) message to source, then waits for Source_Capabilities.
     /// After receiving caps, negotiation proceeds as normal SPR negotiation.
     /// Per PD 3.2 Tab. 8.46, "Steps for Exiting EPR Mode (Sink Initiated)"
+    #[cfg(feature = "epr")]
     ExitEprMode,
     /// Request a certain power level.
     RequestPower(request::PowerSource),
@@ -66,7 +71,11 @@ pub enum Info {
 // FIXME: Use trait aliasing once stable: https://github.com/rust-lang/rust/issues/41517
 /// Full implementation for the sink device policy manager.
 /// The default implementations of the traits will handle the case where a feature is unsupported.
+#[cfg(feature = "epr")]
 pub trait SinkDpm: DevicePolicyManager + EprDevicePolicyManager + DrpDevicePolicyManager {}
+
+#[cfg(not(feature = "epr"))]
+pub trait SinkDpm: DevicePolicyManager + DrpDevicePolicyManager {}
 
 /// Trait for the device policy manager.
 ///
@@ -162,6 +171,7 @@ pub trait DevicePolicyManager {
 /// **EPR** Extended Power Range device implementations
 ///
 /// Leave blank if the device does not support EPR.
+#[cfg(feature = "epr")]
 pub trait EprDevicePolicyManager {
     /// Notify the device that EPR mode entry failed.
     ///

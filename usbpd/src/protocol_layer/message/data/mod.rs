@@ -16,6 +16,7 @@ pub mod source_capabilities;
 
 pub mod sink_capabilities;
 
+#[cfg(feature = "epr")]
 pub mod epr_mode;
 
 // FIXME: add documentation
@@ -53,6 +54,7 @@ pub enum Data {
     /// Request for a power level from the source.
     Request(request::PowerSource),
     /// Used to enter, acknowledge or exit EPR mode.
+    #[cfg(feature = "epr")]
     EprMode(epr_mode::EprModeDataObject),
     /// Vendor defined messages (VDM), per PD 3.2 Sec. 6.4.9.
     ///
@@ -104,6 +106,8 @@ impl Data {
                     }
                 }
             }
+            #[cfg(feature = "epr")]
+            #[cfg(feature = "epr")]
             DataMessageType::EprRequest => {
                 let num_objects = message.header.num_objects();
                 trace!("EprRequest: num_objects={}, len={}", num_objects, len);
@@ -125,6 +129,7 @@ impl Data {
                     Data::Unknown
                 }
             }
+            #[cfg(feature = "epr")]
             DataMessageType::EprMode => {
                 if len != PDO_SIZE {
                     Data::Unknown
@@ -193,6 +198,7 @@ impl Data {
             Self::Request(request::PowerSource::FixedVariableSupply(data_object)) => data_object.to_bytes(payload),
             Self::Request(request::PowerSource::Pps(data_object)) => data_object.to_bytes(payload),
             Self::Request(request::PowerSource::Avs(data_object)) => data_object.to_bytes(payload),
+            #[cfg(feature = "epr")]
             Self::Request(request::PowerSource::EprRequest(epr)) => {
                 // Write RDO (raw u32)
                 LittleEndian::write_u32(payload, epr.rdo);
@@ -203,6 +209,7 @@ impl Data {
                     source_capabilities::PowerDataObject::VariableSupply(p) => p.0,
                     source_capabilities::PowerDataObject::Augmented(a) => match a {
                         source_capabilities::Augmented::Spr(p) => p.0,
+                        #[cfg(feature = "epr")]
                         source_capabilities::Augmented::Epr(p) => p.0,
                         source_capabilities::Augmented::Unknown(p) => *p,
                     },
@@ -212,6 +219,7 @@ impl Data {
                 2 * PDO_SIZE
             }
             Self::Request(_) => unimplemented!(),
+            #[cfg(feature = "epr")]
             Self::EprMode(epr_mode::EprModeDataObject(data_object)) => {
                 LittleEndian::write_u32(payload, *data_object);
                 PDO_SIZE
