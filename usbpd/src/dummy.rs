@@ -152,31 +152,6 @@ impl SourceDrpDPM for DummySourceDevice {}
 impl SourceEprDPM for DummySourceDevice {}
 impl SourceDpm for DummySourceDevice {}
 
-/// A dual role device that will reject all swap requests
-pub struct DummyDualRoleNoSwapsDevice;
-
-impl SourceDPM for DummyDualRoleNoSwapsDevice {
-    async fn evaluate_request(&mut self, request: &PowerSource) -> SourceCapabilityResponse {
-        if request.object_position() < MAX_SPR_OBJ_POS {
-            SourceCapabilityResponse::Accept
-        } else {
-            SourceCapabilityResponse::Reject
-        }
-    }
-
-    fn source_capabilities(&mut self) -> SourceCapabilities {
-        SourceCapabilities(heapless::Vec::from_slice(get_dummy_source_capabilities().as_slice()).unwrap())
-    }
-}
-impl SourceEprDPM for DummyDualRoleNoSwapsDevice {}
-impl SourceDrpDPM for DummyDualRoleNoSwapsDevice {}
-impl SourceDpm for DummyDualRoleNoSwapsDevice {} // Defaults to rejecting swaps
-
-impl SinkDPM for DummyDualRoleNoSwapsDevice {}
-impl SinkDrpDPM for DummyDualRoleNoSwapsDevice {}
-impl SinkEprDPM for DummyDualRoleNoSwapsDevice {}
-impl SinkDpm for DummyDualRoleNoSwapsDevice {} // Defaults to rejecting swaps
-
 pub struct DummyDualRoleDevice;
 
 impl SourceDPM for DummyDualRoleDevice {
