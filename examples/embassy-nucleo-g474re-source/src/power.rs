@@ -10,7 +10,7 @@ use panic_probe as _;
 use usbpd::protocol_layer::message::data::request::PowerSource;
 use usbpd::protocol_layer::message::data::source_capabilities::SourceCapabilities;
 use usbpd::source::device_policy_manager::{
-    CapabilityResponse, DevicePolicyManager, DrpDevicePolicyManager, EprDevicePolicyManager, Info, SourceDpm,
+    CapabilityResponse, DevicePolicyManager, DualRoleDevicePolicyManager, EprDevicePolicyManager, Info, SourceDpm,
 };
 use usbpd::source::policy_engine::Source;
 use usbpd::timers::Timer as SourceTimer;
@@ -128,7 +128,7 @@ impl Device {
 
 impl SourceDpm for Device {}
 
-impl DrpDevicePolicyManager for Device {}
+impl DualRoleDevicePolicyManager for Device {}
 impl EprDevicePolicyManager for Device {}
 
 impl DevicePolicyManager for Device {

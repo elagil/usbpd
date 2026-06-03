@@ -17,7 +17,7 @@ embassy-stm32 = { version = "0.6.0", features = [
 ] }
 embassy-sync = { version = "0.8.0", features = ["defmt"] }
 embassy-executor = { version = "0.10.0", features = [
-    "arch-cortex-m",
+    "platform-cortex-m",
     "executor-thread",
     "defmt",
 ] }
