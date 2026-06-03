@@ -5,8 +5,8 @@ version = "0.1.0"
 license = "MIT"
 
 [dependencies]
-# FIXME: Use released versions, when embassy-stm32 contains required fix for STM32H5 UCPD
-embassy-stm32 = { path = "../../embassy/embassy-stm32", features = [
+embassy-futures = "0.1.2"
+embassy-stm32 = { version = "0.6.0", features = [
     "defmt",
     "stm32h563zi",
     "memory-x",
@@ -15,21 +15,20 @@ embassy-stm32 = { path = "../../embassy/embassy-stm32", features = [
     "unstable-pac",
     "low-power",
 ] }
-embassy-sync = { path = "../../embassy/embassy-sync", features = ["defmt"] }
-embassy-executor = { path = "../../embassy/embassy-executor", features = [
+embassy-sync = { version = "0.8.0", features = ["defmt"] }
+embassy-executor = { version = "0.10.0", features = [
     "arch-cortex-m",
     "executor-thread",
     "defmt",
 ] }
-embassy-time = { path = "../../embassy/embassy-time", features = [
+embassy-time = { version = "0.5.1", features = [
     "defmt",
     "defmt-timestamp-uptime",
     "tick-hz-32_768",
 ] }
-embassy-futures = { path = "../../embassy/embassy-futures" }
 
-defmt = "1.0.1"
-defmt-rtt = "1.0.0"
+defmt = "1.1.0"
+defmt-rtt = "1.2.0"
 
 cortex-m = { version = "0.7.6", features = [
     "inline-asm",
@@ -38,11 +37,11 @@ cortex-m = { version = "0.7.6", features = [
 cortex-m-rt = "0.7.0"
 embedded-hal = "1.0.0"
 embedded-hal-async = { version = "1.0" }
-embedded-io-async = { version = "0.6.1" }
-embedded-nal-async = "0.8.0"
+embedded-io-async = { version = "0.7.0" }
+embedded-nal-async = "0.9.0"
 panic-probe = { version = "1.0.0", features = ["print-defmt"] }
-heapless = { version = "0.8", default-features = false }
-rand_core = "0.9.3"
+heapless = { version = "0.9.3", default-features = false }
+rand_core = "0.10.1"
 critical-section = "1.1"
 embedded-storage = "0.3.1"
 static_cell = "2"
