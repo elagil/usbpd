@@ -3,7 +3,8 @@
         "usbpd/Cargo.toml",
         "usbpd-traits/Cargo.toml",
         "examples/embassy-nucleo-h563zi/Cargo.toml",
-        "examples/embassy-stm32-g431cb/Cargo.toml",
-        "examples/embassy-stm32-g431cb-epr/Cargo.toml",
+        "examples/embassy-nucleo-g474re-sink/Cargo.toml",
+        "examples/embassy-nucleo-g474re-sink-epr/Cargo.toml",
+        "examples/embassy-nucleo-g474re-source/Cargo.toml",
     ]
 }
