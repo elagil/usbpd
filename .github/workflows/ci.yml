@@ -63,9 +63,6 @@ jobs:
         with:
           name: source-firmware
 
-      - name: Verify probes connected
-        run: probe-rs list
-
       - name: Hardware test
         env:
           PROBE_SERIAL_A: ${{ secrets.PROBE_SERIAL_A }}

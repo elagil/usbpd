@@ -10,10 +10,8 @@ SINK_ELF="usbpd-g474re-sink"
 SOURCE_ELF="usbpd-g474re-source"
 
 # Sanity check: verify probes are connected
-probe-rs list
-
-# Ensure firmware binaries are executable
-chmod +x "$SINK_ELF" "$SOURCE_ELF"
+probe-rs info --probe "$PROBE_A"
+probe-rs info --probe "$PROBE_B"
 
 # Flash sink to board A
 probe-rs download --chip "$CHIP" --probe "$PROBE_A" "$SINK_ELF"
