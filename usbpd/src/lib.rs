@@ -178,6 +178,24 @@ pub enum SwapType {
     Power,
 }
 
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Inner policy engine results to determine whether to exit the policy engine or not
+enum PolicyEngineResult {
+    Continue,
+    Exit(RunResult)
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Action to execute upon successfully exiting a port's policy engine handler
+pub enum RunResult {
+    /// **DRP** Sink -> Source
+    SwapToSource,
+    /// **DRP** Source -> Sink
+    SwapToSink,
+}
+
 #[cfg(test)]
 mod tests {
     use uom::si::electric_current::milliampere;

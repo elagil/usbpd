@@ -18,7 +18,7 @@ use crate::protocol_layer::message::header::{
 use crate::protocol_layer::message::{Payload, extended};
 use crate::protocol_layer::{ProtocolError, RxError, SinkProtocolLayer, TxError};
 use crate::timers::{Timer, TimerType};
-use crate::{Contract, DataRole, PowerRole, SwapType, units};
+use crate::{Contract, DataRole, PolicyEngineResult, PowerRole, RunResult, SwapType, units};
 
 #[cfg(test)]
 mod tests;
@@ -171,8 +171,6 @@ pub enum Error {
     PortPartnerUnresponsive,
     /// Entered ErrorRecovery mode. This requests a disconnect.
     ReconnectionRequired,
-    /// FIXME: Easiest way to signal to device to swap to source
-    SwapToSource,
     /// A protocol error has occured.
     Protocol(ProtocolError),
 }
@@ -230,11 +228,8 @@ impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<'a, DRIVER, TIMER, DPM
     }
 
     /// Run a single step in the policy engine state machine.
-    async fn run_step(&mut self) -> Result<(), Error> {
+    async fn run_step(&mut self) -> Result<PolicyEngineResult, Error> {
         let result = self.update_state().await;
-        if result.is_ok() {
-            return Ok(());
-        }
 
         if let Err(Error::Protocol(protocol_error)) = result {
             let new_state = match (&self.mode, &self.state, protocol_error) {
@@ -310,7 +305,7 @@ impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<'a, DRIVER, TIMER, DPM
                 self.state = state
             }
 
-            Ok(())
+            Ok(PolicyEngineResult::Continue)
         } else {
             error!("Unrecoverable result {:?} in sink state transition", result);
             result
@@ -320,9 +315,13 @@ impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<'a, DRIVER, TIMER, DPM
     /// Run the sink's state machine continuously.
     ///
     /// The loop is only broken for unrecoverable errors, for example if the port partner is unresponsive.
-    pub async fn run(&mut self) -> Result<(), Error> {
+    pub async fn run(&mut self) -> Result<RunResult, Error> {
         loop {
-            self.run_step().await?;
+            let step_result = self.run_step().await?;
+
+            if let PolicyEngineResult::Exit(run_result) = step_result {
+                return Ok(run_result)
+            }
         }
     }
 
@@ -350,7 +349,7 @@ impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<'a, DRIVER, TIMER, DPM
         Ok(capabilities)
     }
 
-    async fn update_state(&mut self) -> Result<(), Error> {
+    async fn update_state(&mut self) -> Result<PolicyEngineResult, Error> {
         let new_state = match &self.state {
             State::Startup => {
                 self.contract = Default::default();
@@ -737,7 +736,7 @@ impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<'a, DRIVER, TIMER, DPM
                         // Inform DPM of timeout (no capabilities received)
                         warn!("Get_Source_Cap timeout, returning to Ready");
                         self.state = State::Ready(false);
-                        return Ok(());
+                        return Ok(PolicyEngineResult::Continue);
                     }
                     Err(e) => return Err(e.into()),
                 };
@@ -789,9 +788,9 @@ impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<'a, DRIVER, TIMER, DPM
             // 8.3.3.26.2/4 Sink EPR Mode Entry/Exit, 8.3.3.3.3, 8.3.3.3.11
             State::EprMode(epr_state) => self.execute_epr_state(*epr_state).await?,
 
+            // Custom State - Exit sink running and signal to program to begin Source
             State::PrSwapToSourceStartup => {
-                // FIXME: Better way to transition to Source?
-                Err(Error::SwapToSource)?
+                return Ok(PolicyEngineResult::Exit(RunResult::SwapToSource));
             }
 
             // 8.3.3.28.1
@@ -803,7 +802,7 @@ impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<'a, DRIVER, TIMER, DPM
 
         self.state = new_state;
 
-        Ok(())
+        Ok(PolicyEngineResult::Continue)
     }
 
     async fn execute_data_role_swap_state(&mut self, state: DataRoleSwap) -> Result<State, Error> {
@@ -1043,7 +1042,7 @@ impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<'a, DRIVER, TIMER, DPM
                     MessageType::Control(ControlMessageType::Wait) => State::Ready(false), // FIXME: inform DPM and change to `true`
                     // May also transition to ForceVconn if NotSupported message and port presently not vconn source
                     MessageType::Control(ControlMessageType::NotSupported) => State::NotSupportedReceived,
-                    _ => unreachable!(),
+                    _ => Err(Error::Protocol(ProtocolError::UnexpectedMessage))?,
                 }
             }
             // 8.3.3.20.2 (PE_VCS_Evaluate_Swap):
