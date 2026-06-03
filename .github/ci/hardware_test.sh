@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-CHIP="STM32G474RETx"
+CHIP="STM32G474RE"
 PROBE_A="${PROBE_SERIAL_A:?Set PROBE_SERIAL_A secret}"
 PROBE_B="${PROBE_SERIAL_B:?Set PROBE_SERIAL_B secret}"
 TIMEOUT_SECS=30
