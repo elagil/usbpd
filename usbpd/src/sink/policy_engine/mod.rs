@@ -105,6 +105,7 @@ enum PowerRoleSwap {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum FastPowerRoleSwap {
     // TODO: Determine how to best poll & enter FrSwaps
+    #[allow(unused)]
     Start,
     Send,
     TransitionToOff,
