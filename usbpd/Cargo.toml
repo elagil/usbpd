@@ -16,7 +16,6 @@ usbpd-traits.workspace = true
 proc-bitfield.workspace = true
 byteorder.workspace = true
 heapless.workspace = true
-uom = { workspace = true, features = ["si", "u32"] }
 embassy-futures.workspace = true
 
 thiserror = { workspace = true }
