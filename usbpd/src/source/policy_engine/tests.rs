@@ -11,10 +11,7 @@ use crate::protocol_layer::message::data::Data;
 use crate::protocol_layer::message::data::request::{CurrentRequest, FixedVariableSupply, PowerSource, VoltageRequest};
 use crate::protocol_layer::message::data::source_capabilities::SourceCapabilities;
 use crate::protocol_layer::message::header::{ControlMessageType, DataMessageType, Header, MessageType};
-use crate::source::device_policy_manager::{
-    CapabilityResponse, DevicePolicyManager as DPM, DualRoleDevicePolicyManager as DRP_DPM,
-    EprDevicePolicyManager as EPR_DPM, SourceDpm,
-};
+use crate::source::device_policy_manager::{CapabilityResponse, SourceDpm};
 use crate::source::policy_engine::{DataRoleSwap, FastPowerRoleSwap, PowerRoleSwap, State, SwapState};
 
 fn simulate_sink_control_message<DPM: SourceDpm>(
