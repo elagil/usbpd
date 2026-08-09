@@ -9,11 +9,14 @@ env:
 
 jobs:
   build_and_test:
+    name: Build & Test
     runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: "-D warnings"
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: true
 
@@ -33,3 +36,58 @@ jobs:
 
       - name: Test
         run: bash .github/ci/test.sh
+
+  msrv:
+    name: Minimum Supported Rust Version
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: "-D warnings"
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@cargo-hack
+
+      - name: Check MSRV
+        run: cargo hack check --rust-version --workspace --all-targets --ignore-private
+
+  semver:
+    name: Semantic Versioning
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+
+      - name: Check semver of usbpd
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          manifest-path: usbpd/Cargo.toml
+
+      - name: Check semver of usbpd-traits
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          manifest-path: usbpd-traits/Cargo.toml
+
+  min-versions:
+    name: Minimal Direct Dependency Versions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install dependency checking tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hack,cargo-minimal-versions
+
+      - name: Check minimum dependency versions
+        run: >
+          cargo minimal-versions check
+          --direct
+          --workspace
+          --ignore-private
+          --all-targets
