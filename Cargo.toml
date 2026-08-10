@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["usbpd", "usbpd-traits"]
-exclude = ["examples/*"]
+exclude = ["examples"]
 
 [workspace.package]
 authors = ["Adrian Figueroa <elagil@takanome.de>"]
