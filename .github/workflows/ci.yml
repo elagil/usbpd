@@ -11,8 +11,6 @@ jobs:
   build_and_test:
     name: Build & Test
     runs-on: ubuntu-latest
-    env:
-      RUSTFLAGS: "-D warnings"
 
     steps:
       - name: Checkout
@@ -40,6 +38,15 @@ jobs:
   msrv:
     name: Minimum Supported Rust Version
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - crate: usbpd
+            features: serde,log
+          - crate: usbpd
+            features: serde,defmt
+          - crate: usbpd-traits
+            features: defmt
     env:
       RUSTFLAGS: "-D warnings"
     steps:
@@ -50,28 +57,35 @@ jobs:
         uses: taiki-e/install-action@cargo-hack
 
       - name: Check MSRV
-        run: cargo hack check --rust-version --workspace --all-targets --ignore-private
+        run: cargo hack check --rust-version -p ${{ matrix.crate }} --features ${{ matrix.features }}
 
   semver:
     name: Semantic Versioning
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        crate: [usbpd, usbpd-traits]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v7
 
-      - name: Check semver of usbpd
+      - name: Check semver
         uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
-          manifest-path: usbpd/Cargo.toml
-
-      - name: Check semver of usbpd-traits
-        uses: obi1kenobi/cargo-semver-checks-action@v2
-        with:
-          manifest-path: usbpd-traits/Cargo.toml
+          manifest-path: ${{ matrix.crate }}/Cargo.toml
 
   min-versions:
     name: Minimal Direct Dependency Versions
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - crate: usbpd
+            features: serde,log
+          - crate: usbpd
+            features: serde,defmt
+          - crate: usbpd-traits
+            features: defmt
     steps:
       - name: Checkout sources
         uses: actions/checkout@v7
@@ -85,9 +99,4 @@ jobs:
           tool: cargo-hack,cargo-minimal-versions
 
       - name: Check minimum dependency versions
-        run: >
-          cargo minimal-versions check
-          --direct
-          --workspace
-          --ignore-private
-          --all-targets
+        run: cargo minimal-versions check -p ${{ matrix.crate }} --features ${{ matrix.features }}

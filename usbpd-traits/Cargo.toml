@@ -1,10 +1,10 @@
 [package]
 name = "usbpd-traits"
+version = "2.0.0"
 description = "USB-PD library traits."
 documentation = "https://docs.rs/usbpd-traits"
 readme = "README.md"
 keywords = ["no_std", "usb-pd", "embedded", "traits"]
-version.workspace = true
 authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
