@@ -64,7 +64,13 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        crate: [usbpd, usbpd-traits]
+        include:
+          - crate: usbpd
+            features: serde,log
+          - crate: usbpd
+            features: serde,defmt
+          - crate: usbpd-traits
+            features: defmt
     steps:
       - name: Checkout sources
         uses: actions/checkout@v7
@@ -73,6 +79,8 @@ jobs:
         uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
           manifest-path: ${{ matrix.crate }}/Cargo.toml
+          feature-group: default-features
+          features: ${{ matrix.features }}
 
   min-versions:
     name: Minimal Direct Dependency Versions
