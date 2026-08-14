@@ -74,6 +74,10 @@ pub mod units {
         pub fn new_mw(mw: u32) -> Self {
             Self(mw)
         }
+        /// Create a new electric power, from current and potential
+        pub fn from_current_and_potential(current: ElectricCurrent, potential: ElectricPotential) -> Self {
+            Self(current.get_ma() * potential.get_mv() / 1000)
+        }
         /// Get the electric power in milliwatts
         pub fn get_mw(&self) -> u32 {
             self.0
