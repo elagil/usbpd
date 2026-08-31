@@ -4,7 +4,9 @@
 //! or renegotiate the power contract.
 use core::future::Future;
 
-use crate::protocol_layer::message::data::{epr_mode, request, sink_capabilities, source_capabilities};
+use crate::protocol_layer::message::data::{request, sink_capabilities, source_capabilities};
+#[cfg(feature = "epr")]
+use crate::protocol_layer::message::data::epr_mode;
 use crate::units::Power;
 
 /// Events that the device policy manager can send to the policy engine.
@@ -18,6 +20,7 @@ pub enum Event {
     ///
     /// Sends EprGetSourceCap extended control message.
     /// See [8.3.3.8.1]
+    #[cfg(feature = "epr")]
     RequestEprSourceCapabilities,
     /// Enter EPR mode with the specified operational PDP.
     ///
@@ -28,12 +31,14 @@ pub enum Event {
     /// EPR Sink Operational PDP. For example, a 28V × 5A = 140W device should pass 140W.
     ///
     /// See spec Table 8.39: "Steps for Entering EPR Mode (Success)"
+    #[cfg(feature = "epr")]
     EnterEprMode(Power),
     /// Exit EPR mode (sink-initiated).
     ///
     /// Sends EPR_Mode (Exit) message to source, then waits for Source_Capabilities.
     /// After receiving caps, negotiation proceeds as normal SPR negotiation.
     /// See spec Table 8.46: "Steps for Exiting EPR Mode (Sink Initiated)"
+    #[cfg(feature = "epr")]
     ExitEprMode,
     /// Request a certain power level.
     RequestPower(request::PowerSource),
@@ -97,6 +102,7 @@ pub trait DevicePolicyManager {
     /// - EPR capable bit not set in RDO
     /// - Source unable to enter EPR mode (sink may retry later)
     /// - EPR capable bit not set in PDO
+    #[cfg(feature = "epr")]
     fn epr_mode_entry_failed(&mut self, _reason: epr_mode::DataEnterFailed) -> impl Future<Output = ()> {
         async {}
     }

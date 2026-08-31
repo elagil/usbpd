@@ -26,6 +26,7 @@ use usbpd_traits::{Driver, DriverRxError, DriverTxError};
 
 use crate::PowerRole;
 use crate::counters::{Counter, CounterType, Error as CounterError};
+#[cfg(feature = "epr")]
 use crate::protocol_layer::message::data::epr_mode::EprModeDataObject;
 use crate::protocol_layer::message::data::source_capabilities::SourceCapabilities;
 use crate::protocol_layer::message::extended::Extended;
@@ -674,6 +675,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     }
 
     /// Transmit an EPR mode data message.
+    #[cfg(feature = "epr")]
     pub async fn transmit_epr_mode(
         &mut self,
         action: message::data::epr_mode::Action,
@@ -798,6 +800,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     ) -> Result<(), ProtocolError> {
         // Only sources can send capabilities
         debug_assert!(matches!(self.default_header.port_power_role(), PowerRole::Source));
+        #[cfg(feature = "epr")]
         if source_capabilities.has_epr_pdo_in_spr_positions() {
             return Err(ProtocolError::TxError(TxError::HardReset));
         }

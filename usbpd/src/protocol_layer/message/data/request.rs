@@ -351,6 +351,7 @@ impl PowerSource {
                         trace!("Skip PDO, voltage out of range. {:?}", augmented);
                     }
                 }
+                #[cfg(feature = "epr")]
                 source_capabilities::Augmented::Epr(avs) => {
                     if avs.min_voltage() <= voltage && avs.max_voltage() >= voltage {
                         return Some(IndexedAugmented(augmented, index));
@@ -477,6 +478,7 @@ impl PowerSource {
     ///
     /// Per USB PD 3.x Section 6.4.9, this creates an EPR_Request with an AVS RDO
     /// and a copy of the requested PDO.
+    #[cfg(feature = "epr")]
     pub fn new_epr_avs(
         current_request: CurrentRequest,
         voltage: ElectricPotential,

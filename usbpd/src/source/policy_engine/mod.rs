@@ -9,7 +9,9 @@ use crate::counters::Counter;
 use crate::protocol_layer::message::data::request::PowerSource;
 use crate::protocol_layer::message::data::sink_capabilities::SinkCapabilities;
 use crate::protocol_layer::message::data::source_capabilities::{Kind, SourceCapabilities};
-use crate::protocol_layer::message::data::{Data, PdoKind, epr_mode, request};
+use crate::protocol_layer::message::data::{Data, PdoKind, request};
+#[cfg(feature = "epr")]
+use crate::protocol_layer::message::data::epr_mode;
 use crate::protocol_layer::message::extended::Extended;
 use crate::protocol_layer::message::extended::extended_control::ExtendedControlMessageType;
 use crate::protocol_layer::message::header::{
@@ -80,6 +82,7 @@ enum State {
     // 8.3.3.20 Vconn Swap
     VconnSwap { source: VcsSwapSource, state: VcsState },
     // 8.3.3.26 EPR States
+    #[cfg(feature = "epr")]
     EprMode(EprState),
     // Custom state to signal exit out of source to sink from a power swap
     PrSwapToSinkStartup,
@@ -134,6 +137,7 @@ enum FastPowerRoleSwap {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum VcsSwapSource {
     Message,
+    #[cfg(feature = "epr")]
     Epr,
 }
 
@@ -154,6 +158,7 @@ enum VcsState {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[cfg(feature = "epr")]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum EprState {
     Entry,
@@ -504,7 +509,9 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                         Event::UpdatedSourceCapabilities => State::SendCapabilities,
                         Event::RequestSinkCapabilities => State::GetSinkCap,
                         Event::RequestSourceCapabilities => State::DrpGetSourceCap(Mode::Spr),
+                        #[cfg(feature = "epr")]
                         Event::RequestEprSourceCapabilities => State::DrpGetSourceCap(Mode::Epr),
+                        #[cfg(feature = "epr")]
                         Event::ExitEprMode => State::EprMode(EprState::SendExit),
                         Event::RequestVconnSwap => State::VconnSwap {
                             source: VcsSwapSource::Message,
@@ -812,6 +819,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
 
             // 8.3.3.26 EPR States
             // FIXME: Source EPR
+            #[cfg(feature = "epr")]
             State::EprMode(state) => self.execute_epr_state(*state).await?,
 
             // 8.3.3.28.1
@@ -1091,6 +1099,9 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                 self.protocol_layer
                     .transmit_control_message(ControlMessageType::Reject)
                     .await?;
+                #[cfg(not(feature = "epr"))]
+                {Ok(State::Ready)}
+                #[cfg(feature = "epr")]
                 match source {
                     VcsSwapSource::Message => Ok(State::Ready),
                     VcsSwapSource::Epr => Ok(State::EprMode(EprState::DiscoverCable)),
@@ -1113,6 +1124,9 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     .drive_vconn(false)
                     .await
                     .map_err(|_| Error::ReconnectionRequired)?;
+                #[cfg(not(feature = "epr"))]
+                {Ok(State::Ready)}
+                #[cfg(feature = "epr")]
                 match source {
                     VcsSwapSource::Message => Ok(State::Ready),
                     VcsSwapSource::Epr => Ok(State::EprMode(EprState::DiscoverCable)),
@@ -1134,6 +1148,9 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                 self.protocol_layer
                     .transmit_control_message(ControlMessageType::PsRdy)
                     .await?;
+                #[cfg(not(feature = "epr"))]
+                {Ok(State::Ready)}
+                #[cfg(feature = "epr")]
                 match source {
                     VcsSwapSource::Message => Ok(State::Ready),
                     VcsSwapSource::Epr => Ok(State::EprMode(EprState::DiscoverCable)),
@@ -1145,6 +1162,9 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     .drive_vconn(true)
                     .await
                     .map_err(|_| Error::ReconnectionRequired)?;
+                #[cfg(not(feature = "epr"))]
+                {Ok(State::Ready)}
+                #[cfg(feature = "epr")]
                 match source {
                     VcsSwapSource::Message => Ok(State::Ready),
                     VcsSwapSource::Epr => Ok(State::EprMode(EprState::DiscoverCable)),
@@ -1154,6 +1174,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
     }
 
     // 8.3.3.26 EPR States
+    #[cfg(feature = "epr")]
     async fn execute_epr_state(&mut self, state: EprState) -> Result<State, Error> {
         match state {
             // 8.3.3.26.1.1 (PE_SRC_Evaluate_EPR_Mode_Entry):
@@ -1263,6 +1284,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                 State::NegotiateCapability(power_source)
             }
 
+            #[cfg(feature = "epr")]
             MessageType::Data(DataMessageType::EprRequest) => {
                 if self.mode != Mode::Epr {
                     return Err(Error::Protocol(ProtocolError::RxError(RxError::HardReset)));
@@ -1275,6 +1297,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                 State::NegotiateCapability(power_source)
             }
 
+            #[cfg(feature = "epr")]
             MessageType::Data(DataMessageType::EprMode) => match message.payload {
                 Some(Payload::Data(Data::EprMode(epr_data))) => match epr_data.action() {
                     epr_mode::Action::Enter => match self.mode {

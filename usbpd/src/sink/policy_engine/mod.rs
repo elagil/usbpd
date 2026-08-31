@@ -7,6 +7,7 @@ use usbpd_traits::Driver;
 
 use super::device_policy_manager::DevicePolicyManager;
 use crate::counters::Counter;
+#[cfg(feature = "epr")]
 use crate::protocol_layer::message::data::epr_mode::{self, Action};
 use crate::protocol_layer::message::data::request::PowerSource;
 use crate::protocol_layer::message::data::source_capabilities::SourceCapabilities;
@@ -67,11 +68,17 @@ enum State {
     GetSourceCap(Mode, request::PowerSource),
 
     // EPR states
+    #[cfg(feature = "epr")]
     EprModeEntry(request::PowerSource, units::Power),
+    #[cfg(feature = "epr")]
     EprEntryWaitForResponse(request::PowerSource),
+    #[cfg(feature = "epr")]
     EprWaitForCapabilities(request::PowerSource),
+    #[cfg(feature = "epr")]
     EprSendExit,
+    #[cfg(feature = "epr")]
     EprExitReceived(request::PowerSource),
+    #[cfg(feature = "epr")]
     EprKeepAlive(request::PowerSource),
 }
 
@@ -385,6 +392,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                                     State::EvaluateCapabilities(capabilities)
                                 }
                             }
+                            #[cfg(feature = "epr")]
                             MessageType::Extended(ExtendedMessageType::EprSourceCapabilities) => {
                                 if let Some(Payload::Extended(extended::Extended::EprSourceCapabilities(pdos))) =
                                     message.payload
@@ -403,6 +411,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                                     unreachable!()
                                 }
                             }
+                            #[cfg(feature = "epr")]
                             MessageType::Data(DataMessageType::EprMode) => {
                                 // Handle source exit notification.
                                 State::EprExitReceived(*power_source)
@@ -431,8 +440,11 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     // Event from device policy manager.
                     Either3::Second(event) => match event {
                         Event::RequestSprSourceCapabilities => State::GetSourceCap(Mode::Spr, *power_source),
+                        #[cfg(feature = "epr")]
                         Event::RequestEprSourceCapabilities => State::GetSourceCap(Mode::Epr, *power_source),
+                        #[cfg(feature = "epr")]
                         Event::EnterEprMode(pdp) => State::EprModeEntry(*power_source, pdp),
+                        #[cfg(feature = "epr")]
                         Event::ExitEprMode => State::EprSendExit,
                         Event::RequestPower(power_source) => State::SelectCapability(power_source),
                         Event::None => State::Ready(*power_source, false),
@@ -442,7 +454,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                         // PPS periodic timeout -> select capability again as keep-alive.
                         Either3::First(_) => State::SelectCapability(*power_source),
                         // EPR keep-alive timeout
+                        #[cfg(feature = "epr")]
                         Either3::Second(_) => State::EprKeepAlive(*power_source),
+                        #[cfg(not(feature = "epr"))]
+                        Either3::Second(_) => State::SelectCapability(*power_source),
                         // SinkRequest timeout -> re-request power after Wait response
                         Either3::Third(_) => State::SelectCapability(*power_source),
                     },
@@ -638,6 +653,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     State::Ready(*power_source, false)
                 }
             }
+            #[cfg(feature = "epr")]
             State::EprModeEntry(power_source, operational_pdp) => {
                 // Request entry into EPR mode.
                 // Per spec 8.3.3.26.2.1 (PE_SNK_Send_EPR_Mode_Entry), sink sends EPR_Mode (Enter)
@@ -689,6 +705,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     _ => State::SendSoftReset,
                 }
             }
+            #[cfg(feature = "epr")]
             State::EprEntryWaitForResponse(power_source) => {
                 // Wait for EnterSucceeded after receiving EnterAcknowledged.
                 // Per spec 8.3.3.26.2.2 (PE_SNK_EPR_Mode_Wait_For_Response), use SinkEPREnterTimer
@@ -721,6 +738,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     _ => State::SendSoftReset,
                 }
             }
+            #[cfg(feature = "epr")]
             State::EprWaitForCapabilities(_power_source) => {
                 // After successful EPR mode entry, source automatically sends EPR_Source_Capabilities.
                 // This may be a chunked extended message that requires assembly.
@@ -740,12 +758,14 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     }
                 }
             }
+            #[cfg(feature = "epr")]
             State::EprSendExit => {
                 // Inform partner we are exiting EPR.
                 self.protocol_layer.transmit_epr_mode(Action::Exit, 0).await?;
                 self.mode = Mode::Spr;
                 State::WaitForCapabilities
             }
+            #[cfg(feature = "epr")]
             State::EprExitReceived(power_source) => {
                 // Per USB PD Spec R3.2 Section 8.3.3.26.4.2 (PE_SNK_EPR_Mode_Exit_Received):
                 // - If in an Explicit Contract with an SPR (A)PDO → WaitForCapabilities
@@ -770,6 +790,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     State::WaitForCapabilities
                 }
             }
+            #[cfg(feature = "epr")]
             State::EprKeepAlive(power_source) => {
                 // Per spec 8.3.3.3.11 (PE_SNK_EPR_Keep_Alive):
                 // - Entry: Send EPR_KeepAlive message, start SenderResponseTimer
