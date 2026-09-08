@@ -183,7 +183,7 @@ pub enum SwapType {
 /// Inner policy engine results to determine whether to exit the policy engine or not
 enum PolicyEngineResult {
     Continue,
-    Exit(RunResult)
+    Exit(RunResult),
 }
 
 #[derive(Debug, Clone, Copy)]
