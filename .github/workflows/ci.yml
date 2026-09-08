@@ -26,14 +26,27 @@ jobs:
           workspaces: |
             usbpd
             examples/embassy-nucleo-h563zi
-            examples/embassy-stm32-g431cb
-            examples/embassy-stm32-g431cb-epr
+            examples/embassy-nucleo-g474re-sink
+            examples/embassy-nucleo-g474re-sink-epr
+            examples/embassy-nucleo-g474re-source
 
       - name: Build
         run: bash .github/ci/build.sh
 
       - name: Test
         run: bash .github/ci/test.sh
+
+      - name: Upload sink firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: sink-firmware
+          path: examples/embassy-nucleo-g474re-sink/target/thumbv7em-none-eabihf/release/usbpd-g474re-sink
+
+      - name: Upload source firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-firmware
+          path: examples/embassy-nucleo-g474re-source/target/thumbv7em-none-eabihf/release/usbpd-g474re-source
 
   msrv:
     name: Minimum Supported Rust Version
@@ -108,3 +121,27 @@ jobs:
 
       - name: Check minimum dependency versions
         run: cargo minimal-versions check -p ${{ matrix.crate }} --features ${{ matrix.features }}
+
+  hardware_test:
+    needs: build_and_test
+    runs-on: self-hosted
+
+    steps:
+      - name: Download sink firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: sink-firmware
+
+      - name: Download source firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: source-firmware
+
+      - name: Verify probes connected
+        run: probe-rs list
+
+      - name: Hardware test
+        env:
+          PROBE_SERIAL_A: ${{ secrets.PROBE_SERIAL_A }}
+          PROBE_SERIAL_B: ${{ secrets.PROBE_SERIAL_B }}
+        run: bash .github/ci/hardware_test.sh
