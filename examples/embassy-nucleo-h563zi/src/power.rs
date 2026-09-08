@@ -11,7 +11,9 @@ use panic_probe as _;
 use uom::si::electric_potential;
 use usbpd::protocol_layer::message::data::request::{self, CurrentRequest, VoltageRequest};
 use usbpd::protocol_layer::message::data::source_capabilities::SourceCapabilities;
-use usbpd::sink::device_policy_manager::{DevicePolicyManager, DrpDevicePolicyManager, EprDevicePolicyManager, Event, Info, SinkDpm};
+use usbpd::sink::device_policy_manager::{
+    DevicePolicyManager, DrpDevicePolicyManager, EprDevicePolicyManager, Event, Info, SinkDpm,
+};
 use usbpd::sink::policy_engine::Sink;
 use usbpd::timers::Timer as SinkTimer;
 use usbpd::units::ElectricPotential;
@@ -141,12 +143,12 @@ struct Device<'d> {
     source_capabilities: Option<SourceCapabilities>,
 }
 
-impl <'d> SinkDpm for Device<'d> {}
+impl<'d> SinkDpm for Device<'d> {}
 
 // This device does not have EPR or DRP capabilities, so
 // the trait implementations for both remain empty (default)
-impl <'d> DrpDevicePolicyManager for Device<'d> {}
-impl <'d> EprDevicePolicyManager for Device<'d> {}
+impl<'d> DrpDevicePolicyManager for Device<'d> {}
+impl<'d> EprDevicePolicyManager for Device<'d> {}
 
 impl DevicePolicyManager for Device<'_> {
     async fn inform(&mut self, source_capabilities: &SourceCapabilities, _info: Info) {

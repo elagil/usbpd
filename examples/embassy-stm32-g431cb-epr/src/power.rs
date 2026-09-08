@@ -17,7 +17,9 @@ use usbpd::protocol_layer::message::data::request::{
     Avs, CurrentRequest, EprRequestDataObject, FixedVariableSupply, PowerSource, VoltageRequest,
 };
 use usbpd::protocol_layer::message::data::source_capabilities::{Augmented, PowerDataObject, SourceCapabilities};
-use usbpd::sink::device_policy_manager::{DevicePolicyManager, DrpDevicePolicyManager, EprDevicePolicyManager, Event, Info, SinkDpm};
+use usbpd::sink::device_policy_manager::{
+    DevicePolicyManager, DrpDevicePolicyManager, EprDevicePolicyManager, Event, Info, SinkDpm,
+};
 use usbpd::sink::policy_engine::Sink;
 use usbpd::timers::Timer as SinkTimer;
 use usbpd::units::Power;
@@ -256,7 +258,6 @@ impl EprDevicePolicyManager for Device {
         // A user could define custom behavior here to deal with this entry failure
     }
 }
-
 
 impl DevicePolicyManager for Device {
     async fn inform(&mut self, source_capabilities: &SourceCapabilities, _info: Info) {
