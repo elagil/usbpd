@@ -41,7 +41,9 @@ enum State {
     // States of the policy engine as given by specification.
     // 8.3.3.2 Policy Engine Source Port State Diagram
     /// Default state at startup.
-    Startup { role_swap: bool },
+    Startup {
+        role_swap: bool,
+    },
     Discovery,
     SendCapabilities,
     NegotiateCapability(PowerSource),
@@ -67,7 +69,10 @@ enum State {
     DrpGetSourceCap(Mode),
     DrpGiveSinkCap(Mode),
     /// 8.3.3.20 Vconn Swap
-    VconnSwap { source: VcsSwapSource, state: VcsState },
+    VconnSwap {
+        source: VcsSwapSource,
+        state: VcsState,
+    },
     /// 8.3.3.26 EPR States
     EprMode(EprState),
     /// Custom state to signal exit out of source to sink from a power swap
