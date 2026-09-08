@@ -4,10 +4,10 @@
 //! or renegotiate the power contract.
 use core::future::Future;
 
-use crate::DataRole;
 use crate::protocol_layer::message::data::request;
 use crate::protocol_layer::message::data::sink_capabilities::SinkCapabilities;
 use crate::protocol_layer::message::data::source_capabilities::SourceCapabilities;
+use crate::{DataRole, SwapType};
 
 /// Events that the device policy manager can send to the policy engine.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -35,6 +35,8 @@ pub enum Event {
 #[derive(Debug)]
 /// Information that the policy engine will publish to the DPM
 pub enum Info {
+    /// Request is not supported by the Sink
+    NotSupportedReceived,
     /// SPR Sink Capabilities
     SprSinkCapabilities(Option<SinkCapabilities>),
     /// EPR Sink Capabilities
@@ -55,20 +57,10 @@ pub enum CapabilityResponse {
     Accept,
 }
 
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-/// For defining DPM swap behavior
-pub enum SwapType {
-    /// **DRP** Data Role Swap (UFP <---> DFP)
-    Data,
-    /// **DRP** Power Role Swap (Source --> Sink)
-    Power,
-}
-
 // FIXME: Use trait aliasing once stable: https://github.com/rust-lang/rust/issues/41517
 /// Full implementation for the source device policy manager.
 /// The default implementations of the traits will handle the case where a feature is unsupported.
-pub trait SourceDpm: DevicePolicyManager + EprDevicePolicyManager + DualRoleDevicePolicyManager {}
+pub trait SourceDpm: DevicePolicyManager + EprDevicePolicyManager + DrpDevicePolicyManager {}
 
 /// Trait for the device policy manager.
 ///
@@ -134,9 +126,9 @@ pub trait DevicePolicyManager {
     }
 }
 
-/// **EPR** Extended Power Range mode device implementation
+/// **EPR** Extended Power Range Source device implementation
 ///
-/// Leave unimplemented if EPR is not supported by the device.
+/// Leave blank if EPR is not supported by the device.
 pub trait EprDevicePolicyManager {
     /// **EPR** Return `true` if device is EPR capable.
     ///
@@ -156,10 +148,10 @@ pub trait EprDevicePolicyManager {
     }
 }
 
-/// **DRP** Dual Role Port device implementations
+/// **DRP** Dual Role Port Source device implementations
 ///
-/// Leave unimplemented if the device is not a DRP.
-pub trait DualRoleDevicePolicyManager {
+/// Leave blank if the device is not a DRP.
+pub trait DrpDevicePolicyManager {
     /// **DRP** Respond to the Policy Engine's request for this port's current sink capabilities
     ///
     /// Defaults to only default usb capability (5v @ 500 mA)
@@ -167,8 +159,7 @@ pub trait DualRoleDevicePolicyManager {
         async { SinkCapabilities::new_vsafe5v_only(3 * 100) }
     }
 
-    /// Evaluate a swap request:
-    /// - **DRP**: Data, Power, Fast Power
+    /// **DRP** Evaluate a swap request
     fn evaluate_swap_request(&mut self, _swap_request: SwapType) -> impl Future<Output = bool> {
         async { false }
     }
@@ -192,7 +183,7 @@ pub trait DualRoleDevicePolicyManager {
     /// **DRP** Turn the Source off.
     ///
     /// This will be requested before a Role Swap to Sink
-    fn disable_source(&mut self) -> impl Future<Output = ()> {
+    fn disable(&mut self) -> impl Future<Output = ()> {
         async {}
     }
 
