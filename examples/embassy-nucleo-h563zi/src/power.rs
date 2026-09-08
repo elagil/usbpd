@@ -11,7 +11,7 @@ use panic_probe as _;
 use uom::si::electric_potential;
 use usbpd::protocol_layer::message::data::request::{self, CurrentRequest, VoltageRequest};
 use usbpd::protocol_layer::message::data::source_capabilities::SourceCapabilities;
-use usbpd::sink::device_policy_manager::{DevicePolicyManager, Event};
+use usbpd::sink::device_policy_manager::{DevicePolicyManager, DrpDevicePolicyManager, EprDevicePolicyManager, Event, Info, SinkDpm};
 use usbpd::sink::policy_engine::Sink;
 use usbpd::timers::Timer as SinkTimer;
 use usbpd::units::ElectricPotential;
@@ -141,8 +141,15 @@ struct Device<'d> {
     source_capabilities: Option<SourceCapabilities>,
 }
 
+impl <'d> SinkDpm for Device<'d> {}
+
+// This device does not have EPR or DRP capabilities, so
+// the trait implementations for both remain empty (default)
+impl <'d> DrpDevicePolicyManager for Device<'d> {}
+impl <'d> EprDevicePolicyManager for Device<'d> {}
+
 impl DevicePolicyManager for Device<'_> {
-    async fn inform(&mut self, source_capabilities: &SourceCapabilities) {
+    async fn inform(&mut self, source_capabilities: &SourceCapabilities, _info: Info) {
         info!("New caps received {}", source_capabilities);
 
         self.source_capabilities = Some(source_capabilities.clone());
@@ -236,14 +243,14 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
             cc_sel,
         );
 
-        let driver = UcpdSinkDriver::new(pd_phy);
-        let device = Device {
+        let mut driver = UcpdSinkDriver::new(pd_phy);
+        let mut device = Device {
             source_capabilities: None,
             ticker: Ticker::every(Duration::from_secs(3)),
             test_capabilities: TestCapabilities::Safe5V,
             led: &mut ucpd_resources.led_red,
         };
-        let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(driver, device);
+        let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(&mut driver, &mut device);
         info!("Sink initialized");
 
         ucpd_resources.led_yellow.set_high();
