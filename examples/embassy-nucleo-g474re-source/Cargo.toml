@@ -1,6 +1,6 @@
 [package]
 edition = "2024"
-name = "usbpd-testing"
+name = "usbpd-g474re-source"
 version = "0.1.0"
 license = "MIT"
 
@@ -11,6 +11,8 @@ embassy-stm32 = { path = "../../embassy/embassy-stm32", features = [
     "memory-x",
     "unstable-pac",
     "exti",
+    "stm32g474re",
+    "single-bank",
 ] }
 embassy-sync = { path = "../../embassy/embassy-sync", features = ["defmt"] }
 embassy-executor = { path = "../../embassy/embassy-executor", features = [
@@ -58,8 +60,3 @@ incremental = false
 lto = 'fat'
 opt-level = 3            # <-
 overflow-checks = false  # <-
-
-[features]
-default = ["stm32g431cb"]
-
-stm32g431cb = ["embassy-stm32/stm32g431cb"]

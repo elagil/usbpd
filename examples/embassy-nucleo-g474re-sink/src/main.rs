@@ -6,7 +6,7 @@ use defmt_rtt as _;
 use embassy_executor::Spawner;
 use embassy_stm32::gpio::Output;
 use panic_probe as _;
-use usbpd_testing::power::{self, UcpdResources};
+use usbpd_g474re_sink::power::{self, UcpdResources};
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -17,7 +17,7 @@ async fn main(spawner: Spawner) {
     // Launch UCPD task.
     {
         // This pin controls the dead-battery mode on the attached TCPP01-M12.
-        let tcpp01_m12_ndb = Output::new(p.PB5, embassy_stm32::gpio::Level::Low, embassy_stm32::gpio::Speed::Low);
+        let tcpp_pwren = Output::new(p.PC8, embassy_stm32::gpio::Level::Low, embassy_stm32::gpio::Speed::Low);
 
         let ucpd_resources = UcpdResources {
             pin_cc1: p.PB6,
@@ -25,7 +25,7 @@ async fn main(spawner: Spawner) {
             ucpd: p.UCPD1,
             rx_dma: p.DMA1_CH1,
             tx_dma: p.DMA1_CH2,
-            tcpp01_m12_ndb,
+            tcpp_pwren,
         };
         spawner.spawn(unwrap!(power::ucpd_task(ucpd_resources)));
     }

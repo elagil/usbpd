@@ -30,7 +30,7 @@ pub struct UcpdResources {
     pub pin_cc2: Peri<'static, peripherals::PB4>,
     pub rx_dma: Peri<'static, peripherals::DMA1_CH1>,
     pub tx_dma: Peri<'static, peripherals::DMA1_CH2>,
-    pub tcpp01_m12_ndb: Output<'static>,
+    pub tcpp_pwren: Output<'static>,
 }
 
 #[derive(Debug, Format)]
@@ -167,6 +167,10 @@ impl DevicePolicyManager for Device {
         .unwrap()
     }
 
+    async fn transition_power(&mut self, _accepted: &request::PowerSource) {
+        info!("CI:PASS");
+    }
+
     async fn get_event(&mut self, source_capabilities: &SourceCapabilities) -> Event {
         // Periodically request another power level.
         self.ticker.next().await;
@@ -233,7 +237,7 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
         );
 
         ucpd.cc_phy().set_pull(CcPull::Sink);
-        ucpd_resources.tcpp01_m12_ndb.set_high();
+        ucpd_resources.tcpp_pwren.set_high();
 
         info!("Waiting for USB connection");
         let cable_orientation = wait_attached(ucpd.cc_phy()).await;

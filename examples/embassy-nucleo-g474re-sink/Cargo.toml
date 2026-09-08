@@ -1,6 +1,6 @@
 [package]
 edition = "2024"
-name = "usbpd-epr-example"
+name = "usbpd-g474re-sink"
 version = "0.1.0"
 license = "MIT"
 
@@ -60,8 +60,6 @@ opt-level = 3            # <-
 overflow-checks = false  # <-
 
 [features]
-default = ["stm32g431cb"]
+default = ["stm32g474re"]
 
-stm32g431cb = ["embassy-stm32/stm32g431cb"]
-# Enable AVS (Adjustable Voltage Supply) instead of Fixed EPR mode
-avs = []
+stm32g474re = ["embassy-stm32/stm32g474re", "embassy-stm32/single-bank"]
