@@ -105,29 +105,3 @@ where
         }
     }
 }
-
-#[cfg(test)]
-mod test {
-    use dummy::{DummyDriver, DummyDualRoleDevice, DummyTimer, MAX_DATA_MESSAGE_SIZE};
-
-    use crate::dual_role::DualRolePort;
-    use crate::dummy;
-    use crate::sink::device_policy_manager::SinkDpm;
-    use crate::source::device_policy_manager::SourceDpm;
-
-    #[tokio::test]
-    async fn test_dual_role() {
-        let mut driver = DummyDriver::<MAX_DATA_MESSAGE_SIZE>::new();
-        let mut device = DummyDualRoleDevice {};
-        let mut policy_engine: DualRolePort<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DummyDualRoleDevice> =
-            DualRolePort::new(driver, device);
-
-        // Traverse Sink -> Source and Source -> Sink swaps
-
-        // FIXME: Have dual role specific tests rather than the swap
-        // tests existing on the `sink` and `source` separately.
-
-        // This would involve changing `DualRolePort` to have a `run_step()` function
-        // alongside a `run()` function.
-    }
-}
