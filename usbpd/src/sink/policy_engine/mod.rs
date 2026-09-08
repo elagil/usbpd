@@ -952,6 +952,15 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
             // 8.3.3.19.4.8 (PE_PRS_SNK_SRC_Reject_Swap):
             PowerRoleSwap::Reject => {
                 // FIXME: Wait Message logic
+                /*
+                   There is also the option to exit this state with a Wait message if the DPM decides
+                   that the swap request can be met in the future. Adding the ability for the DPM to
+                   return Waits to these types of message would be a good feature to implement in the
+                   future, but is not necessary.
+
+                   For example, a workaround to this would be if the DPM wants to respond Wait, but can't,
+                   the DPM can itself request a Swap once it can fulfill the requirements.
+                */
                 self.protocol_layer
                     .transmit_control_message(ControlMessageType::Reject)
                     .await?;
