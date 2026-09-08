@@ -4,7 +4,7 @@ use core::marker::PhantomData;
 
 use usbpd_traits::Driver;
 
-use crate::PowerRole;
+use crate::{PowerRole, RunResult};
 use crate::sink::device_policy_manager::SinkDpm;
 use crate::sink::policy_engine::{Error as SinkError, Sink};
 use crate::source::device_policy_manager::SourceDpm;
@@ -66,13 +66,13 @@ where
                     );
 
                     match source.run().await {
-                        Err(SourceError::SwapToSink) => {
+                        Ok(RunResult::SwapToSink) => {
                             role = PowerRole::Sink;
                             role_swapped = true;
                             continue;
                         }
                         Err(err) => return Err(Error::Source(err)),
-                        Ok(()) => return Ok(()),
+                        Ok(_) => return Ok(()),
                     }
                 }
                 PowerRole::Sink => {
@@ -80,13 +80,13 @@ where
                         Sink::<DRIVER, TIMER, DPM>::new_dual_role(&mut self.driver, &mut self.device_policy_manager);
 
                     match sink.run().await {
-                        Err(SinkError::SwapToSource) => {
+                        Ok(RunResult::SwapToSource) => {
                             role = PowerRole::Source;
                             role_swapped = true;
                             continue;
                         }
                         Err(err) => return Err(Error::Sink(err)),
-                        Ok(()) => return Ok(()),
+                        Ok(_) => return Ok(()),
                     }
                 }
             }

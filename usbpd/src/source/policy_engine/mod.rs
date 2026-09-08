@@ -18,7 +18,7 @@ use crate::protocol_layer::message::header::{
 use crate::protocol_layer::message::{Message, Payload};
 use crate::protocol_layer::{ProtocolError, RxError, SourceProtocolLayer, TxError};
 use crate::timers::{Timer, TimerType};
-use crate::{Contract, DataRole, PowerRole, SwapType};
+use crate::{Contract, DataRole, PolicyEngineResult, PowerRole, RunResult, SwapType};
 
 #[cfg(test)]
 mod tests;
@@ -186,8 +186,6 @@ pub enum Error {
     PortPartnerUnresponsive,
     /// Entered ErrorRecovery mode. This requests a disconnect.
     ReconnectionRequired,
-    /// FIXME: Easiest way to signal to device to swap to sink
-    SwapToSink,
     /// A protocol error has occured.
     Protocol(ProtocolError),
 }
@@ -252,10 +250,10 @@ impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<'a, DRIVER, TIMER,
     }
 
     /// Run a single step in the policy engine state machine.
-    async fn run_step(&mut self) -> Result<(), Error> {
+    async fn run_step(&mut self) -> Result<PolicyEngineResult, Error> {
         let result = self.update_state().await;
         if result.is_ok() {
-            return Ok(());
+            return Ok(PolicyEngineResult::Continue);
         }
 
         if let Err(Error::Protocol(protocol_error)) = result {
@@ -323,7 +321,7 @@ impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<'a, DRIVER, TIMER,
                 self.state = state
             }
 
-            Ok(())
+            Ok(PolicyEngineResult::Continue)
         } else {
             error!("Unrecoverable result {:?} in sink state transition", result);
             result
@@ -333,13 +331,17 @@ impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<'a, DRIVER, TIMER,
     /// Run the source's state machine continuously.
     ///
     /// The loop is only broken for unrecoverable errors, for example if the port partner is unresponsive.
-    pub async fn run(&mut self) -> Result<(), Error> {
+    pub async fn run(&mut self) -> Result<RunResult, Error> {
         loop {
-            self.run_step().await?;
+            let step_result = self.run_step().await?;
+
+            if let PolicyEngineResult::Exit(run_result) = step_result {
+                return Ok(run_result)
+            }
         }
     }
 
-    async fn update_state(&mut self) -> Result<(), Error> {
+    async fn update_state(&mut self) -> Result<PolicyEngineResult, Error> {
         trace!("State: {:?}", &self.state);
         let new_state = match &self.state {
             // 8.3.3.2.1 (PE_SR_Startup):
@@ -795,8 +797,7 @@ impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<'a, DRIVER, TIMER,
 
             // Custom State - Exit source running and signal to program to begin Sink
             State::PrSwapToSinkStartup => {
-                // FIXME: Switch to sink policy manager due to power swap
-                Err(Error::SwapToSink)?
+                return Ok(PolicyEngineResult::Exit(RunResult::SwapToSink));
             }
 
             // 8.3.3.20 Source Vconn Swap
@@ -815,7 +816,7 @@ impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<'a, DRIVER, TIMER,
 
         self.state = new_state;
 
-        Ok(())
+        Ok(PolicyEngineResult::Continue)
     }
 
     /// 8.3.3.19.1 DFP to UFP Data Role Swap, 8.3.3.19.2 UFP to DFP Data Role Swap

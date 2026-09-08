@@ -161,13 +161,6 @@ impl<'a, DRIVER: Driver, TIMER: Timer> ProtocolLayer<'a, DRIVER, TIMER> {
         &self.default_header
     }
 
-    /// Change the header's data role after a data role swap
-    /// FIXME: Use this after a data role swap
-    #[allow(unused)]
-    pub fn set_header_data_role(&mut self, role: crate::DataRole) {
-        self.default_header.set_port_data_role(role);
-    }
-
     fn get_message_buffer() -> [u8; MAX_MESSAGE_SIZE] {
         [0u8; MAX_MESSAGE_SIZE]
     }
