@@ -4,7 +4,7 @@ use core::marker::PhantomData;
 use embassy_futures::select::{Either, Either3, select, select3};
 use usbpd_traits::Driver;
 
-use super::device_policy_manager::{CapabilityResponse, Event, Info, SourceDpm, SwapType};
+use super::device_policy_manager::{CapabilityResponse, Event, Info, SourceDpm};
 use crate::counters::Counter;
 use crate::protocol_layer::message::data::request::PowerSource;
 use crate::protocol_layer::message::data::sink_capabilities::SinkCapabilities;
@@ -18,7 +18,7 @@ use crate::protocol_layer::message::header::{
 use crate::protocol_layer::message::{Message, Payload};
 use crate::protocol_layer::{ProtocolError, RxError, SourceProtocolLayer, TxError};
 use crate::timers::{Timer, TimerType};
-use crate::{DataRole, PowerRole};
+use crate::{Contract, DataRole, PowerRole, SwapType};
 
 #[cfg(test)]
 mod tests;
@@ -34,24 +34,13 @@ enum Mode {
     Epr,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-enum Contract {
-    #[default]
-    Safe5V,
-    Implicit, // Only present after fast role swap. Limited to max. type C current.
-    TransitionToExplicit,
-    Explicit(PowerSource),
-
-    // Source EPR support may use this enum
-    _Invalid,
-}
-
 /// Source states.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 enum State {
     // States of the policy engine as given by specification.
     // 8.3.3.2 Policy Engine Source Port State Diagram
+    /// Default state at startup.
     Startup { role_swap: bool },
     Discovery,
     SendCapabilities,
@@ -67,21 +56,21 @@ enum State {
     WaitNewCapabilities,
     EprKeepAlive,
     GiveSourceCap,
-    // 8.3.3.4 Source Port Soft Reset
+    /// 8.3.3.4 Source Port Soft Reset
     SendSoftReset,
     SoftReset,
-    // 8.3.3.6 Not Supported Message State
+    /// 8.3.3.6 Not Supported Message State
     SendNotSupported,
     NotSupportedReceived,
-    // 8.3.3.19 Dual-Role Port (DRP) States
+    /// 8.3.3.19 Dual-Role Port (DRP) States
     DrpSwap(SwapState),
     DrpGetSourceCap(Mode),
     DrpGiveSinkCap(Mode),
-    // 8.3.3.20 Vconn Swap
+    /// 8.3.3.20 Vconn Swap
     VconnSwap { source: VcsSwapSource, state: VcsState },
-    // 8.3.3.26 EPR States
+    /// 8.3.3.26 EPR States
     EprMode(EprState),
-    // Custom state to signal exit out of source to sink from a power swap
+    /// Custom state to signal exit out of source to sink from a power swap
     PrSwapToSinkStartup,
     ErrorRecovery,
 }
@@ -169,9 +158,9 @@ enum EprState {
 /// Implementation of the source policy engine.
 /// See spec, [8.3.3.2]
 #[derive(Debug)]
-pub struct Source<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> {
-    device_policy_manager: DPM,
-    protocol_layer: SourceProtocolLayer<DRIVER, TIMER>,
+pub struct Source<'a, DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> {
+    device_policy_manager: &'a mut DPM,
+    protocol_layer: SourceProtocolLayer<'a, DRIVER, TIMER>,
     hard_reset_counter: Counter,
     caps_counter: Counter,
     state: State,
@@ -192,7 +181,7 @@ pub enum Error {
     PortPartnerUnresponsive,
     /// Entered ErrorRecovery mode. This requests a disconnect.
     ReconnectionRequired,
-    /// Easiest way to signal to device to swap to sink
+    /// FIXME: Easiest way to signal to device to swap to sink
     SwapToSink,
     /// A protocol error has occured.
     Protocol(ProtocolError),
@@ -204,14 +193,14 @@ impl From<ProtocolError> for Error {
     }
 }
 
-impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
-    fn new_protocol_layer(driver: DRIVER) -> SourceProtocolLayer<DRIVER, TIMER> {
+impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<'a, DRIVER, TIMER, DPM> {
+    fn new_protocol_layer(driver: &'a mut DRIVER) -> SourceProtocolLayer<'a, DRIVER, TIMER> {
         let header = Header::new_template(DataRole::Dfp, PowerRole::Source, SpecificationRevision::R3_X);
         SourceProtocolLayer::new(driver, header)
     }
 
-    /// Create a new source policy engine with a given `driver` that implements SourceDPM.
-    pub fn new(driver: DRIVER, device_policy_manager: DPM, role_swap: bool) -> Self {
+    /// Create a new source policy engine with a given `driver` and device policy manager (DPM).
+    pub fn new(driver: &'a mut DRIVER, device_policy_manager: &'a mut DPM, role_swap: bool) -> Self {
         Self {
             device_policy_manager,
             protocol_layer: Self::new_protocol_layer(driver),
@@ -229,17 +218,16 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
     }
 
     /// Create a new source policy engine with dual role capabilities,
-    /// with a given `driver` that implements both SourceDPM and SinkDPM (at least to some extent).
-    pub fn new_dual_role(driver: DRIVER, device_policy_manager: DPM, role_swapped: bool) -> Self {
+    /// with a given `driver` and device policy manager (DPM).
+    pub fn new_dual_role(driver: &'a mut DRIVER, device_policy_manager: &'a mut DPM, role_swapped: bool) -> Self {
         Self {
             device_policy_manager,
             protocol_layer: Self::new_protocol_layer(driver),
             hard_reset_counter: Counter::new(crate::counters::CounterType::HardReset),
             caps_counter: Counter::new(crate::counters::CounterType::Caps),
 
-            state: match role_swapped {
-                true => State::SendCapabilities,
-                false => State::Startup { role_swap: false },
+            state: State::Startup {
+                role_swap: role_swapped,
             },
             contract: match role_swapped {
                 true => Contract::Implicit,
@@ -254,7 +242,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
     }
 
     /// Set a new driver when re-attached.
-    pub fn re_attach(&mut self, driver: DRIVER) {
+    pub fn re_attach(&mut self, driver: &'a mut DRIVER) {
         self.protocol_layer = Self::new_protocol_layer(driver);
     }
 
@@ -351,13 +339,12 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
         let new_state = match &self.state {
             // 8.3.3.2.1 (PE_SR_Startup):
             State::Startup { role_swap } => {
-                self.contract = Default::default();
+                self.contract = Default::default(); // FIXME: How to use Contract::Implicit?
                 self.mode = Default::default();
                 self.protocol_layer.reset();
                 self.caps_counter.reset();
 
                 if *role_swap {
-                    self.contract = Contract::Implicit;
                     TimerType::get_timer::<TIMER>(TimerType::SwapSourceStart).await;
                 }
 
@@ -756,7 +743,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
             }
             // 8.3.3.6.1.2 (PE_SRC_Not_Supported_Received):
             State::NotSupportedReceived => {
-                // FIXME: Entry: Inform the Device Policy Manager
+                self.device_policy_manager.inform(Info::NotSupportedReceived).await;
                 State::Ready
             }
 
@@ -904,7 +891,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
             }
             // 8.3.3.19.3.4 (PE_PRS_SRC_SNK_Transition_to_off):
             PowerRoleSwap::TransitionToOff => {
-                self.device_policy_manager.disable_source().await;
+                self.device_policy_manager.disable().await;
                 Ok(State::DrpSwap(SwapState::Power(PowerRoleSwap::AssertRd)))
             }
             // 8.3.3.19.3.5 (PE_PRS_SRC_SNK_Assert_Rd):

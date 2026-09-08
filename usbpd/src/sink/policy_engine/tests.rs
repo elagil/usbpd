@@ -11,14 +11,11 @@ use crate::protocol_layer::message::header::{
     ControlMessageType, DataMessageType, ExtendedMessageType, Header, MessageType,
 };
 use crate::protocol_layer::message::{Message, Payload};
+use crate::sink::device_policy_manager::SinkDpm;
 use crate::sink::policy_engine::State;
 
-fn get_policy_engine() -> Sink<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DummySinkDevice> {
-    Sink::new(DummyDriver::new(), DummySinkDevice {})
-}
-
-fn simulate_source_control_message<DPM: crate::sink::device_policy_manager::DevicePolicyManager>(
-    policy_engine: &mut Sink<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DPM>,
+fn simulate_source_control_message<DPM: SinkDpm>(
+    policy_engine: &mut Sink<'_, DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DPM>,
     control_message_type: ControlMessageType,
     message_id: u8,
 ) {
@@ -46,8 +43,8 @@ fn get_source_header_template() -> Header {
 
 /// Simulate an EPR Mode data message from the source with proper API.
 /// Returns the serialized bytes for assertion.
-fn simulate_source_epr_mode_message<DPM: crate::sink::device_policy_manager::DevicePolicyManager>(
-    policy_engine: &mut Sink<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DPM>,
+fn simulate_source_epr_mode_message<DPM: SinkDpm>(
+    policy_engine: &mut Sink<'_, DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DPM>,
     action: Action,
     message_id: u8,
 ) -> heapless::Vec<u8, MAX_DATA_MESSAGE_SIZE> {
@@ -75,8 +72,8 @@ fn simulate_source_epr_mode_message<DPM: crate::sink::device_policy_manager::Dev
 
 /// Simulate an EprKeepAliveAck extended control message from the source.
 /// Returns the serialized bytes for assertion.
-fn simulate_epr_keep_alive_ack<DPM: crate::sink::device_policy_manager::DevicePolicyManager>(
-    policy_engine: &mut Sink<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DPM>,
+fn simulate_epr_keep_alive_ack<DPM: SinkDpm>(
+    policy_engine: &mut Sink<'_, DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DPM>,
     message_id: u8,
 ) -> heapless::Vec<u8, MAX_DATA_MESSAGE_SIZE> {
     use crate::protocol_layer::message::Payload;
@@ -111,7 +108,9 @@ fn simulate_epr_keep_alive_ack<DPM: crate::sink::device_policy_manager::DevicePo
 #[tokio::test]
 async fn test_negotiation() {
     // Instantiated in `Discovery` state
-    let mut policy_engine = get_policy_engine();
+    let mut driver = DummyDriver::new();
+    let mut device = DummySinkDevice {};
+    let mut policy_engine = Sink::new(&mut driver, &mut device);
 
     // Provide capabilities
     policy_engine
@@ -169,8 +168,10 @@ async fn test_epr_negotiation() {
     use crate::dummy::{DUMMY_SPR_CAPS_EPR_CAPABLE, DummySinkEprDevice};
 
     // Create policy engine with EPR-capable DPM
+    let mut driver = DummyDriver::new();
+    let mut device = DummySinkEprDevice::new();
     let mut policy_engine: Sink<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DummySinkEprDevice> =
-        Sink::new(DummyDriver::new(), DummySinkEprDevice::new());
+        Sink::new(&mut driver, &mut device);
 
     // === Phase 1: Initial SPR Negotiation ===
     // Using same flow as test_negotiation
@@ -506,8 +507,8 @@ async fn test_epr_negotiation() {
         eprintln!("--- Keep-Alive cycle {} ---", cycle);
 
         // Manually set state to EprKeepAlive (normally triggered by SinkEPRKeepAliveTimer in Ready state)
-        if let State::Ready(power_source, _) = policy_engine.state.clone() {
-            policy_engine.state = State::EprKeepAlive(power_source);
+        if let State::Ready(_) = policy_engine.state.clone() {
+            policy_engine.state = State::EprMode(crate::sink::policy_engine::EprState::KeepAlive);
         } else {
             panic!("Expected Ready state before keep-alive cycle {}", cycle);
         }

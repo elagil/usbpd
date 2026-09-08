@@ -5,15 +5,18 @@ use std::vec::Vec;
 use uom::si::power::watt;
 use usbpd_traits::Driver;
 
-use crate::protocol_layer::message::data::request::{self, EprRequestDataObject};
+use crate::SwapType;
+use crate::protocol_layer::message::data::request::{self, EprRequestDataObject, PowerSource};
 use crate::protocol_layer::message::data::source_capabilities::{
     Augmented, FixedSupply, PowerDataObject, SourceCapabilities, SprProgrammablePowerSupply,
 };
-use crate::sink::device_policy_manager::DevicePolicyManager as SinkDevicePolicyManager;
+use crate::sink::device_policy_manager::{
+    DevicePolicyManager as SinkDPM, DrpDevicePolicyManager as SinkDrpDPM, EprDevicePolicyManager as SinkEprDPM,
+    Event as SinkEvent, SinkDpm,
+};
 use crate::source::device_policy_manager::{
-    CapabilityResponse as SourceCapabilityResponse, DevicePolicyManager as SourceDevicePolicyManager,
-    DualRoleDevicePolicyManager as SourceDrpDevicePolicyManager,
-    EprDevicePolicyManager as SourceEprDevicePolicyManager, SourceDpm, SwapType,
+    CapabilityResponse as SourceCapabilityResponse, DevicePolicyManager as SourceDPM,
+    DrpDevicePolicyManager as SourceDrpDPM, EprDevicePolicyManager as SourceEprDPM, SourceDpm,
 };
 use crate::timers::Timer;
 use crate::units::Power;
@@ -42,10 +45,17 @@ pub const DUMMY_EPR_SOURCE_CAPS_CHUNK_1: [u8; 18] = [
 /// Per USB PD spec, this is 2 bytes header + 7 data objects * 4 bytes = 30 bytes.
 pub const MAX_DATA_MESSAGE_SIZE: usize = 30;
 
+/// Maximum object position an SPR PDO should be in.
+/// Used to evaluate capability requests naively for source dummies.
+const MAX_SPR_OBJ_POS: u8 = 8;
+
 /// A dummy sink device that implements the sink device policy manager.
 pub struct DummySinkDevice {}
 
-impl SinkDevicePolicyManager for DummySinkDevice {}
+impl SinkDPM for DummySinkDevice {}
+impl SinkDrpDPM for DummySinkDevice {}
+impl SinkEprDPM for DummySinkDevice {}
+impl SinkDpm for DummySinkDevice {}
 
 /// A dummy EPR-capable sink device that requests EPR power.
 ///
@@ -64,29 +74,24 @@ impl DummySinkEprDevice {
     }
 }
 
-impl SinkDevicePolicyManager for DummySinkEprDevice {
-    async fn get_event(
-        &mut self,
-        source_capabilities: &SourceCapabilities,
-    ) -> crate::sink::device_policy_manager::Event {
-        use crate::sink::device_policy_manager::Event;
-
+impl SinkDPM for DummySinkEprDevice {
+    async fn get_event(&mut self, source_capabilities: &SourceCapabilities) -> SinkEvent {
         // After initial SPR negotiation, enter EPR mode if source is EPR capable
         if !self.requested_epr_caps {
             // Check if source advertises EPR capability in first PDO
             if let Some(PowerDataObject::FixedSupply(fixed)) = source_capabilities.pdos().first() {
                 if fixed.epr_mode_capable() {
                     self.requested_epr_caps = true;
-                    return Event::EnterEprMode(Power::new::<watt>(140)); // Dummy 140W PDP
+                    return SinkEvent::EnterEprMode(Power::new::<watt>(140)); // Dummy 140W PDP
                 }
             }
         }
 
-        Event::None
+        SinkEvent::None
     }
 
-    async fn request(&mut self, source_capabilities: &SourceCapabilities) -> request::PowerSource {
-        use crate::protocol_layer::message::data::request::{CurrentRequest, PowerSource, VoltageRequest};
+    async fn request(&mut self, source_capabilities: &SourceCapabilities) -> PowerSource {
+        use crate::protocol_layer::message::data::request::{CurrentRequest, VoltageRequest};
         use crate::protocol_layer::message::data::source_capabilities::PowerDataObject;
 
         // Use the spec-compliant epr_pdos() method to get EPR PDOs at positions 8+
@@ -122,9 +127,14 @@ impl SinkDevicePolicyManager for DummySinkEprDevice {
     }
 }
 
+impl SinkDrpDPM for DummySinkEprDevice {}
+impl SinkEprDPM for DummySinkEprDevice {}
+impl SinkDpm for DummySinkEprDevice {}
+
+/// A dummy capable of sourcing non-EPR power
 pub struct DummySourceDevice;
 
-impl SourceDevicePolicyManager for DummySourceDevice {
+impl SourceDPM for DummySourceDevice {
     async fn evaluate_request(&mut self, request: &request::PowerSource) -> SourceCapabilityResponse {
         if request.object_position() < 8 {
             SourceCapabilityResponse::Accept
@@ -138,15 +148,16 @@ impl SourceDevicePolicyManager for DummySourceDevice {
     }
 }
 
-impl SourceDrpDevicePolicyManager for DummySourceDevice {}
-impl SourceEprDevicePolicyManager for DummySourceDevice {}
+impl SourceDrpDPM for DummySourceDevice {}
+impl SourceEprDPM for DummySourceDevice {}
 impl SourceDpm for DummySourceDevice {}
 
+/// A dual role device that will reject all swap requests
 pub struct DummyDualRoleNoSwapsDevice;
 
-impl SourceDevicePolicyManager for DummyDualRoleNoSwapsDevice {
-    async fn evaluate_request(&mut self, request: &request::PowerSource) -> SourceCapabilityResponse {
-        if request.object_position() < 8 {
+impl SourceDPM for DummyDualRoleNoSwapsDevice {
+    async fn evaluate_request(&mut self, request: &PowerSource) -> SourceCapabilityResponse {
+        if request.object_position() < MAX_SPR_OBJ_POS {
             SourceCapabilityResponse::Accept
         } else {
             SourceCapabilityResponse::Reject
@@ -157,31 +168,19 @@ impl SourceDevicePolicyManager for DummyDualRoleNoSwapsDevice {
         SourceCapabilities(heapless::Vec::from_slice(get_dummy_source_capabilities().as_slice()).unwrap())
     }
 }
+impl SourceEprDPM for DummyDualRoleNoSwapsDevice {}
+impl SourceDrpDPM for DummyDualRoleNoSwapsDevice {}
+impl SourceDpm for DummyDualRoleNoSwapsDevice {}    // Defaults to rejecting swaps
 
-impl SourceDrpDevicePolicyManager for DummyDualRoleNoSwapsDevice {
-    async fn evaluate_swap_request(&mut self, swap_request: SwapType) -> bool {
-        match swap_request {
-            SwapType::Data => false,
-            SwapType::Power => false,
-        }
-    }
-
-    async fn fr_swap_signaled(&mut self) -> bool {
-        false
-    }
-}
-
-impl SourceEprDevicePolicyManager for DummyDualRoleNoSwapsDevice {}
-
-impl SourceDpm for DummyDualRoleNoSwapsDevice {}
-
-impl SinkDevicePolicyManager for DummyDualRoleNoSwapsDevice {}
+impl SinkDPM for DummyDualRoleNoSwapsDevice {}
+impl SinkDrpDPM for DummyDualRoleNoSwapsDevice {}
+impl SinkEprDPM for DummyDualRoleNoSwapsDevice {}
+impl SinkDpm for DummyDualRoleNoSwapsDevice {}      // Defaults to rejecting swaps
 
 pub struct DummyDualRoleDevice;
 
-impl SourceDevicePolicyManager for DummyDualRoleDevice {
-    async fn evaluate_request(&mut self, request: &request::PowerSource) -> SourceCapabilityResponse {
-        const MAX_SPR_OBJ_POS: u8 = 8;
+impl SourceDPM for DummyDualRoleDevice {
+    async fn evaluate_request(&mut self, request: &PowerSource) -> SourceCapabilityResponse {
         if request.object_position() < MAX_SPR_OBJ_POS {
             SourceCapabilityResponse::Accept
         } else {
@@ -194,7 +193,7 @@ impl SourceDevicePolicyManager for DummyDualRoleDevice {
     }
 }
 
-impl SourceDrpDevicePolicyManager for DummyDualRoleDevice {
+impl SourceDrpDPM for DummyDualRoleDevice {
     async fn evaluate_swap_request(&mut self, swap_request: SwapType) -> bool {
         match swap_request {
             SwapType::Data => true,
@@ -207,11 +206,13 @@ impl SourceDrpDevicePolicyManager for DummyDualRoleDevice {
     }
 }
 
-impl SourceEprDevicePolicyManager for DummyDualRoleDevice {}
-
+impl SourceEprDPM for DummyDualRoleDevice {}
 impl SourceDpm for DummyDualRoleDevice {}
 
-impl SinkDevicePolicyManager for DummyDualRoleDevice {}
+impl SinkDPM for DummyDualRoleDevice {}
+impl SinkDrpDPM for DummyDualRoleDevice {}
+impl SinkEprDPM for DummyDualRoleDevice {}
+impl SinkDpm for DummyDualRoleDevice {}
 
 /// A dummy timer for testing.
 pub struct DummyTimer {}
@@ -345,8 +346,8 @@ pub const DUMMY_CAPABILITIES: [u8; 30] = [
     0xC9, // +
 ];
 
-pub fn get_source_capability_request() -> request::PowerSource {
-    request::PowerSource::new_fixed(
+pub fn get_source_capability_request() -> PowerSource {
+    PowerSource::new_fixed(
         request::CurrentRequest::Highest,
         request::VoltageRequest::Safe5V,
         &SourceCapabilities(heapless::Vec::from_slice(&get_dummy_source_capabilities()).unwrap()),
