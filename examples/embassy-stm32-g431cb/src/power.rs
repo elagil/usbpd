@@ -255,9 +255,9 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
             cc_sel,
         );
 
-        let mut driver = UcpdSinkDriver::new(pd_phy);
-        let mut dpm = Device::default();
-        let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(&mut driver, &mut dpm);
+        let driver = UcpdSinkDriver::new(pd_phy);
+        let dpm = Device::default();
+        let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(driver, dpm);
         info!("Run sink");
 
         match select(sink.run(), wait_detached(&mut cc_phy)).await {

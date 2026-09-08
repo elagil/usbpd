@@ -144,9 +144,9 @@ enum EprState {
 /// Implementation of the sink policy engine.
 /// See spec, [8.3.3.3]
 #[derive(Debug)]
-pub struct Sink<'a, DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> {
-    device_policy_manager: &'a mut DPM,
-    protocol_layer: SinkProtocolLayer<'a, DRIVER, TIMER>,
+pub struct Sink<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> {
+    device_policy_manager: DPM,
+    protocol_layer: SinkProtocolLayer<DRIVER, TIMER>,
     contract: Contract,
     hard_reset_counter: Counter,
     source_capabilities: Option<SourceCapabilities>,
@@ -181,15 +181,15 @@ impl From<ProtocolError> for Error {
     }
 }
 
-impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<'a, DRIVER, TIMER, DPM> {
+impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
     /// Create a fresh protocol layer with initial state.
-    fn new_protocol_layer(driver: &'a mut DRIVER) -> SinkProtocolLayer<'a, DRIVER, TIMER> {
+    fn new_protocol_layer(driver: DRIVER) -> SinkProtocolLayer<DRIVER, TIMER> {
         let header = Header::new_template(DataRole::Ufp, PowerRole::Sink, SpecificationRevision::R3_X);
         SinkProtocolLayer::new(driver, header)
     }
 
     /// Create a new sink policy engine with a given `driver`.
-    pub fn new(driver: &'a mut DRIVER, device_policy_manager: &'a mut DPM) -> Self {
+    pub fn new(driver: DRIVER, device_policy_manager: DPM) -> Self {
         Self {
             device_policy_manager,
             protocol_layer: Self::new_protocol_layer(driver),
@@ -206,7 +206,7 @@ impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<'a, DRIVER, TIMER, DPM
     }
 
     /// Create a new dual role sink policy engine with a given `driver`.
-    pub fn new_dual_role(driver: &'a mut DRIVER, device_policy_manager: &'a mut DPM) -> Self {
+    pub fn new_dual_role(driver: DRIVER, device_policy_manager: DPM) -> Self {
         Self {
             device_policy_manager,
             protocol_layer: Self::new_protocol_layer(driver),
@@ -223,8 +223,13 @@ impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<'a, DRIVER, TIMER, DPM
     }
 
     /// Set a new driver when re-attached.
-    pub fn re_attach(&mut self, driver: &'a mut DRIVER) {
+    pub fn re_attach(&mut self, driver: DRIVER) {
         self.protocol_layer = Self::new_protocol_layer(driver);
+    }
+
+    /// Consume the policy engine and return the inner PHY driver and DPM
+    pub fn deconstruct(self) -> (DRIVER, DPM) {
+        (self.protocol_layer.deconstruct(), self.device_policy_manager)
     }
 
     /// Run a single step in the policy engine state machine.
@@ -320,7 +325,7 @@ impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<'a, DRIVER, TIMER, DPM
             let step_result = self.run_step().await?;
 
             if let PolicyEngineResult::Exit(run_result) = step_result {
-                return Ok(run_result)
+                return Ok(run_result);
             }
         }
     }
@@ -335,7 +340,7 @@ impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<'a, DRIVER, TIMER, DPM
     /// Per spec section 6.4.1.2.2, after a Soft Reset while in EPR Mode, the source sends
     /// EPR_Source_Capabilities. Therefore this function must handle both message types.
     async fn wait_for_source_capabilities(
-        protocol_layer: &mut SinkProtocolLayer<'a, DRIVER, TIMER>,
+        protocol_layer: &mut SinkProtocolLayer<DRIVER, TIMER>,
     ) -> Result<SourceCapabilities, Error> {
         let message = protocol_layer.wait_for_source_capabilities().await?;
         trace!("Source capabilities: {:?}", message);

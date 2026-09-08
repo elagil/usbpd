@@ -4,12 +4,12 @@ use core::marker::PhantomData;
 
 use usbpd_traits::Driver;
 
-use crate::{PowerRole, RunResult};
 use crate::sink::device_policy_manager::SinkDpm;
 use crate::sink::policy_engine::{Error as SinkError, Sink};
 use crate::source::device_policy_manager::SourceDpm;
 use crate::source::policy_engine::{Error as SourceError, Source};
 use crate::timers::Timer;
+use crate::{PowerRole, RunResult};
 
 /// Errors that can occur in the either the sink or source policy engine state machine.
 #[derive(Debug)]
@@ -52,44 +52,56 @@ where
     /// Run the sink's state machine continuously.
     ///
     /// The loop is only broken for unrecoverable errors, for example if the port partner is unresponsive.
-    pub async fn run(&mut self, initial_role: PowerRole) -> Result<(), Error> {
+    ///
+    /// NOTE: This function consumes the Dual Role Port Driver. A new driver must be constructed after an error is returned
+    pub async fn run(mut self, initial_role: PowerRole) -> Result<(), Error> {
         let mut role = initial_role;
         let mut role_swapped = false;
 
         loop {
-            match role {
+            (self.driver, self.device_policy_manager) = match role {
                 PowerRole::Source => {
-                    let mut source = Source::<DRIVER, TIMER, DPM>::new_dual_role(
-                        &mut self.driver,
-                        &mut self.device_policy_manager,
-                        role_swapped,
-                    );
-
-                    match source.run().await {
-                        Ok(RunResult::SwapToSink) => {
-                            role = PowerRole::Sink;
-                            role_swapped = true;
-                            continue;
-                        }
-                        Err(err) => return Err(Error::Source(err)),
-                        Ok(_) => return Ok(()),
-                    }
+                    let (driver, dpm) =
+                        Self::run_source_until_swap(self.driver, self.device_policy_manager, role_swapped).await?;
+                    role = PowerRole::Sink;
+                    role_swapped = true;
+                    (driver, dpm)
                 }
                 PowerRole::Sink => {
-                    let mut sink =
-                        Sink::<DRIVER, TIMER, DPM>::new_dual_role(&mut self.driver, &mut self.device_policy_manager);
-
-                    match sink.run().await {
-                        Ok(RunResult::SwapToSource) => {
-                            role = PowerRole::Source;
-                            role_swapped = true;
-                            continue;
-                        }
-                        Err(err) => return Err(Error::Sink(err)),
-                        Ok(_) => return Ok(()),
-                    }
+                    let (driver, dpm) = Self::run_sink_until_swap(self.driver, self.device_policy_manager).await?;
+                    role = PowerRole::Source;
+                    role_swapped = true;
+                    (driver, dpm)
                 }
-            }
+            };
+        }
+    }
+
+    /// An `Ok(...)` result means that a power role swap to Source has been executed,
+    /// and to start running the port as a Source
+    async fn run_sink_until_swap(driver: DRIVER, device_policy_manager: DPM) -> Result<(DRIVER, DPM), Error> {
+        let mut sink = Sink::<DRIVER, TIMER, DPM>::new_dual_role(driver, device_policy_manager);
+
+        match sink.run().await {
+            Ok(RunResult::SwapToSource) => Ok(sink.deconstruct()),
+            Err(err) => Err(Error::Sink(err)),
+            Ok(_) => unreachable!(),
+        }
+    }
+
+    /// An `Ok(...)` result means that a power role swap to Sink has been executed,
+    /// and to start running the port as a Sink
+    async fn run_source_until_swap(
+        driver: DRIVER,
+        device_policy_manager: DPM,
+        role_swapped: bool,
+    ) -> Result<(DRIVER, DPM), Error> {
+        let mut source = Source::<DRIVER, TIMER, DPM>::new_dual_role(driver, device_policy_manager, role_swapped);
+
+        match source.run().await {
+            Ok(RunResult::SwapToSink) => Ok(source.deconstruct()),
+            Err(err) => Err(Error::Source(err)),
+            Ok(_) => unreachable!(),
         }
     }
 }

@@ -163,9 +163,9 @@ enum EprState {
 /// Implementation of the source policy engine.
 /// See spec, [8.3.3.2]
 #[derive(Debug)]
-pub struct Source<'a, DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> {
-    device_policy_manager: &'a mut DPM,
-    protocol_layer: SourceProtocolLayer<'a, DRIVER, TIMER>,
+pub struct Source<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> {
+    device_policy_manager: DPM,
+    protocol_layer: SourceProtocolLayer<DRIVER, TIMER>,
     hard_reset_counter: Counter,
     caps_counter: Counter,
     state: State,
@@ -196,14 +196,14 @@ impl From<ProtocolError> for Error {
     }
 }
 
-impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<'a, DRIVER, TIMER, DPM> {
-    fn new_protocol_layer(driver: &'a mut DRIVER) -> SourceProtocolLayer<'a, DRIVER, TIMER> {
+impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
+    fn new_protocol_layer(driver: DRIVER) -> SourceProtocolLayer<DRIVER, TIMER> {
         let header = Header::new_template(DataRole::Dfp, PowerRole::Source, SpecificationRevision::R3_X);
         SourceProtocolLayer::new(driver, header)
     }
 
     /// Create a new source policy engine with a given `driver` and device policy manager (DPM).
-    pub fn new(driver: &'a mut DRIVER, device_policy_manager: &'a mut DPM, role_swap: bool) -> Self {
+    pub fn new(driver: DRIVER, device_policy_manager: DPM, role_swap: bool) -> Self {
         Self {
             device_policy_manager,
             protocol_layer: Self::new_protocol_layer(driver),
@@ -222,7 +222,7 @@ impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<'a, DRIVER, TIMER,
 
     /// Create a new source policy engine with dual role capabilities,
     /// with a given `driver` and device policy manager (DPM).
-    pub fn new_dual_role(driver: &'a mut DRIVER, device_policy_manager: &'a mut DPM, role_swapped: bool) -> Self {
+    pub fn new_dual_role(driver: DRIVER, device_policy_manager: DPM, role_swapped: bool) -> Self {
         Self {
             device_policy_manager,
             protocol_layer: Self::new_protocol_layer(driver),
@@ -244,8 +244,13 @@ impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<'a, DRIVER, TIMER,
         }
     }
 
+    /// Consume the policy engine and return the inner PHY driver and DPM
+    pub fn deconstruct(self) -> (DRIVER, DPM) {
+        (self.protocol_layer.deconstruct(), self.device_policy_manager)
+    }
+
     /// Set a new driver when re-attached.
-    pub fn re_attach(&mut self, driver: &'a mut DRIVER) {
+    pub fn re_attach(&mut self, driver: DRIVER) {
         self.protocol_layer = Self::new_protocol_layer(driver);
     }
 
@@ -336,7 +341,7 @@ impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<'a, DRIVER, TIMER,
             let step_result = self.run_step().await?;
 
             if let PolicyEngineResult::Exit(run_result) = step_result {
-                return Ok(run_result)
+                return Ok(run_result);
             }
         }
     }
@@ -346,7 +351,9 @@ impl<'a, DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<'a, DRIVER, TIMER,
         let new_state = match &self.state {
             // 8.3.3.2.1 (PE_SR_Startup):
             State::Startup { role_swap } => {
-                self.contract = Default::default(); // FIXME: How to use Contract::Implicit?
+                if !role_swap {
+                    self.contract = Contract::default();
+                }
                 self.mode = Default::default();
                 self.protocol_layer.reset();
                 self.caps_counter.reset();

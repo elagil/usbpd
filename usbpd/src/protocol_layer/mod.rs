@@ -123,8 +123,8 @@ impl Default for Counters {
 
 /// The USB PD protocol layer.
 #[derive(Debug)]
-pub(crate) struct ProtocolLayer<'a, DRIVER: Driver, TIMER: Timer> {
-    driver: &'a mut DRIVER,
+pub(crate) struct ProtocolLayer<DRIVER: Driver, TIMER: Timer> {
+    driver: DRIVER,
     counters: Counters,
     default_header: Header,
     extended_rx_buffer: Vec<u8, MAX_MESSAGE_SIZE>,
@@ -132,9 +132,9 @@ pub(crate) struct ProtocolLayer<'a, DRIVER: Driver, TIMER: Timer> {
     _timer: PhantomData<TIMER>,
 }
 
-impl<'a, DRIVER: Driver, TIMER: Timer> ProtocolLayer<'a, DRIVER, TIMER> {
+impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     /// Create a new protocol layer from a driver and default header.
-    pub fn new(driver: &'a mut DRIVER, default_header: Header) -> Self {
+    pub fn new(driver: DRIVER, default_header: Header) -> Self {
         Self {
             driver,
             counters: Default::default(),
@@ -143,6 +143,10 @@ impl<'a, DRIVER: Driver, TIMER: Timer> ProtocolLayer<'a, DRIVER, TIMER> {
             extended_rx_expected: None,
             _timer: PhantomData,
         }
+    }
+
+    pub fn deconstruct(self) -> DRIVER {
+        self.driver
     }
 
     /// Reset the protocol layer.
@@ -836,25 +840,29 @@ impl<'a, DRIVER: Driver, TIMER: Timer> ProtocolLayer<'a, DRIVER, TIMER> {
 #[repr(transparent)]
 #[derive(Debug)]
 /// The USB PD Protocol Layer for a `Sink`
-pub(crate) struct SinkProtocolLayer<'a, DRIVER: Driver, TIMER: Timer>(ProtocolLayer<'a, DRIVER, TIMER>);
+pub(crate) struct SinkProtocolLayer<DRIVER: Driver, TIMER: Timer>(ProtocolLayer<DRIVER, TIMER>);
 
-impl<'a, DRIVER: Driver, TIMER: Timer> core::ops::Deref for SinkProtocolLayer<'a, DRIVER, TIMER> {
-    type Target = ProtocolLayer<'a, DRIVER, TIMER>;
+impl<DRIVER: Driver, TIMER: Timer> core::ops::Deref for SinkProtocolLayer<DRIVER, TIMER> {
+    type Target = ProtocolLayer<DRIVER, TIMER>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl<'a, DRIVER: Driver, TIMER: Timer> core::ops::DerefMut for SinkProtocolLayer<'a, DRIVER, TIMER> {
+impl<DRIVER: Driver, TIMER: Timer> core::ops::DerefMut for SinkProtocolLayer<DRIVER, TIMER> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
-impl<'a, DRIVER: Driver, TIMER: Timer> SinkProtocolLayer<'a, DRIVER, TIMER> {
+impl<DRIVER: Driver, TIMER: Timer> SinkProtocolLayer<DRIVER, TIMER> {
     /// Create a new protocol layer from a driver and default header.
-    pub fn new(driver: &'a mut DRIVER, default_header: Header) -> Self {
+    pub fn new(driver: DRIVER, default_header: Header) -> Self {
         Self(ProtocolLayer::new(driver, default_header))
+    }
+
+    pub fn deconstruct(self) -> DRIVER {
+        self.0.deconstruct()
     }
 
     /// Wait for the source to provide its capabilities.
@@ -889,25 +897,29 @@ impl<'a, DRIVER: Driver, TIMER: Timer> SinkProtocolLayer<'a, DRIVER, TIMER> {
 #[repr(transparent)]
 #[derive(Debug)]
 /// The USB PD Protocol Layer for a `Source`
-pub(crate) struct SourceProtocolLayer<'a, DRIVER: Driver, TIMER: Timer>(ProtocolLayer<'a, DRIVER, TIMER>);
+pub(crate) struct SourceProtocolLayer<DRIVER: Driver, TIMER: Timer>(ProtocolLayer<DRIVER, TIMER>);
 
-impl<'a, DRIVER: Driver, TIMER: Timer> core::ops::Deref for SourceProtocolLayer<'a, DRIVER, TIMER> {
-    type Target = ProtocolLayer<'a, DRIVER, TIMER>;
+impl<DRIVER: Driver, TIMER: Timer> core::ops::Deref for SourceProtocolLayer<DRIVER, TIMER> {
+    type Target = ProtocolLayer<DRIVER, TIMER>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl<'a, DRIVER: Driver, TIMER: Timer> core::ops::DerefMut for SourceProtocolLayer<'a, DRIVER, TIMER> {
+impl<DRIVER: Driver, TIMER: Timer> core::ops::DerefMut for SourceProtocolLayer<DRIVER, TIMER> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
-impl<'a, DRIVER: Driver, TIMER: Timer> SourceProtocolLayer<'a, DRIVER, TIMER> {
+impl<DRIVER: Driver, TIMER: Timer> SourceProtocolLayer<DRIVER, TIMER> {
     /// Create a new protocol layer from a driver and default header.
-    pub fn new(driver: &'a mut DRIVER, default_header: Header) -> Self {
+    pub fn new(driver: DRIVER, default_header: Header) -> Self {
         Self(ProtocolLayer::new(driver, default_header))
+    }
+
+    pub fn deconstruct(self) -> DRIVER {
+        self.0.deconstruct()
     }
 
     /// Wait for the sink to request a capability with a Request Message.
@@ -950,8 +962,8 @@ mod tests {
     use crate::protocol_layer::message::Payload;
 
     fn get_protocol_layer<'a>(
-        driver: &'a mut DummyDriver<MAX_DATA_MESSAGE_SIZE>,
-    ) -> ProtocolLayer<'a, DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer> {
+        driver: DummyDriver<MAX_DATA_MESSAGE_SIZE>,
+    ) -> ProtocolLayer<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer> {
         ProtocolLayer::new(
             driver,
             Header::new_template(
@@ -964,8 +976,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_it() {
-        let mut driver = DummyDriver::new();
-        let mut protocol_layer = get_protocol_layer(&mut driver);
+        let mut protocol_layer = get_protocol_layer(DummyDriver::new());
 
         protocol_layer.driver.inject_received_data(&DUMMY_CAPABILITIES);
         let message = protocol_layer.receive_message().await.unwrap();

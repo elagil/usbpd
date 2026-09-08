@@ -243,14 +243,14 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
             cc_sel,
         );
 
-        let mut driver = UcpdSinkDriver::new(pd_phy);
-        let mut device = Device {
+        let driver = UcpdSinkDriver::new(pd_phy);
+        let device = Device {
             source_capabilities: None,
             ticker: Ticker::every(Duration::from_secs(3)),
             test_capabilities: TestCapabilities::Safe5V,
             led: &mut ucpd_resources.led_red,
         };
-        let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(&mut driver, &mut device);
+        let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(driver, device);
         info!("Sink initialized");
 
         ucpd_resources.led_yellow.set_high();
