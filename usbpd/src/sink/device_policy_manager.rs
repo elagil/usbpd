@@ -51,9 +51,13 @@ pub enum Event {
 
 /// Information that the policy engine will publish to the DPM
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Info {
     /// Request is not supported by the Source
     NotSupportedReceived,
+    /// A requested `Get_Source_Cap` response timed out without capabilities
+    /// (per spec 8.3.3.3.12, the DPM Shall be informed of the outcome).
+    GetSourceCapTimeout,
     /// No special information (because `SourceCapabilities` is always sent)
     None,
 }

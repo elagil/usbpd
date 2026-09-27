@@ -264,8 +264,9 @@ async fn test_discovery() {
         // `Startup` -> `SendCapabilities`
         run_test_step(&mut policy_engine, &State::SendCapabilities, 1).await;
 
-        simulate_sink_control_message(&mut policy_engine, ControlMessageType::GoodCRC, 0);
-
+        // No `GoodCRC` is injected: every caps transmission exhausts `nRetryCount`
+        // and the `SenderResponseTimer` never sees a `Request`.
+        //
         // `SendCapabilities` -> Capability Send Failure -> `Discovery`
         run_test_step(&mut policy_engine, &State::Discovery, 2).await;
 
@@ -590,4 +591,22 @@ async fn test_role_swapping() {
         }
     }
     eprintln!("\n<== Finished source role swap dpm rejects test! ==>\n");
+}
+
+/// A successful PR_Swap handoff must exit the policy engine with `RunResult::SwapToSink` instead of continuing the loop.
+#[tokio::test]
+async fn test_pr_swap_to_sink_startup_exits() {
+    let driver = DummyDriver::new();
+    let device = DummySourceDevice;
+    let mut policy_engine =
+        Source::<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DummySourceDevice>::new(driver, device, false);
+
+    policy_engine.state = State::PrSwapToSinkStartup;
+
+    let result = policy_engine.run_step().await.unwrap();
+    assert!(
+        matches!(result, crate::PolicyEngineResult::Exit(crate::RunResult::SwapToSink)),
+        "run_step from PrSwapToSinkStartup must yield Exit(SwapToSink), got {:?}",
+        result
+    );
 }
