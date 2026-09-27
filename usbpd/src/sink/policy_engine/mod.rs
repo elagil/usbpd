@@ -234,86 +234,127 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
 
     /// Run a single step in the policy engine state machine.
     async fn run_step(&mut self) -> Result<PolicyEngineResult, Error> {
-        let result = self.update_state().await;
+        match self.update_state().await {
+            Ok(result) => Ok(result),
+            Err(Error::Protocol(protocol_error)) => {
+                let new_state = match (&self.mode, &self.state, protocol_error) {
+                    (_, State::DrpSwap(SwapState::FastPower(_)), _) => {
+                        // Any errors after a `Fast Power Swap` has been asserted propogate to `ErrorRecovery`
+                        // This is because the `Source` lost power before the fast swapping `Sink` could keep it alive.
+                        Some(State::ErrorRecovery)
+                    }
 
-        if let Err(Error::Protocol(protocol_error)) = result {
-            let new_state = match (&self.mode, &self.state, protocol_error) {
-                (_, State::DrpSwap(SwapState::FastPower(_)), _) => {
-                    // Any errors after a `Fast Power Swap` has been asserted propogate to `ErrorRecovery`
-                    // This is because the `Source` lost power before the fast swapping `Sink` could keep it alive.
-                    Some(State::ErrorRecovery)
+                    // Handle when hard reset is signaled by the driver itself.
+                    (_, _, ProtocolError::RxError(RxError::HardReset) | ProtocolError::TxError(TxError::HardReset)) => {
+                        Some(State::TransitionToDefault)
+                    }
+
+                    // Handle when soft reset is signaled by the driver itself.
+                    (_, _, ProtocolError::RxError(RxError::SoftReset)) => Some(State::SoftReset),
+
+                    // Per spec 6.3.13: If the Soft_Reset Message fails, a Hard Reset shall be initiated.
+                    // This handles the case where we're trying to send/receive a soft reset and it fails.
+                    (_, State::SoftReset | State::SendSoftReset, ProtocolError::TransmitRetriesExceeded(_)) => {
+                        Some(State::HardReset)
+                    }
+
+                    // Per spec 8.3.3.4.2.1: A SenderResponseTimer timeout during the
+                    // Soft Reset process transitions to Hard Reset.
+                    (_, State::SendSoftReset, ProtocolError::RxError(RxError::ReceiveTimeout)) => {
+                        Some(State::HardReset)
+                    }
+
+                    // Per spec 6.6.3.2: In EPR mode, tTypeCSinkWaitCap timeout Shall
+                    // issue Hard Reset Signaling to exit EPR Mode.
+                    (
+                        _,
+                        State::EprMode(EprState::WaitForCapabilities),
+                        ProtocolError::RxError(RxError::ReceiveTimeout),
+                    ) => Some(State::HardReset),
+
+                    // Per spec 8.3.3.26.2.1: The SenderResponseTimer or
+                    // SinkEPREnterTimer timing out during EPR Mode entry transitions
+                    // to Send_Soft_Reset.
+                    (
+                        _,
+                        State::EprMode(EprState::Entry(_) | EprState::EntryWaitForResponse),
+                        ProtocolError::RxError(RxError::ReceiveTimeout),
+                    ) => Some(State::SendSoftReset),
+
+                    // Per spec 8.3.3.19.4.4: A PSSourceOffTimer timeout transitions
+                    // to ErrorRecovery.
+                    (
+                        _,
+                        State::DrpSwap(SwapState::Power(PowerRoleSwap::TransitionToOff)),
+                        ProtocolError::RxError(RxError::ReceiveTimeout),
+                    ) => Some(State::ErrorRecovery),
+
+                    // Per spec 8.3.3.19.4.6: If PS_RDY is not sent after retries, a
+                    // Soft Reset Shall Not be initiated; transition to ErrorRecovery.
+                    (
+                        _,
+                        State::DrpSwap(SwapState::Power(PowerRoleSwap::SourceOn)),
+                        ProtocolError::TransmitRetriesExceeded(_),
+                    ) => Some(State::ErrorRecovery),
+
+                    // Per spec 8.3.3.3.3: SinkWaitCapTimer timeout triggers Hard Reset.
+                    (_, State::WaitForCapabilities, ProtocolError::RxError(RxError::ReceiveTimeout)) => {
+                        Some(State::HardReset)
+                    }
+
+                    // Per spec 8.3.3.3.5: SenderResponseTimer timeout triggers Hard Reset.
+                    (_, State::SelectCapability(_), ProtocolError::RxError(RxError::ReceiveTimeout)) => {
+                        Some(State::HardReset)
+                    }
+
+                    // Per USB PD Spec R3.2 Section 8.3.3.3.6 and Table 6.72:
+                    // Any Protocol error during power transition (PE_SNK_Transition_Sink state)
+                    // shall trigger a Hard Reset, not a Soft Reset.
+                    (_, State::TransitionSink(_), _) => Some(State::HardReset),
+
+                    (
+                        _,
+                        State::DrpSwap(SwapState::Power(PowerRoleSwap::Send)),
+                        ProtocolError::RxError(RxError::ReceiveTimeout),
+                    ) => Some(State::Ready(false)),
+
+                    (_, State::VconnSwap(VcsState::SendSwap), ProtocolError::RxError(RxError::ReceiveTimeout)) => {
+                        Some(State::Ready(false))
+                    }
+
+                    // Unexpected messages indicate a protocol error and demand a soft reset.
+                    // Per spec 6.8.1 Table 6.72 (for non-power-transitioning states).
+                    // Note: This must come AFTER TransitionSink check above.
+                    (_, _, ProtocolError::UnexpectedMessage) => Some(State::SendSoftReset),
+
+                    // Per spec Table 6.72: Unsupported messages in Ready state get Not_Supported response.
+                    (_, State::Ready(_), ProtocolError::RxError(RxError::UnsupportedMessage)) => {
+                        Some(State::SendNotSupported)
+                    }
+
+                    // Per spec 6.6.9.1: Transmission failure (no GoodCRC after retries) triggers Soft Reset.
+                    // Note: If we're in SoftReset/SendSoftReset state, this is caught above and escalates to Hard Reset.
+                    (_, _, ProtocolError::TransmitRetriesExceeded(_)) => Some(State::SendSoftReset),
+
+                    // Unhandled protocol errors - log and continue.
+                    // Note: Unrequested Source_Capabilities in EPR mode is handled in Ready state
+                    // by checking get_source_cap_pending flag (per spec 8.3.3.3.8).
+                    (_, _, error) => {
+                        error!("Protocol error {:?} in sink state transition", error);
+                        None
+                    }
+                };
+
+                if let Some(state) = new_state {
+                    self.state = state
                 }
 
-                // Handle when hard reset is signaled by the driver itself.
-                (_, _, ProtocolError::RxError(RxError::HardReset) | ProtocolError::TxError(TxError::HardReset)) => {
-                    Some(State::TransitionToDefault)
-                }
-
-                // Handle when soft reset is signaled by the driver itself.
-                (_, _, ProtocolError::RxError(RxError::SoftReset)) => Some(State::SoftReset),
-
-                // Per spec 6.3.13: If the Soft_Reset Message fails, a Hard Reset shall be initiated.
-                // This handles the case where we're trying to send/receive a soft reset and it fails.
-                (_, State::SoftReset | State::SendSoftReset, ProtocolError::TransmitRetriesExceeded(_)) => {
-                    Some(State::HardReset)
-                }
-
-                // Per spec 8.3.3.3.3: SinkWaitCapTimer timeout triggers Hard Reset.
-                (_, State::WaitForCapabilities, ProtocolError::RxError(RxError::ReceiveTimeout)) => {
-                    Some(State::HardReset)
-                }
-
-                // Per spec 8.3.3.3.5: SenderResponseTimer timeout triggers Hard Reset.
-                (_, State::SelectCapability(_), ProtocolError::RxError(RxError::ReceiveTimeout)) => {
-                    Some(State::HardReset)
-                }
-
-                // Per USB PD Spec R3.2 Section 8.3.3.3.6 and Table 6.72:
-                // Any Protocol Error during power transition (PE_SNK_Transition_Sink state)
-                // shall trigger a Hard Reset, not a Soft Reset.
-                (_, State::TransitionSink(_), _) => Some(State::HardReset),
-
-                (
-                    _,
-                    State::DrpSwap(SwapState::Power(PowerRoleSwap::Send)),
-                    ProtocolError::RxError(RxError::ReceiveTimeout),
-                ) => Some(State::Ready(false)),
-
-                (_, State::VconnSwap(VcsState::SendSwap), ProtocolError::RxError(RxError::ReceiveTimeout)) => {
-                    Some(State::Ready(false))
-                }
-
-                // Unexpected messages indicate a protocol error and demand a soft reset.
-                // Per spec 6.8.1 Table 6.72 (for non-power-transitioning states).
-                // Note: This must come AFTER TransitionSink check above.
-                (_, _, ProtocolError::UnexpectedMessage) => Some(State::SendSoftReset),
-
-                // Per spec Table 6.72: Unsupported messages in Ready state get Not_Supported response.
-                (_, State::Ready(_), ProtocolError::RxError(RxError::UnsupportedMessage)) => {
-                    Some(State::SendNotSupported)
-                }
-
-                // Per spec 6.6.9.1: Transmission failure (no GoodCRC after retries) triggers Soft Reset.
-                // Note: If we're in SoftReset/SendSoftReset state, this is caught above and escalates to Hard Reset.
-                (_, _, ProtocolError::TransmitRetriesExceeded(_)) => Some(State::SendSoftReset),
-
-                // Unhandled protocol errors - log and continue.
-                // Note: Unrequested Source_Capabilities in EPR mode is handled in Ready state
-                // by checking get_source_cap_pending flag (per spec 8.3.3.3.8).
-                (_, _, error) => {
-                    error!("Protocol error {:?} in sink state transition", error);
-                    None
-                }
-            };
-
-            if let Some(state) = new_state {
-                self.state = state
+                Ok(PolicyEngineResult::Continue)
             }
-
-            Ok(PolicyEngineResult::Continue)
-        } else {
-            error!("Unrecoverable result {:?} in sink state transition", result);
-            result
+            Err(err) => {
+                error!("Unrecoverable error {:?} in sink state transition", err);
+                Err(err)
+            }
         }
     }
 
@@ -539,7 +580,9 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                                 if let Some(Payload::Extended(extended::Extended::ExtendedControl(ctrl))) =
                                     &message.payload
                                 {
-                                    if ctrl.message_type() == ExtendedControlMessageType::EprGetSinkCap {
+                                    // Per spec 6.5.14 Table 6.67, values not explicitly defined are `Reserved`, answer `Not_Supported`.
+                                    if matches!(ctrl.try_message_type(), Ok(ExtendedControlMessageType::EprGetSinkCap))
+                                    {
                                         State::GiveSinkCap(Mode::Epr)
                                     } else {
                                         State::SendNotSupported
@@ -593,7 +636,11 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                     return Err(Error::Protocol(ProtocolError::UnexpectedMessage));
                 };
 
-                self.device_policy_manager.inform(&source_caps, Info::None).await;
+                // Per spec 8.3.3.6.2.2, the DPM Shall be informed of the
+                // Not_Supported receipt.
+                self.device_policy_manager
+                    .inform(&source_caps, Info::NotSupportedReceived)
+                    .await;
                 State::Ready(false)
             }
             State::SendSoftReset => {
@@ -613,11 +660,12 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                 State::WaitForCapabilities
             }
             State::SoftReset => {
+                // Per spec 6.8.1: reset MessageIDCounter/RetryCounter before the
+                // Accept response.
+                self.protocol_layer.reset();
                 self.protocol_layer
                     .transmit_control_message(ControlMessageType::Accept)
                     .await?;
-
-                self.protocol_layer.reset();
 
                 State::WaitForCapabilities
             }
@@ -738,7 +786,11 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                 let message = match result {
                     Ok(msg) => msg,
                     Err(ProtocolError::RxError(RxError::ReceiveTimeout)) => {
-                        // Inform DPM of timeout (no capabilities received)
+                        // Per spec 8.3.3.3.12, the DPM Shall be informed of the
+                        // timeout outcome. Fall back to stale capabilities.
+                        if let Some(caps) = self.source_capabilities.as_ref() {
+                            self.device_policy_manager.inform(caps, Info::GetSourceCapTimeout).await;
+                        }
                         warn!("Get_Source_Cap timeout, returning to Ready");
                         self.state = State::Ready(false);
                         return Ok(PolicyEngineResult::Continue);
@@ -859,7 +911,11 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                     }
 
                     MessageType::Control(ControlMessageType::Reject) => Ok(State::Ready(false)),
-                    MessageType::Control(ControlMessageType::Wait) => Ok(State::Ready(true)),
+
+                    // Per spec 6.6.4.3: after a DR_Swap Wait, only a new DR_Swap is
+                    // gated (tDRSwapWait); a power Request must not be armed, so no
+                    // SinkRequestTimer. Re-initiating the DR_Swap is left to the DPM.
+                    MessageType::Control(ControlMessageType::Wait) => Ok(State::Ready(false)),
 
                     _ => Err(Error::Protocol(ProtocolError::UnexpectedMessage)),
                 }
@@ -1293,8 +1349,12 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                 {
                     Ok(message) => {
                         if let Some(Payload::Extended(extended::Extended::ExtendedControl(control))) = message.payload {
-                            if control.message_type()
-                                == crate::protocol_layer::message::extended::extended_control::ExtendedControlMessageType::EprKeepAliveAck
+                            // Per spec 6.5.14 Table 6.67, values not explicitly
+                            // defined are Reserved; answer Not_Supported.
+                            if control.try_message_type()
+                                == Ok(
+                                    crate::protocol_layer::message::extended::extended_control::ExtendedControlMessageType::EprKeepAliveAck
+                                )
                             {
                                 self.mode = Mode::Epr;
                                 State::Ready(false)

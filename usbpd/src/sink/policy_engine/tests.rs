@@ -549,8 +549,10 @@ async fn test_epr_negotiation() {
             &keep_alive.payload
         {
             assert_eq!(
-                ctrl.message_type(),
-                crate::protocol_layer::message::extended::extended_control::ExtendedControlMessageType::EprKeepAlive,
+                ctrl.try_message_type(),
+                Ok(
+                    crate::protocol_layer::message::extended::extended_control::ExtendedControlMessageType::EprKeepAlive
+                ),
                 "Expected EprKeepAlive message type"
             );
         } else {
@@ -581,4 +583,23 @@ async fn test_epr_negotiation() {
 
     eprintln!("=== Phase 5 Complete: {} EPR keep-alive cycles succeeded ===\n", 3);
     eprintln!("=== Full EPR negotiation test PASSED ===");
+}
+
+/// A successful `PR_Swap` handoff must exit the policy engine with
+/// `RunResult::SwapToSource` instead of continuing the loop.
+#[tokio::test]
+async fn test_pr_swap_to_source_startup_exits() {
+    let driver = DummyDriver::new();
+    let device = DummySinkDevice {};
+    let mut policy_engine =
+        Sink::<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DummySinkDevice>::new(driver, device);
+
+    policy_engine.state = State::PrSwapToSourceStartup;
+
+    let result = policy_engine.run_step().await.unwrap();
+    assert!(
+        matches!(result, crate::PolicyEngineResult::Exit(crate::RunResult::SwapToSource)),
+        "run_step from PrSwapToSourceStartup must yield Exit(SwapToSource), got {:?}",
+        result
+    );
 }

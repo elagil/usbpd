@@ -256,80 +256,101 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
 
     /// Run a single step in the policy engine state machine.
     async fn run_step(&mut self) -> Result<PolicyEngineResult, Error> {
-        let result = self.update_state().await;
-        if result.is_ok() {
-            return Ok(PolicyEngineResult::Continue);
-        }
+        match self.update_state().await {
+            Ok(result) => Ok(result),
+            Err(Error::Protocol(protocol_error)) => {
+                let new_state = match (&self.mode, &self.state, protocol_error) {
+                    // Handle when hard reset is signaled by the driver itself.
+                    (_, _, ProtocolError::RxError(RxError::HardReset)) => Some(State::HardResetReceived),
 
-        if let Err(Error::Protocol(protocol_error)) = result {
-            let new_state = match (&self.mode, &self.state, protocol_error) {
-                // Handle when hard reset is signaled by the driver itself.
-                (_, _, ProtocolError::RxError(RxError::HardReset)) => Some(State::HardResetReceived),
+                    // Handle when hard reset is signaled by the driver itself.
+                    (_, _, ProtocolError::TxError(TxError::HardReset)) => Some(State::HardReset),
 
-                // Handle when hard reset is signaled by the driver itself.
-                (_, _, ProtocolError::TxError(TxError::HardReset)) => Some(State::HardReset),
+                    // Handle when soft reset is signaled by the driver itself.
+                    (_, _, ProtocolError::RxError(RxError::SoftReset)) => Some(State::SoftReset),
 
-                // Handle when soft reset is signaled by the driver itself.
-                (_, _, ProtocolError::RxError(RxError::SoftReset)) => Some(State::SoftReset),
-
-                // Per spec 6.3.13: If the Soft_Reset Message fails, a Hard Reset shall be initiated.
-                // This handles the case where we're trying to send/receive a soft reset and it fails.
-                (_, State::SoftReset | State::SendSoftReset, ProtocolError::TransmitRetriesExceeded(_)) => {
-                    Some(State::HardReset)
-                }
-
-                // Per spec 8.3.3.2.3: No GoodCRC (NoResponseTimer times out) goes to Discovery or Disabled
-                (_, State::SendCapabilities, ProtocolError::TransmitRetriesExceeded(_)) => Some(State::Discovery),
-
-                // Per spec 8.3.3.2.3: Failure to receive a Request Message results in
-                (_, State::SendCapabilities, ProtocolError::RxError(RxError::ReceiveTimeout)) => {
-                    // FIXME: Detect when Port Partners have been PD Connected before this error or not.
-                    // For now, using whether or not a Contract had been previously established or not
-                    match self.contract {
-                        Contract::Safe5V => Some(State::Discovery),
-                        _ => Some(State::ErrorRecovery),
+                    // Per spec 8.3.3.4.1.1: A SenderResponseTimer timeout during the
+                    // Soft Reset process transitions to Hard Reset.
+                    (_, State::SendSoftReset, ProtocolError::RxError(RxError::ReceiveTimeout)) => {
+                        Some(State::HardReset)
                     }
+
+                    // Per spec 8.3.3.2.3: A SenderResponseTimer timeout mandates Hard Reset.
+                    (_, State::SendCapabilities, ProtocolError::RxError(RxError::ReceiveTimeout)) => {
+                        Some(State::HardReset)
+                    }
+
+                    // Per spec 8.3.3.19.1.5/8.3.3.19.3.7: Swap Request response timeout
+                    // transitions to Ready.
+                    (
+                        _,
+                        State::DrpSwap(SwapState::Data(DataRoleSwap::Send))
+                        | State::DrpSwap(SwapState::Power(PowerRoleSwap::Send)),
+                        ProtocolError::RxError(RxError::ReceiveTimeout),
+                    ) => Some(State::Ready),
+
+                    // Per spec 8.3.3.20.5: A VCONNOnTimer timeout transitions to Hard Reset.
+                    (
+                        _,
+                        State::VconnSwap {
+                            state: VcsState::WaitForVconn,
+                            ..
+                        },
+                        ProtocolError::RxError(RxError::ReceiveTimeout),
+                    ) => Some(State::HardReset),
+
+                    // Per spec 6.3.13: If the Soft_Reset Message fails, a Hard Reset shall be initiated.
+                    // This handles the case where we're trying to send/receive a soft reset and it fails.
+                    (_, State::SoftReset | State::SendSoftReset, ProtocolError::TransmitRetriesExceeded(_)) => {
+                        Some(State::HardReset)
+                    }
+
+                    // Per spec 8.3.3.2.3: No GoodCRC (NoResponseTimer times out) goes to Discovery or Disabled
+                    (_, State::SendCapabilities, ProtocolError::TransmitRetriesExceeded(_)) => Some(State::Discovery),
+
+                    // PowerSwap:     Per spec 8.3.3.19.3.6, the Policy Engine shall transition to ErrorRecovery on RxTimeout or TxSendFail
+                    // FastPowerSwap: Per spec 8.3.3.19.5.6, the Policy Engine shall transition to ErrorRecovery on RxTimeout or TxSendFail
+                    (
+                        _,
+                        State::DrpSwap(SwapState::Power(PowerRoleSwap::WaitSourceOn))
+                        | State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::WaitSourceOn)),
+                        ProtocolError::RxError(RxError::ReceiveTimeout) | ProtocolError::TransmitRetriesExceeded(_),
+                    ) => Some(State::ErrorRecovery),
+
+                    // Per spec 8.3.3.2.5: When any Protocol Error occurs, transition to Hard Reset
+                    (_, State::TransitionSupply(_), _) => Some(State::HardReset),
+
+                    // Unexpected messages indicate a protocol error and demand a soft reset.
+                    // Per spec 6.8.1 Table 6.72 (for non-power-transitioning states).
+                    // Note: This must come AFTER TransitionSupply check above.
+                    (_, _, ProtocolError::UnexpectedMessage) => Some(State::SendSoftReset),
+
+                    // Per Table 6.72: Unsupported messages in Ready state get Not_Supported response.
+                    (_, State::Ready, ProtocolError::RxError(RxError::UnsupportedMessage)) => {
+                        Some(State::SendNotSupported)
+                    }
+
+                    // Per spec 6.6.9.1: Transmission failure (no GoodCRC after retries) triggers Soft Reset.
+                    // Note: If we're in SoftReset/SendSoftReset state, this is caught above and escalates to Hard Reset.
+                    (_, _, ProtocolError::TransmitRetriesExceeded(_)) => Some(State::SendSoftReset),
+
+                    // Unhandled protocol errors - log and continue.
+                    (_, _, error) => {
+                        error!("Protocol error {:?} in source state transition", error);
+                        None
+                    }
+                };
+
+                if let Some(state) = new_state {
+                    self.state = state
                 }
 
-                // PowerSwap:     Per spec 8.3.3.19.3.6, the Policy Engine shall transition to ErrorRecovery on RxTimeout or TxSendFail
-                // FastPowerSwap: Per spec 8.3.3.19.5.6, the Policy Engine shall transition to ErrorRecovery on RxTimeout or TxSendFail
-                (
-                    _,
-                    State::DrpSwap(SwapState::Power(PowerRoleSwap::WaitSourceOn))
-                    | State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::WaitSourceOn)),
-                    ProtocolError::RxError(RxError::ReceiveTimeout) | ProtocolError::TransmitRetriesExceeded(_),
-                ) => Some(State::ErrorRecovery),
-
-                // Per spec 8.3.3.2.5: When any Protocol Error occurs, transition to Hard Reset
-                (_, State::TransitionSupply(_), _) => Some(State::HardReset),
-
-                // Unexpected messages indicate a protocol error and demand a soft reset.
-                // Per spec 6.8.1 Table 6.72 (for non-power-transitioning states).
-                // Note: This must come AFTER TransitionSupply check above.
-                (_, _, ProtocolError::UnexpectedMessage) => Some(State::SendSoftReset),
-
-                // Per Table 6.72: Unsupported messages in Ready state get Not_Supported response.
-                (_, State::Ready, ProtocolError::RxError(RxError::UnsupportedMessage)) => Some(State::SendNotSupported),
-
-                // Per spec 6.6.9.1: Transmission failure (no GoodCRC after retries) triggers Soft Reset.
-                // Note: If we're in SoftReset/SendSoftReset state, this is caught above and escalates to Hard Reset.
-                (_, _, ProtocolError::TransmitRetriesExceeded(_)) => Some(State::SendSoftReset),
-
-                // Unhandled protocol errors - log and continue.
-                (_, _, error) => {
-                    error!("Protocol error {:?} in source state transition", error);
-                    return Err(Error::Protocol(error));
-                }
-            };
-
-            if let Some(state) = new_state {
-                self.state = state
+                Ok(PolicyEngineResult::Continue)
             }
-
-            Ok(PolicyEngineResult::Continue)
-        } else {
-            error!("Unrecoverable result {:?} in sink state transition", result);
-            result
+            Err(err) => {
+                error!("Unrecoverable error {:?} in source state transition", err);
+                Err(err)
+            }
         }
     }
 
@@ -694,9 +715,12 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                 State::SendCapabilities
             }
             // 8.3.3.2.14 (PE_SRC_EPR_Keep_Alive):
+            //
+            // Per spec 6.5.14.4, a Source operating in EPR Mode responds to a received `EPR_KeepAlive` Message with
+            // an `EPR_KeepAlive_Ack` Message.
             State::EprKeepAlive => {
                 self.protocol_layer
-                    .transmit_extended_control_message(ExtendedControlMessageType::EprKeepAlive)
+                    .transmit_extended_control_message(ExtendedControlMessageType::EprKeepAliveAck)
                     .await?;
                 State::Ready
             }
@@ -1341,17 +1365,22 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
             MessageType::Control(ControlMessageType::NotSupported) => State::NotSupportedReceived,
 
             MessageType::Extended(ExtendedMessageType::ExtendedControl) => match message.payload {
-                Some(Payload::Extended(Extended::ExtendedControl(ctrl))) => match ctrl.message_type() {
-                    ExtendedControlMessageType::EprGetSourceCap => match self.mode {
+                Some(Payload::Extended(Extended::ExtendedControl(ctrl))) => match ctrl.try_message_type() {
+                    // Per spec 6.5.14 Table 6.67, values not explicitly defined are Reserved.
+                    // They are answered with `Not_Supported`.
+                    Err(()) => State::SendNotSupported,
+                    Ok(ExtendedControlMessageType::EprGetSourceCap) => match self.mode {
                         Mode::Spr => State::GiveSourceCap,
                         Mode::Epr => State::SendCapabilities,
                     },
-                    ExtendedControlMessageType::EprGetSinkCap => match self.dual_role {
+                    Ok(ExtendedControlMessageType::EprGetSinkCap) => match self.dual_role {
                         true => State::DrpGiveSinkCap(Mode::Epr),
                         false => State::SendNotSupported,
                     },
-                    ExtendedControlMessageType::EprKeepAlive => State::EprKeepAlive,
-                    ExtendedControlMessageType::EprKeepAliveAck => State::SendNotSupported, // FIXME: Source EPR
+                    Ok(ExtendedControlMessageType::EprKeepAlive) => State::EprKeepAlive,
+                    // Per spec 6.5.14 Table 6.67, an `EPR_KeepAlive_Ack` is only sent by a Sink.
+                    // A Source receiving one answers `Not_Supported`.
+                    Ok(ExtendedControlMessageType::EprKeepAliveAck) => State::SendNotSupported,
                 },
                 _ => State::SendNotSupported,
             },
