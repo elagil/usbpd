@@ -36,14 +36,17 @@ impl From<ExtendedControlMessageType> for u8 {
     }
 }
 
-impl From<u8> for ExtendedControlMessageType {
-    fn from(value: u8) -> Self {
+impl TryFrom<u8> for ExtendedControlMessageType {
+    type Error = ();
+
+    /// Per spec 6.5.14 Table 6.67, all values not explicitly defined are `Reserved` and Shall Not be used.
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            1 => ExtendedControlMessageType::EprGetSourceCap,
-            2 => ExtendedControlMessageType::EprGetSinkCap,
-            3 => ExtendedControlMessageType::EprKeepAlive,
-            4 => ExtendedControlMessageType::EprKeepAliveAck,
-            _ => panic!("Cannot convert {} to ExtendedControlMessageType", value), // Illegal values shall panic.
+            1 => Ok(ExtendedControlMessageType::EprGetSourceCap),
+            2 => Ok(ExtendedControlMessageType::EprGetSinkCap),
+            3 => Ok(ExtendedControlMessageType::EprKeepAlive),
+            4 => Ok(ExtendedControlMessageType::EprKeepAliveAck),
+            _ => Err(()),
         }
     }
 }
@@ -58,8 +61,9 @@ bitfield!(
     pub struct ExtendedControl(pub u16): Debug, FromStorage, IntoStorage {
         /// Payload, shall be set to zero when not used.
         pub data: u8 @ 8..=15,
-        /// The extended control message type.
-        pub message_type: u8 [ExtendedControlMessageType] @ 0..=7,
+        /// The extended control message type. Reserved values fail to parse (see spec 6.5.14 Table 6.67) and
+        /// message consumers answer `Extended::Unknown` with `Not_Supported`.
+        pub try_message_type: u8 [try_get ExtendedControlMessageType] @ 0..=7,
     }
 );
 
@@ -68,6 +72,12 @@ impl ExtendedControl {
     pub fn to_bytes(self, buf: &mut [u8]) -> usize {
         LittleEndian::write_u16(buf, self.0);
         2
+    }
+
+    /// Set the extended control message type from a typed value.
+    pub fn with_message_type(mut self, message_type: ExtendedControlMessageType) -> Self {
+        self.0 = (self.0 & !0xFF) | u8::from(message_type) as u16;
+        self
     }
 
     /// Parse an extended control message from bytes.
