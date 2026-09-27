@@ -76,7 +76,9 @@ impl Data {
         message.payload = Some(Payload::Data(match message_type {
             DataMessageType::SourceCapabilities => Data::SourceCapabilities(source_capabilities::SourceCapabilities(
                 payload
-                    .chunks_exact(PDO_SIZE)
+                    .as_chunks::<PDO_SIZE>()
+                    .0
+                    .iter()
                     .take(message.header.num_objects())
                     .map(|buf| source_capabilities::parse_raw_pdo(LittleEndian::read_u32(buf)))
                     .collect(),
@@ -151,9 +153,11 @@ impl Data {
                     };
 
                     let data = payload[PDO_SIZE..]
-                        .chunks_exact(PDO_SIZE)
+                        .as_chunks::<PDO_SIZE>()
+                        .0
+                        .iter()
                         .take(7)
-                        .map(LittleEndian::read_u32)
+                        .map(|buf| LittleEndian::read_u32(buf))
                         .collect::<Vec<u32, 7>>();
 
                     trace!("VDM RX: {:?} {:?}", header, data);

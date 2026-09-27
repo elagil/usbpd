@@ -452,9 +452,11 @@ impl PowerSource {
 
         let mut raw_current = current.get::<_50milliamperes>() as u16;
 
-        if raw_current > 0x3ff {
-            error!("Clamping invalid current: {} mA", 10 * raw_current);
-            raw_current = 0x3ff;
+        // The operating current is a 7 bit field (B6..0, in 50 mA units, Table 6.25).
+        // Clamp to the field width so values do not silently truncate to zero.
+        if raw_current > 0x7f {
+            error!("Clamping invalid PPS operating current: {} mA", 50 * raw_current);
+            raw_current = 0x7f;
         }
 
         let raw_voltage = voltage.get::<_20millivolts>() as u16;
