@@ -1,0 +1,23 @@
+[package]
+edition = "2024"
+name = "usbpd-tcpp03-m20"
+version = "0.1.0"
+license = "MIT"
+description = "USB PD gate controller (TCPP03-M20) support for the X-NUCLEO-DRP1M1 shield"
+
+[dependencies]
+embassy-stm32 = { path = "../../embassy/embassy-stm32", default-features = false, features = [
+    "defmt",
+    "exti",
+    "unstable-pac",
+] }
+embassy-time = { path = "../../embassy/embassy-time", default-features = false, features = ["defmt"] }
+
+defmt = { version = "1.1.1", optional = true }
+embedded-hal = "1"
+thiserror = { version = "2.0.18", default-features = false }
+
+[features]
+default = ["stm32g474re"]
+defmt = ["dep:defmt"]
+stm32g474re = ["embassy-stm32/stm32g474re", "embassy-stm32/single-bank"]
