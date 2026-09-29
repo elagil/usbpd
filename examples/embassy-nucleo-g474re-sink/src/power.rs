@@ -2,7 +2,6 @@
 use defmt::{Format, info, warn};
 use defmt_rtt as _;
 use embassy_futures::select::{Either, select};
-use embassy_stm32::gpio::Output;
 use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
 use embassy_stm32::{Peri, bind_interrupts, dma, peripherals};
 use embassy_time::{Duration, Ticker, Timer, with_timeout};
@@ -16,6 +15,7 @@ use usbpd::sink::device_policy_manager::{
 use usbpd::sink::policy_engine::Sink;
 use usbpd::timers::Timer as SinkTimer;
 use usbpd::units::ElectricPotential;
+use usbpd_tcpp03_m20::{PdRole, Tcpp, TcppResources};
 use usbpd_traits::Driver as SinkDriver;
 
 bind_interrupts!(struct Irqs {
@@ -30,7 +30,7 @@ pub struct UcpdResources {
     pub pin_cc2: Peri<'static, peripherals::PB4>,
     pub rx_dma: Peri<'static, peripherals::DMA1_CH1>,
     pub tx_dma: Peri<'static, peripherals::DMA1_CH2>,
-    pub tcpp_pwren: Output<'static>,
+    pub tcpp: TcppResources,
 }
 
 #[derive(Debug, Format)]
@@ -43,17 +43,39 @@ enum CableOrientation {
 struct UcpdSinkDriver<'d> {
     /// The UCPD PD phy instance.
     pd_phy: PdPhy<'d, peripherals::UCPD1>,
+    /// The TCPP03 gate controller, for VBUS observation via the ADC.
+    tcpp: &'d mut Tcpp,
 }
 
 impl<'d> UcpdSinkDriver<'d> {
-    fn new(pd_phy: PdPhy<'d, peripherals::UCPD1>) -> Self {
-        Self { pd_phy }
+    fn new(pd_phy: PdPhy<'d, peripherals::UCPD1>, tcpp: &'d mut Tcpp) -> Self {
+        Self { pd_phy, tcpp }
     }
 }
 
+/// Generous time to wait for VBUS before proceeding, and the interval between ADC samples.
+const VBUS_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
+const VBUS_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
 impl SinkDriver for UcpdSinkDriver<'_> {
     async fn wait_for_vbus(&mut self) {
-        // The sink policy engine is only running when attached. Therefore VBus is present.
+        // VBUS observation is mode-independent only via the ADC.
+        let deadline = embassy_time::Instant::now() + VBUS_WAIT_TIMEOUT;
+        loop {
+            match self.tcpp.vbus_mv().await {
+                Ok(mv) if u32::from(mv) >= usbpd_tcpp03_m20::VBUS_PRESENT_MV => {
+                    info!("TCPP03: vbus present ({} mV)", mv);
+                    return;
+                }
+                Ok(mv) => warn!("TCPP03: waiting for vbus, seeing {} mV", mv),
+                Err(err) => warn!("TCPP03: vbus read failed: {}", err),
+            }
+            if embassy_time::Instant::now() >= deadline {
+                warn!("TCPP03: vbus not observed within {:?}, continuing", VBUS_WAIT_TIMEOUT);
+                return;
+            }
+            Timer::after(VBUS_POLL_INTERVAL).await;
+        }
     }
 
     async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, usbpd_traits::DriverRxError> {
@@ -227,6 +249,7 @@ impl DevicePolicyManager for Device {
 /// Handle USB PD negotiation.
 #[embassy_executor::task]
 pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
+    let mut tcpp = Tcpp::new(ucpd_resources.tcpp);
     loop {
         let mut ucpd = Ucpd::new(
             ucpd_resources.ucpd.reborrow(),
@@ -237,7 +260,9 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
         );
 
         ucpd.cc_phy().set_pull(CcPull::Sink);
-        ucpd_resources.tcpp_pwren.set_high();
+        if let Err(err) = tcpp.init().await {
+            warn!("TCPP03 init failed: {}", err);
+        }
 
         info!("Waiting for USB connection");
         let cable_orientation = wait_attached(ucpd.cc_phy()).await;
@@ -254,6 +279,14 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
             }
             CableOrientation::DebugAccessoryMode => panic!("No PD communication in DAM"),
         };
+
+        if let Err(err) = tcpp.attach().await {
+            warn!("TCPP03 attach failed: {}", err);
+        }
+        if let Err(err) = tcpp.set_pd_role(PdRole::Sink).await {
+            warn!("TCPP03 sink gates failed: {}", err);
+        }
+
         let (mut cc_phy, pd_phy) = ucpd.split_pd_phy(
             ucpd_resources.rx_dma.reborrow(),
             ucpd_resources.tx_dma.reborrow(),
@@ -261,17 +294,23 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
             cc_sel,
         );
 
-        let driver = UcpdSinkDriver::new(pd_phy);
-        let dpm = Device::default();
-        let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(driver, dpm);
-        info!("Run sink");
+        {
+            let driver = UcpdSinkDriver::new(pd_phy, &mut tcpp);
+            let dpm = Device::default();
+            let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(driver, dpm);
+            info!("Run sink");
 
-        match select(sink.run(), wait_detached(&mut cc_phy)).await {
-            Either::First(result) => warn!("Sink loop broken with result: {}", result),
-            Either::Second(_) => {
-                info!("Detached");
-                continue;
+            match select(sink.run(), wait_detached(&mut cc_phy)).await {
+                Either::First(result) => warn!("Sink loop broken with result: {}", result),
+                Either::Second(_) => {
+                    info!("Detached");
+                }
             }
+        }
+
+        tcpp.check_faults().await;
+        if let Err(err) = tcpp.detach().await {
+            warn!("TCPP03 detach failed: {}", err);
         }
     }
 }

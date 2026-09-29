@@ -25,7 +25,7 @@ embassy-time = { path = "../../embassy/embassy-time", features = [
 ] }
 embassy-futures = { path = "../../embassy/embassy-futures" }
 
-defmt = "1.0.1"
+defmt = "1.1.1"
 defmt-rtt = "1.0.0"
 
 cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
@@ -39,6 +39,7 @@ micromath = "2.1.0"
 uom = { version = "0.36.0", default-features = false, features = ["si"] }
 usbpd = { path = "../../usbpd", features = ["defmt"] }
 usbpd-traits = { path = "../../usbpd-traits", features = ["defmt"] }
+usbpd-tcpp03-m20 = { path = "../usbpd-tcpp03-m20", features = ["defmt"] }
 
 # cargo build/run
 [profile.dev]
