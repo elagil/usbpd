@@ -79,11 +79,11 @@ impl SinkDPM for DummySinkEprDevice {
         // After initial SPR negotiation, enter EPR mode if source is EPR capable
         if !self.requested_epr_caps {
             // Check if source advertises EPR capability in first PDO
-            if let Some(PowerDataObject::FixedSupply(fixed)) = source_capabilities.pdos().first() {
-                if fixed.epr_mode_capable() {
-                    self.requested_epr_caps = true;
-                    return SinkEvent::EnterEprMode(Power::new::<watt>(140)); // Dummy 140W PDP
-                }
+            if let Some(PowerDataObject::FixedSupply(fixed)) = source_capabilities.pdos().first()
+                && fixed.epr_mode_capable()
+            {
+                self.requested_epr_caps = true;
+                return SinkEvent::EnterEprMode(Power::new::<watt>(140)); // Dummy 140W PDP
             }
         }
 

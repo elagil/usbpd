@@ -165,7 +165,7 @@ fn test_epr_keep_alive() {
 
     if let Some(Payload::Extended(Extended::ExtendedControl(ctrl))) = msg.payload {
         use crate::protocol_layer::message::extended::extended_control::ExtendedControlMessageType;
-        assert_eq!(ctrl.message_type(), ExtendedControlMessageType::EprKeepAlive);
+        assert_eq!(ctrl.try_message_type(), Ok(ExtendedControlMessageType::EprKeepAlive));
     } else {
         panic!("Expected ExtendedControl EprKeepAlive payload");
     }

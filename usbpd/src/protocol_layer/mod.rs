@@ -17,6 +17,7 @@ use core::marker::PhantomData;
 
 use byteorder::{ByteOrder, LittleEndian};
 use embassy_futures::select::{Either, select};
+use heapless::Deque;
 use heapless::Vec;
 use message::Message;
 use message::data::{Data, request};
@@ -27,6 +28,7 @@ use usbpd_traits::{Driver, DriverRxError, DriverTxError};
 use crate::PowerRole;
 use crate::counters::{Counter, CounterType, Error as CounterError};
 use crate::protocol_layer::message::data::epr_mode::EprModeDataObject;
+use crate::protocol_layer::message::data::source_capabilities;
 use crate::protocol_layer::message::data::source_capabilities::SourceCapabilities;
 use crate::protocol_layer::message::extended::Extended;
 use crate::protocol_layer::message::{ParseError, Payload};
@@ -34,6 +36,11 @@ use crate::timers::{Timer, TimerType};
 
 /// Maximum message size including headers and payload.
 const MAX_MESSAGE_SIZE: usize = 272;
+
+/// Capacity of the pending received-message queue.
+///
+/// Overflow indicates a misbehaving peer. See spec 6.12.2.2. If full drop oldest message per spec 6.11.
+const PENDING_RX_CAPACITY: usize = 2;
 
 /// Size of the message header in bytes.
 const MSG_HEADER_SIZE: usize = 2;
@@ -121,6 +128,37 @@ impl Default for Counters {
     }
 }
 
+/// Queue of messages received while this port was awaiting GoodCRC for its own transmission.
+///
+/// Per spec 6.12.2.3.1 the receive state machine runs concurrently, so messages are acknowledged and stored for
+/// later delivery instead of being dropped.
+#[derive(Debug, Default)]
+struct PendingRx<const N: usize> {
+    // The queue of pending received messages.
+    queue: Deque<Message, N>,
+}
+
+impl<const N: usize> PendingRx<N> {
+    /// Park a message, dropping the oldest one on overflow (per spec 6.11).
+    fn push(&mut self, message: Message) {
+        if self.queue.is_full() {
+            _ = self.queue.pop_front();
+            warn!("Pending received-message queue full, dropping oldest message");
+        }
+        _ = self.queue.push_back(message);
+    }
+
+    /// Take the oldest parked message, if any.
+    fn pop(&mut self) -> Option<Message> {
+        self.queue.pop_front()
+    }
+
+    /// Discard all parked messages (§6.12.2.3.2, layer reset for receive).
+    fn clear(&mut self) {
+        self.queue.clear();
+    }
+}
+
 /// The USB PD protocol layer.
 #[derive(Debug)]
 pub(crate) struct ProtocolLayer<DRIVER: Driver, TIMER: Timer> {
@@ -129,6 +167,7 @@ pub(crate) struct ProtocolLayer<DRIVER: Driver, TIMER: Timer> {
     default_header: Header,
     extended_rx_buffer: Vec<u8, MAX_MESSAGE_SIZE>,
     extended_rx_expected: Option<(ExtendedMessageType, u16, u8)>,
+    pending_rx: PendingRx<PENDING_RX_CAPACITY>,
     _timer: PhantomData<TIMER>,
 }
 
@@ -141,6 +180,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             default_header,
             extended_rx_buffer: Vec::new(),
             extended_rx_expected: None,
+            pending_rx: PendingRx::default(),
             _timer: PhantomData,
         }
     }
@@ -152,6 +192,9 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     /// Reset the protocol layer.
     pub fn reset(&mut self) {
         self.counters = Default::default();
+        self.pending_rx.clear();
+        // Half-assembled chunked messages must not survive a layer reset.
+        self.reset_chunked_rx();
     }
 
     /// Allows tests to access the driver directly.
@@ -192,40 +235,76 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     }
 
     /// Wait until a GoodCrc message is received, or a timeout occurs.
+    ///
+    /// Per spec 6.12.2.3.1 the receive state machine runs concurrently with the
+    /// transmit state machine, so a port partner may transmit while this port
+    /// awaits GoodCRC. Such messages are acknowledged and parked for later
+    /// delivery instead of aborting the wait (§6.12.2.2.1.5, Table 8.2).
     async fn wait_for_good_crc(&mut self) -> Result<(), RxError> {
         trace!("Wait for GoodCrc");
 
         let timeout_fut = Self::get_timer(TimerType::CRCReceive);
         let receive_fut = async {
-            let message = self.receive_simple().await?;
+            loop {
+                let message = self.receive_simple().await?;
 
-            if matches!(
-                message.header.message_type(),
-                MessageType::Control(ControlMessageType::GoodCRC)
-            ) {
-                trace!(
-                    "Received GoodCrc, TX message count: {}, expected: {}",
-                    message.header.message_id(),
-                    self.counters.tx_message.value()
-                );
-                if message.header.message_id() == self.counters.tx_message.value() {
-                    // See spec, [6.7.1.1]
-                    self.counters.retry.reset();
-                    _ = self.counters.tx_message.increment();
-                    Ok(())
+                if matches!(
+                    message.header.message_type(),
+                    MessageType::Control(ControlMessageType::GoodCRC)
+                ) {
+                    trace!(
+                        "Received GoodCrc, TX message count: {}, expected: {}",
+                        message.header.message_id(),
+                        self.counters.tx_message.value()
+                    );
+                    if message.header.message_id() == self.counters.tx_message.value() {
+                        // See spec, [6.7.1.1]
+                        self.counters.retry.reset();
+                        _ = self.counters.tx_message.increment();
+                        return Ok(());
+                    } else {
+                        return Err(RxError::AcknowledgeMismatch(message.header.message_id()));
+                    }
                 } else {
-                    Err(RxError::AcknowledgeMismatch(message.header.message_id()))
+                    // Extended frames that reach here parsed in `receive_simple`
+                    // (single-chunk or unchunked). They park alongside control and
+                    // data messages for later delivery. True multi-chunk frames
+                    // fail parsing in `receive_simple` before reaching this path
+                    // (deferred: D-RDv-3, see docs/spec-conformance-report.md).
+                    self.park_received_message(message).await?;
                 }
-            } else if matches!(message.header.message_type(), MessageType::Control(_)) {
-                Err(ParseError::InvalidControlMessageType(message.header.message_type_raw()).into())
-            } else {
-                Err(ParseError::InvalidMessageType(message.header.message_type_raw()).into())
             }
         };
 
         match select(timeout_fut, receive_fut).await {
             Either::First(_) => Err(RxError::ReceiveTimeout),
             Either::Second(receive_result) => receive_result,
+        }
+    }
+
+    /// Park a regular (not `GoodCRC`) message received while awaiting `GoodCRC` for our own transmission.
+    ///
+    /// Acknowledges the message (per 6.7.1.2), skipping GoodCRC emission for drivers with automatic acknowledgement.
+    /// Duplicates are only acknowledged again, not parked twice (per 6.7.1.2).
+    ///
+    /// Per spec 6.2.1.1.5, the sender of a GoodCRC Message Shall set the Specification Revision field to match the
+    /// revision of the message being acknowledged. Adopt the received revision before acknowledging.
+    async fn park_received_message(&mut self, message: Message) -> Result<(), RxError> {
+        if let Ok(revision) = message.header.spec_revision() {
+            self.default_header = self.default_header.with_spec_revision(revision);
+        }
+
+        match self.handle_rx_ack(&message).await {
+            Ok(true) => Ok(()),
+            Ok(false) => {
+                self.pending_rx.push(message);
+                Ok(())
+            }
+            Err(RxError::HardReset) => Err(RxError::HardReset),
+            Err(_) => {
+                trace!("Failed to acknowledge parked message");
+                Ok(())
+            }
         }
     }
 
@@ -259,9 +338,12 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                         return Err(TxError::UnchunkedExtendedMessagesNotSupported);
                     }
 
-                    // Check if this looks like an AVS request (bits 30-31 = 00, bits 28-29 = 11)
-                    let is_avs = ((rdo_bits >> 30) & 0x3 == 0) && ((rdo_bits >> 28) & 0x3 == 3);
-                    if is_avs {
+                    // The requested PDO identifies the RDO format. An AVS RDO (Table 6.26) requires
+                    // the voltage LSB two bits to be zero.
+                    if matches!(
+                        epr.pdo,
+                        source_capabilities::PowerDataObject::Augmented(source_capabilities::Augmented::Epr(_))
+                    ) {
                         let voltage = (rdo_bits >> 9) & 0xFFF;
                         if (voltage as u16) & 0x3 != 0 {
                             return Err(TxError::AvsVoltageAlignmentInvalid);
@@ -318,6 +400,9 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                 }
                 Err(DriverTxError::HardReset) => Err(TxError::HardReset.into()),
                 Err(DriverTxError::Discarded) => {
+                    // Per spec 6.12.2.2.1.9 (`PRL_Tx_Transmission_Error`): increment the `MessageIDCounter` and
+                    // inform the Policy Engine of the transmission error, so the partner's stored ID is not reused.
+                    _ = self.counters.tx_message.increment();
                     Err(ProtocolError::TransmitRetriesExceeded(self.counters.retry.max_value()))
                 }
             }
@@ -332,14 +417,21 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                             trace!("Transmit success");
                             return Ok(());
                         }
-                        Err(RxError::ReceiveTimeout) => match self.counters.retry.increment() {
-                            Ok(_) => {
-                                // Retry transmission, until the retry counter is exceeded.
+                        Err(RxError::ReceiveTimeout | RxError::AcknowledgeMismatch(_)) => {
+                            match self.counters.retry.increment() {
+                                Ok(_) => {
+                                    // Retry transmission, until the retry counter is exceeded.
+                                }
+                                Err(CounterError::Exceeded) => {
+                                    // Per spec 6.12.2.2.1.9 (PRL_Tx_Transmission_Error): increment the `MessageIDCounter`
+                                    // and inform the Policy Engine of the transmission error, so the partner's stored ID is not reused.
+                                    let _ = self.counters.tx_message.increment();
+                                    return Err(ProtocolError::TransmitRetriesExceeded(
+                                        self.counters.retry.max_value(),
+                                    ));
+                                }
                             }
-                            Err(CounterError::Exceeded) => {
-                                return Err(ProtocolError::TransmitRetriesExceeded(self.counters.retry.max_value()));
-                            }
-                        },
+                        }
                         Err(other) => return Err(other.into()),
                     },
                     Err(other) => return Err(other.into()),
@@ -403,6 +495,28 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     /// Receive a message, assembling chunked extended messages as needed.
     async fn receive_message_inner(&mut self) -> Result<Message, RxError> {
         loop {
+            // Deliver parked messages (during wait for GoodCRC).
+            //
+            // They were parsed, acknowledged and counted when parked (per 6.7.1.2), so they skip driver receive,
+            // chunk assembly and the acknowledgement pipeline. Only post-parse checks are repeated.
+            // Update of spec revision is mirrored here.
+            if let Some(message) = self.pending_rx.pop() {
+                self.default_header = self.default_header.with_spec_revision(message.header.spec_revision()?);
+
+                match message.header.message_type() {
+                    MessageType::Control(ControlMessageType::Reserved)
+                    | MessageType::Data(DataMessageType::Reserved) => {
+                        trace!("Unsupported message type in header: {:?}", message.header);
+                        return Err(RxError::UnsupportedMessage);
+                    }
+                    MessageType::Control(ControlMessageType::SoftReset) => return Err(RxError::SoftReset),
+                    _ => (),
+                }
+
+                trace!("Received message {:?}", message);
+                return Ok(message);
+            }
+
             let mut buffer = Self::get_message_buffer();
 
             let length = match self.driver.receive(&mut buffer).await {
@@ -494,7 +608,9 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                         ExtendedMessageType::EprSourceCapabilities => {
                             Payload::Extended(message::extended::Extended::EprSourceCapabilities(
                                 ext_payload
-                                    .chunks_exact(4)
+                                    .as_chunks::<4>()
+                                    .0
+                                    .iter()
                                     .map(|buf| {
                                         message::data::source_capabilities::parse_raw_pdo(LittleEndian::read_u32(buf))
                                     })
@@ -524,7 +640,19 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                     trace!("Unsupported message type in header: {:?}", message.header);
                     return Err(RxError::UnsupportedMessage);
                 }
-                MessageType::Control(ControlMessageType::SoftReset) => return Err(RxError::SoftReset),
+                MessageType::Control(ControlMessageType::SoftReset) => {
+                    // Per spec 6.12.2.3.2/.3: reset the `MessageIDCounter` and clear the stored `MessageID` in
+                    // `PRL_Rx_Layer_Reset_for_Receive`, then send `GoodCRC` from `PRL_RxSend_GoodCRC`
+                    // once reset actions completed.
+                    //
+                    // Per spec 6.8.1, the receiver resets its `MessageIDCounter` and `RetryCounter`
+                    // before the `Accept` response.
+                    self.reset();
+                    match self.handle_rx_ack(&message).await? {
+                        true => continue, // Retransmission of the `Soft_Reset`
+                        false => return Err(RxError::SoftReset),
+                    }
+                }
                 _ => (),
             }
 
@@ -603,7 +731,12 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                             Err(ProtocolError::UnexpectedMessage)
                         };
                     }
-                    Err(RxError::ParseError(_)) => unreachable!(),
+                    Err(RxError::ParseError(err)) => {
+                        // Per spec 6.6.1, a corrupt header is dropped.
+                        // The sender retries after its `CRCReceiveTimer` expiry.
+                        trace!("Dropping frame with parse error: {:?}", err);
+                        continue;
+                    }
                     Err(other) => return Err(other.into()),
                 }
             }
@@ -619,8 +752,14 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     ///
     // See spec, [6.7.1.1]
     pub async fn hard_reset(&mut self) -> Result<(), ProtocolError> {
-        self.counters.tx_message.reset();
+        // Per spec 6.12.2.3.2, pending receive state is cleared on layer reset.
+        self.pending_rx.clear();
+        // Per spec 6.12.2.4.1 / Table 8.58: the `MessageIDCounter`, the stored copy of the `MessageID` and
+        // the `RetryCounter` are all reset.
+        self.reset();
         self.counters.retry.reset();
+        // Stale chunked-assembly state must not survive a layer reset.
+        self.reset_chunked_rx();
 
         loop {
             match self.driver.transmit_hard_reset().await {
@@ -961,7 +1100,7 @@ mod tests {
     };
     use crate::protocol_layer::message::Payload;
 
-    fn get_protocol_layer<'a>(
+    fn get_protocol_layer(
         driver: DummyDriver<MAX_DATA_MESSAGE_SIZE>,
     ) -> ProtocolLayer<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer> {
         ProtocolLayer::new(
@@ -988,5 +1127,231 @@ mod tests {
         } else {
             panic!()
         }
+    }
+
+    /// Build a `GoodCRC` frame acknowledging `message_id` (per spec 6.3.1).
+    fn good_crc_bytes(message_id: u8) -> [u8; 2] {
+        // Header: Control `GoodCRC` (raw type 1), num_objects = 0, spec rev 3.x,
+        // power role sink (0), data role UFP (0). Little-endian on the wire.
+        let header = 0x0001u16 | ((message_id as u16) << 9) | (0b10 << 6);
+        [(header & 0xFF) as u8, (header >> 8) as u8]
+    }
+
+    /// Build a `Source_Capabilities` frame with the fixed 5V/3A PDO.
+    fn source_caps_bytes(message_id: u8) -> [u8; 6] {
+        // Header: Data `Source_Capabilities` (raw type 1), num_objects = 1,
+        // spec rev 3.x, power role sink (0), data role UFP (0), followed by one
+        // PDO from DUMMY_CAPABILITIES. Little-endian on the wire.
+        let header = 0x1000u16 | ((message_id as u16) << 9) | (0b10 << 6) | 0b0_0001;
+        let mut buffer = [0u8; 6];
+        buffer[0] = (header & 0xFF) as u8;
+        buffer[1] = (header >> 8) as u8;
+        buffer[2..6].copy_from_slice(&DUMMY_CAPABILITIES[2..6]);
+        buffer
+    }
+
+    fn transmit_get_source_cap_message() -> super::message::Message {
+        super::message::Message::new(Header::new_control(
+            Header::new_template(
+                crate::DataRole::Ufp,
+                crate::PowerRole::Sink,
+                super::message::header::SpecificationRevision::R3_X,
+            ),
+            crate::counters::Counter::new(crate::counters::CounterType::MessageId),
+            super::message::header::ControlMessageType::GetSourceCap,
+        ))
+    }
+
+    /// Build a serialized single-chunk Extended_Control (`EPR_KeepAlive_Ack`) frame from the partner,
+    /// exercising the extended-message parking path during a `GoodCRC` wait.
+    fn extended_control_bytes(message_id: u8) -> [u8; 8] {
+        use crate::protocol_layer::message::extended::{
+            ExtendedHeader,
+            extended_control::{ExtendedControl, ExtendedControlMessageType},
+        };
+        use byteorder::{ByteOrder, LittleEndian};
+
+        // Header: Extended Extended_Control (raw type 16), spec rev 3.x.
+        let header = Header::new_extended(
+            Header::new_template(
+                crate::DataRole::Dfp,
+                crate::PowerRole::Source,
+                super::message::header::SpecificationRevision::R3_X,
+            ),
+            crate::counters::Counter::new_from_value(crate::counters::CounterType::MessageId, message_id),
+            super::message::header::ExtendedMessageType::ExtendedControl,
+            1,
+        );
+
+        // Extended header: data size 2, single chunk 0 (fits in one chunk).
+        let ext_header = ExtendedHeader::new(2).with_chunked(true).with_chunk_number(0);
+        let control = ExtendedControl::default().with_message_type(ExtendedControlMessageType::EprKeepAliveAck);
+
+        let mut buffer = [0u8; 8];
+        let mut offset = header.to_bytes(&mut buffer);
+        offset += ext_header.to_bytes(&mut buffer[offset..]);
+        LittleEndian::write_u16(&mut buffer[offset..], control.0);
+        buffer
+    }
+
+    #[tokio::test]
+    async fn test_non_goodcrc_during_goodcrc_wait_is_parked_and_acked() {
+        let mut protocol_layer = get_protocol_layer(DummyDriver::new());
+
+        protocol_layer.driver.inject_received_data(&source_caps_bytes(7));
+        protocol_layer.driver.inject_received_data(&good_crc_bytes(0));
+
+        let result = protocol_layer.transmit(transmit_get_source_cap_message()).await;
+        result.unwrap();
+
+        // The only transmitted frames are our own Get_Source_Cap and the
+        // GoodCRC acking the partner's Source_Capabilities; no retransmission.
+        let own = protocol_layer.driver.probe_transmitted_data();
+        let own = super::message::Message::from_bytes(&own).unwrap();
+        assert_eq!(
+            own.header.message_type(),
+            super::message::header::MessageType::Control(super::message::header::ControlMessageType::GetSourceCap)
+        );
+        let good_crc = protocol_layer.driver.probe_transmitted_data();
+        let ack = super::message::Message::from_bytes(&good_crc).unwrap();
+        assert_eq!(
+            ack.header.message_type(),
+            super::message::header::MessageType::Control(super::message::header::ControlMessageType::GoodCRC)
+        );
+        assert_eq!(ack.header.message_id(), 7);
+        assert!(!protocol_layer.driver.has_transmitted_data());
+
+        // The parked Source_Capabilities is delivered intact afterwards.
+        let message = protocol_layer.receive_message().await.unwrap();
+        assert_eq!(
+            message.header.message_type(),
+            super::message::header::MessageType::Data(super::message::header::DataMessageType::SourceCapabilities)
+        );
+        assert_eq!(message.header.message_id(), 7);
+        assert!(matches!(
+            message.payload,
+            Some(Payload::Data(Data::SourceCapabilities(_)))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_extended_message_during_goodcrc_wait_is_parked_and_acked() {
+        let mut protocol_layer = get_protocol_layer(DummyDriver::new());
+
+        protocol_layer.driver.inject_received_data(&extended_control_bytes(3));
+        protocol_layer.driver.inject_received_data(&good_crc_bytes(0));
+
+        let result = protocol_layer.transmit(transmit_get_source_cap_message()).await;
+        result.unwrap();
+
+        // Transmitted frames: our own Get_Source_Cap, then the GoodCRC
+        // acknowledging the partner's Extended_Control; no retransmission.
+        let own = protocol_layer.driver.probe_transmitted_data();
+        assert_eq!(
+            super::message::Message::from_bytes(&own).unwrap().header.message_type(),
+            super::message::header::MessageType::Control(super::message::header::ControlMessageType::GetSourceCap)
+        );
+        let good_crc = protocol_layer.driver.probe_transmitted_data();
+        let ack = super::message::Message::from_bytes(&good_crc).unwrap();
+        assert_eq!(
+            ack.header.message_type(),
+            super::message::header::MessageType::Control(super::message::header::ControlMessageType::GoodCRC)
+        );
+        assert_eq!(ack.header.message_id(), 3);
+        assert!(!protocol_layer.driver.has_transmitted_data());
+
+        // The parked Extended_Control is delivered intact afterwards.
+        let message = protocol_layer.receive_message().await.unwrap();
+        assert_eq!(message.header.message_id(), 3);
+        assert_eq!(
+            message.header.message_type(),
+            super::message::header::MessageType::Extended(super::message::header::ExtendedMessageType::ExtendedControl)
+        );
+        assert!(matches!(
+            message.payload,
+            Some(super::message::Payload::Extended(
+                super::message::extended::Extended::ExtendedControl(_)
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_mismatched_goodcrc_retries() {
+        let mut protocol_layer = get_protocol_layer(DummyDriver::new());
+
+        // Wrong acknowledgment followed by the correct one (original message id 0).
+        protocol_layer.driver.inject_received_data(&good_crc_bytes(5));
+        protocol_layer.driver.inject_received_data(&good_crc_bytes(0));
+
+        let result = protocol_layer.transmit(transmit_get_source_cap_message()).await;
+        result.unwrap();
+
+        // The original frame and one retry share the same MessageID.
+        let first = protocol_layer.driver.probe_transmitted_data();
+        let second = protocol_layer.driver.probe_transmitted_data();
+        assert_eq!(first, second);
+        let message = super::message::Message::from_bytes(&first).unwrap();
+        assert_eq!(message.header.message_id(), 0);
+        assert!(!protocol_layer.driver.has_transmitted_data());
+    }
+
+    #[tokio::test]
+    async fn test_two_messages_parked_in_order() {
+        let mut protocol_layer = get_protocol_layer(DummyDriver::new());
+
+        protocol_layer.driver.inject_received_data(&source_caps_bytes(0));
+        protocol_layer.driver.inject_received_data(&source_caps_bytes(1));
+        protocol_layer.driver.inject_received_data(&good_crc_bytes(0));
+
+        let result = protocol_layer.transmit(transmit_get_source_cap_message()).await;
+        result.unwrap();
+
+        // Transmitted frames: our own Get_Source_Cap, then one GoodCRC per
+        // partner message, in arrival order.
+        let own = protocol_layer.driver.probe_transmitted_data();
+        assert_eq!(
+            super::message::Message::from_bytes(&own).unwrap().header.message_type(),
+            super::message::header::MessageType::Control(super::message::header::ControlMessageType::GetSourceCap)
+        );
+        let good_crc = protocol_layer.driver.probe_transmitted_data();
+        assert_eq!(
+            super::message::Message::from_bytes(&good_crc)
+                .unwrap()
+                .header
+                .message_id(),
+            0
+        );
+        let good_crc = protocol_layer.driver.probe_transmitted_data();
+        assert_eq!(
+            super::message::Message::from_bytes(&good_crc)
+                .unwrap()
+                .header
+                .message_id(),
+            1
+        );
+        assert!(!protocol_layer.driver.has_transmitted_data());
+
+        // Both parked messages are delivered in order with matching ids.
+        let first = protocol_layer.receive_message().await.unwrap();
+        let second = protocol_layer.receive_message().await.unwrap();
+        assert_eq!(first.header.message_id(), 0);
+        assert_eq!(second.header.message_id(), 1);
+    }
+
+    #[test]
+    fn test_pending_rx_overflow_drops_oldest() {
+        let mut pending = super::PendingRx::<{ super::PENDING_RX_CAPACITY }>::default();
+
+        // Push messages with MessageIDs 1, 2, 3; capacity is 2, so the second
+        // push overflows and drops the MessageID 1 message.
+        for message_id in 1..4u16 {
+            let header = super::message::header::Header((message_id << 9) | 0x0001);
+            pending.push(super::message::Message::new(header));
+        }
+
+        assert_eq!(2, pending.queue.len());
+        assert_eq!(Some(2), pending.pop().map(|message| message.header.message_id()));
+        assert_eq!(Some(3), pending.pop().map(|message| message.header.message_id()));
+        assert!(pending.queue.is_empty());
     }
 }
