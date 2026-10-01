@@ -11,12 +11,15 @@ use uom::si::electric_potential::millivolt;
 use uom::si::power::{milliwatt, watt};
 #[cfg(not(feature = "avs"))]
 use usbpd::_50millivolts_mod::_50millivolts;
+use usbpd::protocol_layer::message::data::epr_mode;
 #[allow(unused_imports)] // Avs is used in AVS feature mode
 use usbpd::protocol_layer::message::data::request::{
     Avs, CurrentRequest, EprRequestDataObject, FixedVariableSupply, PowerSource, VoltageRequest,
 };
 use usbpd::protocol_layer::message::data::source_capabilities::{Augmented, PowerDataObject, SourceCapabilities};
-use usbpd::sink::device_policy_manager::{DevicePolicyManager, Event};
+use usbpd::sink::device_policy_manager::{
+    DevicePolicyManager, DrpDevicePolicyManager, EprDevicePolicyManager, Event, Info, SinkDpm,
+};
 use usbpd::sink::policy_engine::Sink;
 use usbpd::timers::Timer as SinkTimer;
 use usbpd::units::Power;
@@ -244,8 +247,20 @@ struct Device {
     entered_epr_mode: bool,
 }
 
+impl SinkDpm for Device {}
+
+// This is not a dual role port, so this implementation remains default
+impl DrpDevicePolicyManager for Device {}
+
+impl EprDevicePolicyManager for Device {
+    async fn epr_mode_entry_failed(&mut self, reason: epr_mode::DataEnterFailed) {
+        warn!("EPR mode entry failed! {:?}", &reason);
+        // A user could define custom behavior here to deal with this entry failure
+    }
+}
+
 impl DevicePolicyManager for Device {
-    async fn inform(&mut self, source_capabilities: &SourceCapabilities) {
+    async fn inform(&mut self, source_capabilities: &SourceCapabilities, _info: Info) {
         // Print capabilities when we receive them
         print_capabilities(source_capabilities);
     }
@@ -447,7 +462,8 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
         );
 
         let driver = UcpdSinkDriver::new(pd_phy);
-        let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(driver, Device::default());
+        let device = Device::default();
+        let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(driver, device);
         info!("Run sink");
 
         match select(sink.run(), wait_detached(&mut cc_phy)).await {

@@ -10,7 +10,9 @@ use panic_probe as _;
 use uom::si::electric_potential;
 use usbpd::protocol_layer::message::data::request::{self, CurrentRequest, VoltageRequest};
 use usbpd::protocol_layer::message::data::source_capabilities::SourceCapabilities;
-use usbpd::sink::device_policy_manager::{DevicePolicyManager, Event};
+use usbpd::sink::device_policy_manager::{
+    DevicePolicyManager, DrpDevicePolicyManager, EprDevicePolicyManager, Event, SinkDpm,
+};
 use usbpd::sink::policy_engine::Sink;
 use usbpd::timers::Timer as SinkTimer;
 use usbpd::units::ElectricPotential;
@@ -146,6 +148,13 @@ impl Default for Device {
     }
 }
 
+impl SinkDpm for Device {}
+
+// This device does not have EPR or DRP capabilities, so
+// the trait implementations for both remain empty (default)
+impl DrpDevicePolicyManager for Device {}
+impl EprDevicePolicyManager for Device {}
+
 impl DevicePolicyManager for Device {
     async fn request(&mut self, source_capabilities: &SourceCapabilities) -> request::PowerSource {
         info!("Found capabilities: {}", source_capabilities);
@@ -249,7 +258,8 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
         );
 
         let driver = UcpdSinkDriver::new(pd_phy);
-        let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(driver, Device::default());
+        let dpm = Device::default();
+        let mut sink: Sink<UcpdSinkDriver<'_>, EmbassySinkTimer, _> = Sink::new(driver, dpm);
         info!("Run sink");
 
         match select(sink.run(), wait_detached(&mut cc_phy)).await {

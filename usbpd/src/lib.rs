@@ -24,6 +24,7 @@ extern crate uom;
 pub(crate) mod fmt;
 
 pub(crate) mod counters;
+pub mod dual_role;
 pub mod protocol_layer;
 pub mod sink;
 pub mod source;
@@ -152,6 +153,47 @@ impl From<DataRole> for bool {
             DataRole::Dfp => true,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+enum Contract {
+    #[default]
+    Safe5V,
+    Implicit, // Only present after fast role swap. Limited to max. type C current.
+    TransitionToExplicit,
+    Explicit(crate::protocol_layer::message::data::request::PowerSource),
+
+    // FIXME: EPR support may use this enum
+    #[allow(unused)]
+    _Invalid,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// For defining Device Policy Managers' swap behavior
+pub enum SwapType {
+    /// **DRP** Data Role Swap (UFP <---> DFP)
+    Data,
+    /// **DRP** Power Role Swap (Source <---> Sink)
+    Power,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Inner policy engine results to determine whether to exit the policy engine or not
+enum PolicyEngineResult {
+    Continue,
+    Exit(RunResult),
+}
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Action to execute upon successfully exiting a port's policy engine handler
+pub enum RunResult {
+    /// **DRP** Sink -> Source
+    SwapToSource,
+    /// **DRP** Source -> Sink
+    SwapToSink,
 }
 
 #[cfg(test)]

@@ -145,6 +145,10 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         }
     }
 
+    pub fn deconstruct(self) -> DRIVER {
+        self.driver
+    }
+
     /// Reset the protocol layer.
     pub fn reset(&mut self) {
         self.counters = Default::default();
@@ -159,13 +163,6 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     /// Access the default header directly.
     pub fn header(&self) -> &Header {
         &self.default_header
-    }
-
-    /// Change the header's data role after a data role swap
-    /// FIXME: Use this after a data role swap
-    #[allow(unused)]
-    pub fn set_header_data_role(&mut self, role: crate::DataRole) {
-        self.default_header.set_port_data_role(role);
     }
 
     fn get_message_buffer() -> [u8; MAX_MESSAGE_SIZE] {
@@ -864,6 +861,10 @@ impl<DRIVER: Driver, TIMER: Timer> SinkProtocolLayer<DRIVER, TIMER> {
         Self(ProtocolLayer::new(driver, default_header))
     }
 
+    pub fn deconstruct(self) -> DRIVER {
+        self.0.deconstruct()
+    }
+
     /// Wait for the source to provide its capabilities.
     pub async fn wait_for_source_capabilities(&mut self) -> Result<Message, ProtocolError> {
         // Only sinks can await capabilities.
@@ -917,6 +918,10 @@ impl<DRIVER: Driver, TIMER: Timer> SourceProtocolLayer<DRIVER, TIMER> {
         Self(ProtocolLayer::new(driver, default_header))
     }
 
+    pub fn deconstruct(self) -> DRIVER {
+        self.0.deconstruct()
+    }
+
     /// Wait for the sink to request a capability with a Request Message.
     pub async fn wait_for_request(&mut self) -> Result<Message, ProtocolError> {
         // Only sources await a sink power request
@@ -956,9 +961,11 @@ mod tests {
     };
     use crate::protocol_layer::message::Payload;
 
-    fn get_protocol_layer() -> ProtocolLayer<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer> {
+    fn get_protocol_layer<'a>(
+        driver: DummyDriver<MAX_DATA_MESSAGE_SIZE>,
+    ) -> ProtocolLayer<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer> {
         ProtocolLayer::new(
-            DummyDriver::new(),
+            driver,
             Header::new_template(
                 crate::DataRole::Ufp,
                 crate::PowerRole::Sink,
@@ -969,7 +976,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_it() {
-        let mut protocol_layer = get_protocol_layer();
+        let mut protocol_layer = get_protocol_layer(DummyDriver::new());
 
         protocol_layer.driver.inject_received_data(&DUMMY_CAPABILITIES);
         let message = protocol_layer.receive_message().await.unwrap();
