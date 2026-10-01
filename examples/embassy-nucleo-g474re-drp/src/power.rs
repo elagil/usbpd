@@ -58,11 +58,9 @@ impl<'d> UcpdDrpDriver<'d> {
     }
 }
 
-/// Time to wait for VBUS before proceeding, and the interval between ADC
-/// samples. Sufficient for a partner in Normal mode, which applies VBUS
-/// almost instantly.
-const VBUS_WAIT_TIMEOUT: Duration = Duration::from_secs(1);
-const VBUS_POLL_INTERVAL: Duration = Duration::from_millis(10);
+/// Time to wait for VBUS before proceeding, and the interval between ADC samples.
+const VBUS_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
+const VBUS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 impl Driver for UcpdDrpDriver<'_> {
     async fn wait_for_vbus(&mut self) {
