@@ -5,7 +5,7 @@
 #![warn(missing_docs)]
 use core::future::Future;
 
-/// Receive Error.
+/// Error type of driver receive operations.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DriverRxError {
@@ -16,7 +16,7 @@ pub enum DriverRxError {
     HardReset,
 }
 
-/// Transmit Error.
+/// Error type of driver transmit operations.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DriverTxError {

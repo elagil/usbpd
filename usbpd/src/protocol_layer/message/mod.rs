@@ -106,7 +106,7 @@ impl Message {
         match self.payload.as_ref() {
             Some(Payload::Data(data)) => header_len + data.to_bytes(&mut buffer[header_len..]),
             Some(Payload::Extended(extended)) => {
-                // Per USB PD spec 6.2.1.2.1: use chunked mode for compatibility with more PHYs.
+                // Per PD 3.2 Sec. 6.2.1.2.1: use chunked mode for compatibility with more PHYs.
                 // Most power supplies don't support unchunked extended messages.
                 let extended_header = ExtendedHeader::new(extended.data_size())
                     .with_chunked(true)

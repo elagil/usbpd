@@ -18,23 +18,23 @@ pub enum Event {
     /// Request EPR source capabilities (when already in EPR mode).
     ///
     /// Sends EprGetSourceCap extended control message.
-    /// See [8.3.3.8.1]
+    /// Per PD 3.2 Sec. 8.3.3.8.1.
     RequestEprSourceCapabilities,
     /// Enter EPR mode with the specified operational PDP.
     ///
     /// Initiates EPR mode entry sequence (EPR_Mode Enter -> EnterAcknowledged -> EnterSucceeded).
     /// After successful entry, source automatically sends EPR_Source_Capabilities.
     ///
-    /// Per USB PD spec 6.4.10, the Data field in EPR_Mode(Enter) shall be set to the
+    /// Per PD 3.2 Sec. 6.4.10, the Data field in EPR_Mode(Enter) shall be set to the
     /// EPR Sink Operational PDP. For example, a 28V × 5A = 140W device should pass 140W.
     ///
-    /// See spec Table 8.39: "Steps for Entering EPR Mode (Success)"
+    /// Per PD 3.2 Tab. 8.39, "Steps for Entering EPR Mode (Success)"
     EnterEprMode(Power),
     /// Exit EPR mode (sink-initiated).
     ///
     /// Sends EPR_Mode (Exit) message to source, then waits for Source_Capabilities.
     /// After receiving caps, negotiation proceeds as normal SPR negotiation.
-    /// See spec Table 8.46: "Steps for Exiting EPR Mode (Sink Initiated)"
+    /// Per PD 3.2 Tab. 8.46, "Steps for Exiting EPR Mode (Sink Initiated)"
     ExitEprMode,
     /// Request a certain power level.
     RequestPower(request::PowerSource),
@@ -57,14 +57,14 @@ pub enum Info {
     /// Request is not supported by the Source
     NotSupportedReceived,
     /// A requested `Get_Source_Cap` response timed out without capabilities
-    /// (per spec 8.3.3.3.12, the DPM Shall be informed of the outcome).
+    /// (per PD 3.2 Sec. 8.3.3.3.12, the DPM Shall be informed of the outcome).
     GetSourceCapTimeout,
     /// No special information (because `SourceCapabilities` is always sent)
     None,
 }
 
 // FIXME: Use trait aliasing once stable: https://github.com/rust-lang/rust/issues/41517
-/// Full implementation for the source device policy manager.
+/// Full implementation for the sink device policy manager.
 /// The default implementations of the traits will handle the case where a feature is unsupported.
 pub trait SinkDpm: DevicePolicyManager + EprDevicePolicyManager + DrpDevicePolicyManager {}
 
@@ -107,7 +107,7 @@ pub trait DevicePolicyManager {
 
     /// Notify the device that a hard reset has occurred.
     ///
-    /// Per USB PD Spec R3.2 Section 8.3.3.3.9, on entry to PE_SNK_Transition_to_default:
+    /// Per PD 3.2 Sec. 8.3.3.3.9, on entry to PE_SNK_Transition_to_default:
     /// - The sink shall transition to default power level (vSafe5V)
     /// - Local hardware should be reset
     /// - Port data role should be set to UFP
@@ -120,7 +120,7 @@ pub trait DevicePolicyManager {
 
     /// Get the sink's power capabilities.
     ///
-    /// Per USB PD Spec R3.2 Section 6.4.1.6, sinks respond to Get_Sink_Cap messages
+    /// Per PD 3.2 Sec. 6.4.1.6, sinks respond to Get_Sink_Cap messages
     /// with a Sink_Capabilities message containing PDOs describing what power levels
     /// the sink can operate at.
     ///
@@ -165,11 +165,11 @@ pub trait DevicePolicyManager {
 pub trait EprDevicePolicyManager {
     /// Notify the device that EPR mode entry failed.
     ///
-    /// Per USB PD Spec R3.2 Section 8.3.3.26.2.1, when the source responds with
+    /// Per PD 3.2 Sec. 8.3.3.26.2.1, when the source responds with
     /// EPR_Mode (Enter Failed), the sink transitions to soft reset. This callback
     /// informs the DPM of the failure reason before the soft reset occurs.
     ///
-    /// The failure reasons are defined in Table 6.50 and include:
+    /// The failure reasons are defined in PD 3.2 Tab. 6.50 and include:
     /// - Cable not EPR capable
     /// - Source failed to become VCONN source
     /// - EPR capable bit not set in RDO

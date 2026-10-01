@@ -3,7 +3,7 @@
 //! USB PD 3.0+ supports extended messages that can exceed the maximum packet size.
 //! These messages are split into chunks of up to 26 bytes each.
 //!
-//! See USB PD Spec R3.2 Section 6.13.
+//! Per PD 3.2 Sec. 6.13.
 
 use heapless::Vec;
 
@@ -130,27 +130,23 @@ impl ChunkedMessageAssembler {
 
     /// Create a new assembler and initialize it with chunk 0.
     ///
-    /// This is a convenience method that combines `new()` and `process_chunk()` for the first chunk.
+    /// Convenience method combining `new()` and `process_chunk()` for the first chunk of a message.
     ///
-    /// # Arguments
-    /// * `header` - The PD message header for chunk 0
-    /// * `ext_header` - The extended message header for chunk 0
-    /// * `chunk_data` - The chunk 0 payload data (without headers)
+    /// # Errors
     ///
-    /// # Returns
-    /// * `Ok((assembler, result))` - New assembler and the result of processing chunk 0
-    /// * `Err(ParseError)` - If chunk 0 is invalid (e.g., wrong chunk number)
+    /// Returns a [`ParseError`] if `ext_header` does not describe chunk 0 (e.g. a non-zero chunk number),
+    /// or if the chunk exceeds [`MAX_EXTENDED_MSG_CHUNK_LEN`].
     ///
     /// # Example
-    /// ```ignore
-    /// let (mut assembler, result) = ChunkedMessageAssembler::new_from_chunk(
-    ///     header, ext_header, chunk_0_data
-    /// )?;
-    /// match result {
-    ///     ChunkResult::Complete(data) => { /* Single chunk message */ },
-    ///     ChunkResult::NeedMoreChunks(_) => { /* Continue with process_chunk() */ },
-    ///     _ => unreachable!(),
-    /// }
+    ///
+    /// ```
+    /// # use usbpd::protocol_layer::message::extended::chunked::ChunkedMessageAssembler;
+    /// # use usbpd::protocol_layer::message::extended::ExtendedHeader;
+    /// # use usbpd::protocol_layer::message::header::Header;
+    /// let header = Header(0x9191);
+    /// let ext_header = ExtendedHeader::new(30).with_chunked(true).with_chunk_number(0);
+    /// let (mut assembler, result) =
+    ///     ChunkedMessageAssembler::new_from_chunk(header, ext_header, &[0u8; 26]).unwrap();
     /// ```
     pub fn new_from_chunk(
         header: Header,
@@ -216,7 +212,7 @@ impl ChunkedMessageAssembler {
             return Err(ParseError::Other("Unexpected chunk number"));
         }
 
-        // Validate chunk size (should never exceed 26 bytes per spec)
+        // Validate chunk size (should never exceed 26 bytes per PD 3.2)
         if chunk_data.len() > MAX_EXTENDED_MSG_CHUNK_LEN {
             return Err(ParseError::ChunkOverflow(chunk_data.len(), MAX_EXTENDED_MSG_CHUNK_LEN));
         }

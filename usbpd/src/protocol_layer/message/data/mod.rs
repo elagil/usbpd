@@ -1,6 +1,6 @@
 //! Definitions and implementations of data messages.
 //!
-//! See [6.4].
+//! Per PD 3.2 Sec. 6.4.
 use core::mem::size_of;
 
 use byteorder::{ByteOrder, LittleEndian};
@@ -38,14 +38,13 @@ impl PdoKind for () {
     }
 }
 
-/// Types of data messages.
-///
-/// TODO: Add missing types as per [6.4] and [Table 6.6].
+/// Data message payload types, per PD 3.2 Sec. 6.4.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[allow(unused)]
+// TODO: Add missing types per PD 3.2 Sec. 6.4 and Tab. 6.6.
 pub enum Data {
     /// Source capabilities.
     SourceCapabilities(source_capabilities::SourceCapabilities),
@@ -55,10 +54,11 @@ pub enum Data {
     Request(request::PowerSource),
     /// Used to enter, acknowledge or exit EPR mode.
     EprMode(epr_mode::EprModeDataObject),
-    /// Vendor defined messages (VDM).
+    /// Vendor defined messages (VDM), per PD 3.2 Sec. 6.4.9.
     ///
     /// Currently parsed from the wire but not forwarded to user applications.
-    /// TODO: Add DevicePolicyManager callback to allow applications to handle vendor-specific messages.
+    // TODO: Add DevicePolicyManager callback to allow applications to handle
+    // vendor-specific messages.
     VendorDefined((vendor_defined::VdmHeader, Vec<u32, 7>)),
     /// Unknown data type.
     Unknown,
@@ -107,7 +107,7 @@ impl Data {
             DataMessageType::EprRequest => {
                 let num_objects = message.header.num_objects();
                 trace!("EprRequest: num_objects={}, len={}", num_objects, len);
-                // Per USB PD 3.x Section 6.4.9, EPR_Request always has 2 data objects
+                // Per PD 3.2 Sec. 6.4.9, EPR_Request always has 2 data objects
                 if num_objects == 2 && len >= 2 * PDO_SIZE {
                     let rdo = LittleEndian::read_u32(&payload[..PDO_SIZE]);
                     let raw_pdo = LittleEndian::read_u32(&payload[PDO_SIZE..2 * PDO_SIZE]);

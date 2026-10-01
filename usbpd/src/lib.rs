@@ -2,6 +2,9 @@
 //!
 //! Modeled after the Universal Serial Bus Power Delivery Specification: USB PD R3.2 v1.1 (2024/10).
 //!
+//! "PD 3.2" refers to the Universal Serial Bus Power Delivery Specification,
+//! Revision 3.2, Version 1.1 (2024/10) — `USB_PD_R3_2 V1.1 2024-10.md` in the repository root.
+//!
 //! The library implements:
 //! - A policy engine for each supported mode,
 //! - the protocol layer, and
@@ -77,7 +80,7 @@ pub mod _20millivolts_mod {
 }
 
 /// Defines a unit for electric potential in 25 mV steps.
-/// Used by AVS (Adjustable Voltage Supply) per USB PD 3.2 Table 6.26.
+/// Used by AVS (Adjustable Voltage Supply) per PD 3.2 Tab. 6.26.
 pub mod _25millivolts_mod {
     unit! {
         system: uom::si;

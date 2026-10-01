@@ -159,7 +159,7 @@ bitfield!(
         pub unchunked_extended_messages_supported: bool @ 23,
         /// EPR mode capable
         pub epr_mode_capable: bool @ 22,
-        /// Output voltage in 25 mV units (per USB PD 3.2 Table 6.26).
+        /// Output voltage in 25 mV units (per PD 3.2 Tab. 6.26).
         /// The least two significant bits Shall be set to zero, making
         /// the effective voltage step size 100 mV.
         pub raw_output_voltage: u16 @ 9..=20,
@@ -185,7 +185,7 @@ impl Avs {
 
 /// EPR Request containing RDO + copy of requested PDO for source verification.
 ///
-/// Per USB PD 3.x Section 6.4.9, EPR_Request always has 2 data objects:
+/// Per PD 3.2 Sec. 6.4.9, EPR_Request always has 2 data objects:
 /// - The Request Data Object (format depends on PDO type being requested)
 /// - Copy of the PDO being requested (for source verification)
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -229,7 +229,7 @@ pub enum Error {
     VoltageMismatch,
 }
 
-/// Requestable voltage levels.
+/// Requestable voltage levels, either relative to the source capabilities or a specific value.
 #[derive(Debug)]
 pub enum VoltageRequest {
     /// The safe 5 V supply.
@@ -240,7 +240,7 @@ pub enum VoltageRequest {
     Specific(ElectricPotential),
 }
 
-/// Requestable currents.
+/// Requestable operating currents, either relative to the source capabilities or a specific value.
 #[derive(Debug)]
 pub enum CurrentRequest {
     /// The highest current that the source can supply.
@@ -452,7 +452,7 @@ impl PowerSource {
 
         let mut raw_current = current.get::<_50milliamperes>() as u16;
 
-        // The operating current is a 7 bit field (B6..0, in 50 mA units, Table 6.25).
+        // The operating current is a 7 bit field (B6..0, in 50 mA units, per PD 3.2 Tab. 6.25).
         // Clamp to the field width so values do not silently truncate to zero.
         if raw_current > 0x7f {
             error!("Clamping invalid PPS operating current: {} mA", 50 * raw_current);
@@ -477,7 +477,7 @@ impl PowerSource {
 
     /// Create a new EPR AVS request.
     ///
-    /// Per USB PD 3.x Section 6.4.9, this creates an EPR_Request with an AVS RDO
+    /// Per PD 3.2 Sec. 6.4.9, this creates an EPR_Request with an AVS RDO
     /// and a copy of the requested PDO.
     pub fn new_epr_avs(
         current_request: CurrentRequest,
@@ -509,14 +509,14 @@ impl PowerSource {
         }
 
         // AVS voltage is in 25 mV units with LSB 2 bits = 0 (effective 100 mV steps)
-        // Per USB PD 3.2 Table 6.26: "Output voltage in 25 mV units,
+        // Per PD 3.2 Tab. 6.26: "Output voltage in 25 mV units,
         // the least two significant bits Shall be set to zero"
         let raw_voltage = (voltage.get::<_25millivolts>() as u16) & !0x3;
 
         let object_position = index + 1;
         assert!(object_position > 0b0000 && object_position <= 0b1110);
 
-        // Build AVS RDO (Table 6.26)
+        // Build AVS RDO (per PD 3.2 Tab. 6.26)
         let rdo = Avs(0)
             .with_raw_output_voltage(raw_voltage)
             .with_raw_operating_current(raw_current)

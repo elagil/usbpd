@@ -42,7 +42,7 @@ pub const DUMMY_EPR_SOURCE_CAPS_CHUNK_1: [u8; 18] = [
 ];
 
 /// Maximum size of a non-extended USB PD message in bytes.
-/// Per USB PD spec, this is 2 bytes header + 7 data objects * 4 bytes = 30 bytes.
+/// Per PD 3.2, this is 2 bytes header + 7 data objects * 4 bytes = 30 bytes.
 pub const MAX_DATA_MESSAGE_SIZE: usize = 30;
 
 /// Maximum object position an SPR PDO should be in.
@@ -95,7 +95,7 @@ impl SinkDPM for DummySinkEprDevice {
         use crate::protocol_layer::message::data::source_capabilities::PowerDataObject;
 
         // Use the spec-compliant epr_pdos() method to get EPR PDOs at positions 8+
-        // Per USB PD Spec R3.2 Section 6.5.15.1, EPR PDOs always start at position 8
+        // Per PD 3.2 Sec. 6.5.15.1, EPR PDOs always start at position 8
         let first_epr_pdo = source_capabilities
             .epr_pdos()
             .filter(|(_, pdo)| !pdo.is_zero_padding())
