@@ -172,6 +172,10 @@ jobs:
             features: serde,defmt
           - crate: usbpd-traits
             features: defmt
+    env:
+      # `-Zminimal-versions` is nightly-only cargo; pin it explicitly so the
+      # pinned channel in rust-toolchain.toml cannot flip this job to stable.
+      RUSTUP_TOOLCHAIN: nightly
     steps:
       - name: Checkout sources
         uses: actions/checkout@v7
