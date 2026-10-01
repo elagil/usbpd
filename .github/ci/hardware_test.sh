@@ -22,7 +22,7 @@ LOG_A=$(mktemp)
 LOG_B=$(mktemp)
 ERR_A=$(mktemp)
 ERR_B=$(mktemp)
-trap 'kill -9 "$PID_A" "$PID_B" 2>/dev/null; rm -f "$LOG_A" "$LOG_B" "$ERR_A" "$ERR_B"' EXIT
+trap 'kill -9 "$PID_A" "$PID_B" 2>/dev/null || true; rm -f "$LOG_A" "$LOG_B" "$ERR_A" "$ERR_B"' EXIT
 
 # Flash & run the initiator on board A.
 probe-rs attach --chip "$CHIP" --probe "$PROBE_VID_PID:$PROBE_A" "$INITIATOR_ELF" \
