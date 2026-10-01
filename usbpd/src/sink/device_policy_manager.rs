@@ -6,6 +6,7 @@ use core::future::Future;
 
 use crate::protocol_layer::message::data::{epr_mode, request, sink_capabilities, source_capabilities};
 use crate::units::Power;
+use crate::{DataRole, SwapType};
 
 /// Events that the device policy manager can send to the policy engine.
 #[derive(Debug)]
@@ -17,34 +18,66 @@ pub enum Event {
     /// Request EPR source capabilities (when already in EPR mode).
     ///
     /// Sends EprGetSourceCap extended control message.
-    /// See [8.3.3.8.1]
+    /// Per PD 3.2 Sec. 8.3.3.8.1.
     RequestEprSourceCapabilities,
     /// Enter EPR mode with the specified operational PDP.
     ///
     /// Initiates EPR mode entry sequence (EPR_Mode Enter -> EnterAcknowledged -> EnterSucceeded).
     /// After successful entry, source automatically sends EPR_Source_Capabilities.
     ///
-    /// Per USB PD spec 6.4.10, the Data field in EPR_Mode(Enter) shall be set to the
+    /// Per PD 3.2 Sec. 6.4.10, the Data field in EPR_Mode(Enter) shall be set to the
     /// EPR Sink Operational PDP. For example, a 28V × 5A = 140W device should pass 140W.
     ///
-    /// See spec Table 8.39: "Steps for Entering EPR Mode (Success)"
+    /// Per PD 3.2 Tab. 8.39, "Steps for Entering EPR Mode (Success)"
     EnterEprMode(Power),
     /// Exit EPR mode (sink-initiated).
     ///
     /// Sends EPR_Mode (Exit) message to source, then waits for Source_Capabilities.
     /// After receiving caps, negotiation proceeds as normal SPR negotiation.
-    /// See spec Table 8.46: "Steps for Exiting EPR Mode (Sink Initiated)"
+    /// Per PD 3.2 Tab. 8.46, "Steps for Exiting EPR Mode (Sink Initiated)"
     ExitEprMode,
     /// Request a certain power level.
     RequestPower(request::PowerSource),
+    /// Indicate that a Vconn swap needs to be done
+    RequestVconnSwap,
+    /// **DRP** Request that a data role swap be done
+    RequestDataRoleSwap,
+    /// **DRP** Request that a power role swap be done
+    RequestPowerRoleSwap,
+    /// **DRP** Indicate that a fast power role swap needs to be attempted
+    /// due to the CC line going low
+    FastPowerRoleSwap,
 }
+
+/// Information that the policy engine will publish to the DPM
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[non_exhaustive]
+pub enum Info {
+    /// Request is not supported by the Source
+    NotSupportedReceived,
+    /// A requested `Get_Source_Cap` response timed out without capabilities
+    /// (per PD 3.2 Sec. 8.3.3.3.12, the DPM Shall be informed of the outcome).
+    GetSourceCapTimeout,
+    /// No special information (because `SourceCapabilities` is always sent)
+    None,
+}
+
+// FIXME: Use trait aliasing once stable: https://github.com/rust-lang/rust/issues/41517
+/// Full implementation for the sink device policy manager.
+/// The default implementations of the traits will handle the case where a feature is unsupported.
+pub trait SinkDpm: DevicePolicyManager + EprDevicePolicyManager + DrpDevicePolicyManager {}
 
 /// Trait for the device policy manager.
 ///
 /// This entity commands the policy engine and enforces device policy.
 pub trait DevicePolicyManager {
     /// Inform the device about source capabilities, e.g. after a request.
-    fn inform(&mut self, _source_capabilities: &source_capabilities::SourceCapabilities) -> impl Future<Output = ()> {
+    fn inform(
+        &mut self,
+        _source_capabilities: &source_capabilities::SourceCapabilities,
+        _info: Info,
+    ) -> impl Future<Output = ()> {
         async {}
     }
 
@@ -74,7 +107,7 @@ pub trait DevicePolicyManager {
 
     /// Notify the device that a hard reset has occurred.
     ///
-    /// Per USB PD Spec R3.2 Section 8.3.3.3.9, on entry to PE_SNK_Transition_to_default:
+    /// Per PD 3.2 Sec. 8.3.3.3.9, on entry to PE_SNK_Transition_to_default:
     /// - The sink shall transition to default power level (vSafe5V)
     /// - Local hardware should be reset
     /// - Port data role should be set to UFP
@@ -85,25 +118,9 @@ pub trait DevicePolicyManager {
         async {}
     }
 
-    /// Notify the device that EPR mode entry failed.
-    ///
-    /// Per USB PD Spec R3.2 Section 8.3.3.26.2.1, when the source responds with
-    /// EPR_Mode (Enter Failed), the sink transitions to soft reset. This callback
-    /// informs the DPM of the failure reason before the soft reset occurs.
-    ///
-    /// The failure reasons are defined in Table 6.50 and include:
-    /// - Cable not EPR capable
-    /// - Source failed to become VCONN source
-    /// - EPR capable bit not set in RDO
-    /// - Source unable to enter EPR mode (sink may retry later)
-    /// - EPR capable bit not set in PDO
-    fn epr_mode_entry_failed(&mut self, _reason: epr_mode::DataEnterFailed) -> impl Future<Output = ()> {
-        async {}
-    }
-
     /// Get the sink's power capabilities.
     ///
-    /// Per USB PD Spec R3.2 Section 6.4.1.6, sinks respond to Get_Sink_Cap messages
+    /// Per PD 3.2 Sec. 6.4.1.6, sinks respond to Get_Sink_Cap messages
     /// with a Sink_Capabilities message containing PDOs describing what power levels
     /// the sink can operate at.
     ///
@@ -112,6 +129,16 @@ pub trait DevicePolicyManager {
     fn sink_capabilities(&self) -> sink_capabilities::SinkCapabilities {
         // Default: 5V @ 100mA (1A = 100 * 10mA)
         sink_capabilities::SinkCapabilities::new_vsafe5v_only(100)
+    }
+
+    /// Evaluate whether a vconn swap can be done by the device or not.
+    fn evaluate_vconn_swap_request(&mut self) -> impl Future<Output = bool> {
+        async { false }
+    }
+
+    /// Set port to drive VCONN to 5V (true) or not (false)
+    fn drive_vconn(&mut self, _on: bool) -> impl Future<Output = Result<(), ()>> {
+        async { Ok(()) }
     }
 
     /// The policy engine gets and evaluates device policy events when ready.
@@ -129,5 +156,71 @@ pub trait DevicePolicyManager {
         _source_capabilities: &source_capabilities::SourceCapabilities,
     ) -> impl Future<Output = Event> {
         async { core::future::pending().await }
+    }
+}
+
+/// **EPR** Extended Power Range device implementations
+///
+/// Leave blank if the device does not support EPR.
+pub trait EprDevicePolicyManager {
+    /// Notify the device that EPR mode entry failed.
+    ///
+    /// Per PD 3.2 Sec. 8.3.3.26.2.1, when the source responds with
+    /// EPR_Mode (Enter Failed), the sink transitions to soft reset. This callback
+    /// informs the DPM of the failure reason before the soft reset occurs.
+    ///
+    /// The failure reasons are defined in PD 3.2 Tab. 6.50 and include:
+    /// - Cable not EPR capable
+    /// - Source failed to become VCONN source
+    /// - EPR capable bit not set in RDO
+    /// - Source unable to enter EPR mode (sink may retry later)
+    /// - EPR capable bit not set in PDO
+    fn epr_mode_entry_failed(&mut self, _reason: epr_mode::DataEnterFailed) -> impl Future<Output = ()> {
+        async {}
+    }
+}
+
+/// **DRP** Dual Role Sink Port device implementations
+///
+/// Leave blank if the device is not a DRP.
+pub trait DrpDevicePolicyManager {
+    /// **DRP** Evaluate a swap request
+    fn evaluate_swap_request(&mut self, _swap_request: SwapType) -> impl Future<Output = bool> {
+        async { false }
+    }
+
+    /// **DRP** Disable/Enable Fast Role Swap Receiver
+    ///
+    /// A DRP Sink is expected to detect when the CC line indicates a
+    /// `Fast Role Swap`. During regular `Power Role` swaps, this will
+    /// be called to disable the detection to avoid false positives.
+    fn set_fr_swap_detect(_enable: bool) -> impl Future<Output = ()> {
+        async {}
+    }
+
+    /// **DRP** Turn the Sink off.
+    ///
+    /// This will be requested during a Power Role Swap to Source.
+    fn disable(&mut self) -> impl Future<Output = ()> {
+        async {}
+    }
+
+    /// **DRP** Swap the CC pins to the `Source` configuration.
+    ///
+    /// This will be requested during a Power Role Swap to Source.
+    fn cc_source(&mut self) -> impl Future<Output = ()> {
+        async {}
+    }
+
+    /// **DRP** Turn on the Source. Return once `Vbus` is at `vSafe5V`.
+    ///
+    /// This will be requested during a Power Role Swap to Source.
+    fn source_on(&mut self) -> impl Future<Output = ()> {
+        async {}
+    }
+
+    /// **DRP** Swap data role.
+    fn swap_data_role(&mut self, _role: DataRole) -> impl Future<Output = ()> {
+        async {}
     }
 }

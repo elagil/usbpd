@@ -5,7 +5,7 @@ use embassy_futures::select::{Either3, select3};
 use uom::si::power::watt;
 use usbpd_traits::Driver;
 
-use super::device_policy_manager::DevicePolicyManager;
+use super::device_policy_manager::{Event, Info, SinkDpm};
 use crate::counters::Counter;
 use crate::protocol_layer::message::data::epr_mode::{self, Action};
 use crate::protocol_layer::message::data::request::PowerSource;
@@ -17,9 +17,8 @@ use crate::protocol_layer::message::header::{
 };
 use crate::protocol_layer::message::{Payload, extended};
 use crate::protocol_layer::{ProtocolError, RxError, SinkProtocolLayer, TxError};
-use crate::sink::device_policy_manager::Event;
 use crate::timers::{Timer, TimerType};
-use crate::{DataRole, PowerRole, units};
+use crate::{Contract, DataRole, PolicyEngineResult, PowerRole, RunResult, SwapType, units};
 
 #[cfg(test)]
 mod tests;
@@ -31,15 +30,6 @@ enum Mode {
     Spr,
     /// A Power Delivery mode of operation where maximum allowable voltage is 48V.
     Epr,
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-enum Contract {
-    #[default]
-    Safe5V,
-    _Implicit, // FIXME: Only present after fast role swap, yet unsupported. Limited to max. type C current.
-    TransitionToExplicit,
-    Explicit,
 }
 
 /// Sink states.
@@ -55,30 +45,106 @@ enum State {
     TransitionSink(request::PowerSource),
     /// Ready state. The bool indicates if we entered due to receiving a Wait message,
     /// which requires running SinkRequestTimer before allowing re-request.
-    Ready(request::PowerSource, bool),
-    SendNotSupported(request::PowerSource),
+    Ready(bool),
+    SendNotSupported,
+    NotSupportedReceived,
     SendSoftReset,
     SoftReset,
     HardReset,
     TransitionToDefault,
     /// Give sink capabilities. The Mode indicates whether to send Sink_Capabilities (Spr)
-    /// or EPR_Sink_Capabilities (Epr) per spec 8.3.3.3.10.
-    GiveSinkCap(Mode, request::PowerSource),
-    GetSourceCap(Mode, request::PowerSource),
+    /// or EPR_Sink_Capabilities (Epr) per PD 3.2 Sec. 8.3.3.3.10.
+    GiveSinkCap(Mode),
+    GetSourceCap(Mode),
+    /// 8.3.3.19 Dual-Role Port (DRP) States
+    DrpSwap(SwapState),
+    /// 8.3.3.20 Vconn Swap
+    VconnSwap(VcsState),
+    /// EPR states
+    EprMode(EprState),
+    /// Custom state to signal exit out of sink to source from a power swap
+    PrSwapToSourceStartup,
+    ErrorRecovery,
+}
 
-    // EPR states
-    EprModeEntry(request::PowerSource, units::Power),
-    EprEntryWaitForResponse(request::PowerSource),
-    EprWaitForCapabilities(request::PowerSource),
-    EprSendExit,
-    EprExitReceived(request::PowerSource),
-    EprKeepAlive(request::PowerSource),
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+/// Dual Role Port Swap States
+enum SwapState {
+    Data(DataRoleSwap),
+    Power(PowerRoleSwap),
+    FastPower(FastPowerRoleSwap),
+}
+
+/// State during a Data Role Swap execution (for both directions)
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+enum DataRoleSwap {
+    Evaluate,
+    Accept,
+    Change,
+    Send,
+    Reject,
+}
+
+/// State during a Power Role Swap execution
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+enum PowerRoleSwap {
+    Evaluate,
+    Accept,
+    TransitionToOff,
+    AssertRp,
+    SourceOn,
+    Send,
+    Reject,
+}
+
+/// State during a Fast Power Role Swap execution
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+enum FastPowerRoleSwap {
+    // TODO: Determine how to best poll & enter FrSwaps
+    #[allow(unused)]
+    Start,
+    Send,
+    TransitionToOff,
+    VbusApplied,
+    AssertRp,
+    SourceOn,
+}
+
+/// PD 3.2 Sec. 8.3.3.20 Vconn Swap. State during a Vconn Swap execution
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+enum VcsState {
+    SendSwap,
+    EvaluateSwap,
+    AcceptSwap,
+    RejectSwap,
+    WaitForVconn,
+    TurnOffVconn,
+    TurnOnVconn,
+    SendPsRdy,
+    // FIXME: For now, forcing a different state traversla, resulting in this being unused
+    #[allow(unused)]
+    ForceVconn,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum EprState {
+    Entry(units::Power),
+    EntryWaitForResponse,
+    WaitForCapabilities,
+    SendExit,
+    ExitReceived,
+    KeepAlive,
 }
 
 /// Implementation of the sink policy engine.
-/// See spec, [8.3.3.3]
+/// Per PD 3.2 Sec. 8.3.3.3.
 #[derive(Debug)]
-pub struct Sink<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> {
+pub struct Sink<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> {
     device_policy_manager: DPM,
     protocol_layer: SinkProtocolLayer<DRIVER, TIMER>,
     contract: Contract,
@@ -87,10 +153,12 @@ pub struct Sink<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> {
     mode: Mode,
     state: State,
     /// Tracks whether a Get_Source_Cap request is pending.
-    /// Per USB PD Spec R3.2 Section 8.3.3.3.8, in EPR mode, receiving a
+    /// Per PD 3.2 Sec. 8.3.3.3.8, in EPR mode, receiving a
     /// Source_Capabilities message that was not requested via Get_Source_Cap
     /// shall trigger a Hard Reset.
     get_source_cap_pending: bool,
+    dual_role: bool,
+    vconn_source: bool,
 
     _timer: PhantomData<TIMER>,
 }
@@ -101,6 +169,8 @@ pub struct Sink<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> {
 pub enum Error {
     /// The port partner is unresponsive.
     PortPartnerUnresponsive,
+    /// Entered ErrorRecovery mode. This requests a disconnect.
+    ReconnectionRequired,
     /// A protocol error has occured.
     Protocol(ProtocolError),
 }
@@ -111,7 +181,7 @@ impl From<ProtocolError> for Error {
     }
 }
 
-impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER, DPM> {
+impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
     /// Create a fresh protocol layer with initial state.
     fn new_protocol_layer(driver: DRIVER) -> SinkProtocolLayer<DRIVER, TIMER> {
         let header = Header::new_template(DataRole::Ufp, PowerRole::Sink, SpecificationRevision::R3_X);
@@ -129,6 +199,25 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
             source_capabilities: None,
             mode: Mode::Spr,
             get_source_cap_pending: false,
+            dual_role: false,
+            vconn_source: false,
+            _timer: PhantomData,
+        }
+    }
+
+    /// Create a new dual role sink policy engine with a given `driver`.
+    pub fn new_dual_role(driver: DRIVER, device_policy_manager: DPM) -> Self {
+        Self {
+            device_policy_manager,
+            protocol_layer: Self::new_protocol_layer(driver),
+            state: State::Discovery,
+            contract: Default::default(),
+            hard_reset_counter: Counter::new(crate::counters::CounterType::HardReset),
+            source_capabilities: None,
+            mode: Mode::Spr,
+            get_source_cap_pending: false,
+            dual_role: true,
+            vconn_source: false,
             _timer: PhantomData,
         }
     }
@@ -138,95 +227,158 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
         self.protocol_layer = Self::new_protocol_layer(driver);
     }
 
+    /// Consume the policy engine and return the inner PHY driver and DPM
+    pub fn deconstruct(self) -> (DRIVER, DPM) {
+        (self.protocol_layer.deconstruct(), self.device_policy_manager)
+    }
+
     /// Run a single step in the policy engine state machine.
-    async fn run_step(&mut self) -> Result<(), Error> {
-        let result = self.update_state().await;
-        if result.is_ok() {
-            return Ok(());
-        }
+    async fn run_step(&mut self) -> Result<PolicyEngineResult, Error> {
+        match self.update_state().await {
+            Ok(result) => Ok(result),
+            Err(Error::Protocol(protocol_error)) => {
+                let new_state = match (&self.mode, &self.state, protocol_error) {
+                    (_, State::DrpSwap(SwapState::FastPower(_)), _) => {
+                        // Any errors after a `Fast Power Swap` has been asserted propogate to `ErrorRecovery`
+                        // This is because the `Source` lost power before the fast swapping `Sink` could keep it alive.
+                        Some(State::ErrorRecovery)
+                    }
 
-        if let Err(Error::Protocol(protocol_error)) = result {
-            let new_state = match (&self.mode, &self.state, protocol_error) {
-                // Handle when hard reset is signaled by the driver itself.
-                (_, _, ProtocolError::RxError(RxError::HardReset) | ProtocolError::TxError(TxError::HardReset)) => {
-                    Some(State::TransitionToDefault)
+                    // Handle when hard reset is signaled by the driver itself.
+                    (_, _, ProtocolError::RxError(RxError::HardReset) | ProtocolError::TxError(TxError::HardReset)) => {
+                        Some(State::TransitionToDefault)
+                    }
+
+                    // Handle when soft reset is signaled by the driver itself.
+                    (_, _, ProtocolError::RxError(RxError::SoftReset)) => Some(State::SoftReset),
+
+                    // Per PD 3.2 Sec. 6.3.13: If the Soft_Reset Message fails, a Hard Reset shall be initiated.
+                    // This handles the case where we're trying to send/receive a soft reset and it fails.
+                    (_, State::SoftReset | State::SendSoftReset, ProtocolError::TransmitRetriesExceeded(_)) => {
+                        Some(State::HardReset)
+                    }
+
+                    // Per PD 3.2 Sec. 8.3.3.4.2.1: A SenderResponseTimer timeout during the
+                    // Soft Reset process transitions to Hard Reset.
+                    (_, State::SendSoftReset, ProtocolError::RxError(RxError::ReceiveTimeout)) => {
+                        Some(State::HardReset)
+                    }
+
+                    // Per PD 3.2 Sec. 6.6.3.2: In EPR mode, tTypeCSinkWaitCap timeout Shall
+                    // issue Hard Reset Signaling to exit EPR Mode.
+                    (
+                        _,
+                        State::EprMode(EprState::WaitForCapabilities),
+                        ProtocolError::RxError(RxError::ReceiveTimeout),
+                    ) => Some(State::HardReset),
+
+                    // Per PD 3.2 Sec. 8.3.3.26.2.1: The SenderResponseTimer or
+                    // SinkEPREnterTimer timing out during EPR Mode entry transitions
+                    // to Send_Soft_Reset.
+                    (
+                        _,
+                        State::EprMode(EprState::Entry(_) | EprState::EntryWaitForResponse),
+                        ProtocolError::RxError(RxError::ReceiveTimeout),
+                    ) => Some(State::SendSoftReset),
+
+                    // Per PD 3.2 Sec. 8.3.3.19.4.4: A PSSourceOffTimer timeout transitions
+                    // to ErrorRecovery.
+                    (
+                        _,
+                        State::DrpSwap(SwapState::Power(PowerRoleSwap::TransitionToOff)),
+                        ProtocolError::RxError(RxError::ReceiveTimeout),
+                    ) => Some(State::ErrorRecovery),
+
+                    // Per PD 3.2 Sec. 8.3.3.19.4.6: If PS_RDY is not sent after retries, a
+                    // Soft Reset Shall Not be initiated; transition to ErrorRecovery.
+                    (
+                        _,
+                        State::DrpSwap(SwapState::Power(PowerRoleSwap::SourceOn)),
+                        ProtocolError::TransmitRetriesExceeded(_),
+                    ) => Some(State::ErrorRecovery),
+
+                    // Per PD 3.2 Sec. 8.3.3.3.3: SinkWaitCapTimer timeout triggers Hard Reset.
+                    (_, State::WaitForCapabilities, ProtocolError::RxError(RxError::ReceiveTimeout)) => {
+                        Some(State::HardReset)
+                    }
+
+                    // Per PD 3.2 Sec. 8.3.3.3.5: SenderResponseTimer timeout triggers Hard Reset.
+                    (_, State::SelectCapability(_), ProtocolError::RxError(RxError::ReceiveTimeout)) => {
+                        Some(State::HardReset)
+                    }
+
+                    // Per PD 3.2 Sec. 8.3.3.3.6 and Tab. 6.72:
+                    // Any Protocol error during power transition (PE_SNK_Transition_Sink state)
+                    // shall trigger a Hard Reset, not a Soft Reset.
+                    (_, State::TransitionSink(_), _) => Some(State::HardReset),
+
+                    (
+                        _,
+                        State::DrpSwap(SwapState::Power(PowerRoleSwap::Send)),
+                        ProtocolError::RxError(RxError::ReceiveTimeout),
+                    ) => Some(State::Ready(false)),
+
+                    (_, State::VconnSwap(VcsState::SendSwap), ProtocolError::RxError(RxError::ReceiveTimeout)) => {
+                        Some(State::Ready(false))
+                    }
+
+                    // Unexpected messages indicate a protocol error and demand a soft reset.
+                    // Per PD 3.2 Sec. 6.8.1, Tab. 6.72 (for non-power-transitioning states).
+                    // Note: This must come AFTER TransitionSink check above.
+                    (_, _, ProtocolError::UnexpectedMessage) => Some(State::SendSoftReset),
+
+                    // Per PD 3.2 Tab. 6.72: Unsupported messages in Ready state get Not_Supported response.
+                    (_, State::Ready(_), ProtocolError::RxError(RxError::UnsupportedMessage)) => {
+                        Some(State::SendNotSupported)
+                    }
+
+                    // Per PD 3.2 Sec. 6.6.9.1: Transmission failure (no GoodCRC after retries) triggers Soft Reset.
+                    // Note: If we're in SoftReset/SendSoftReset state, this is caught above and escalates to Hard Reset.
+                    (_, _, ProtocolError::TransmitRetriesExceeded(_)) => Some(State::SendSoftReset),
+
+                    // Unhandled protocol errors - log and continue.
+                    // Note: Unrequested Source_Capabilities in EPR mode is handled in Ready state
+                    // by checking get_source_cap_pending flag (per PD 3.2 Sec. 8.3.3.3.8).
+                    (_, _, error) => {
+                        error!("Protocol error {:?} in sink state transition", error);
+                        None
+                    }
+                };
+
+                if let Some(state) = new_state {
+                    self.state = state
                 }
 
-                // Handle when soft reset is signaled by the driver itself.
-                (_, _, ProtocolError::RxError(RxError::SoftReset)) => Some(State::SoftReset),
-
-                // Per spec 6.3.13: If the Soft_Reset Message fails, a Hard Reset shall be initiated.
-                // This handles the case where we're trying to send/receive a soft reset and it fails.
-                (_, State::SoftReset | State::SendSoftReset, ProtocolError::TransmitRetriesExceeded(_)) => {
-                    Some(State::HardReset)
-                }
-
-                // Per spec 8.3.3.3.3: SinkWaitCapTimer timeout triggers Hard Reset.
-                (_, State::WaitForCapabilities, ProtocolError::RxError(RxError::ReceiveTimeout)) => {
-                    Some(State::HardReset)
-                }
-
-                // Per spec 8.3.3.3.5: SenderResponseTimer timeout triggers Hard Reset.
-                (_, State::SelectCapability(_), ProtocolError::RxError(RxError::ReceiveTimeout)) => {
-                    Some(State::HardReset)
-                }
-
-                // Per USB PD Spec R3.2 Section 8.3.3.3.6 and Table 6.72:
-                // Any Protocol Error during power transition (PE_SNK_Transition_Sink state)
-                // shall trigger a Hard Reset, not a Soft Reset.
-                (_, State::TransitionSink(_), _) => Some(State::HardReset),
-
-                // Unexpected messages indicate a protocol error and demand a soft reset.
-                // Per spec 6.8.1 Table 6.72 (for non-power-transitioning states).
-                // Note: This must come AFTER TransitionSink check above.
-                (_, _, ProtocolError::UnexpectedMessage) => Some(State::SendSoftReset),
-
-                // Per spec Table 6.72: Unsupported messages in Ready state get Not_Supported response.
-                (_, State::Ready(power_source, _), ProtocolError::RxError(RxError::UnsupportedMessage)) => {
-                    Some(State::SendNotSupported(*power_source))
-                }
-
-                // Per spec 6.6.9.1: Transmission failure (no GoodCRC after retries) triggers Soft Reset.
-                // Note: If we're in SoftReset/SendSoftReset state, this is caught above and escalates to Hard Reset.
-                (_, _, ProtocolError::TransmitRetriesExceeded(_)) => Some(State::SendSoftReset),
-
-                // Unhandled protocol errors - log and continue.
-                // Note: Unrequested Source_Capabilities in EPR mode is handled in Ready state
-                // by checking get_source_cap_pending flag (per spec 8.3.3.3.8).
-                (_, _, error) => {
-                    error!("Protocol error {:?} in sink state transition", error);
-                    None
-                }
-            };
-
-            if let Some(state) = new_state {
-                self.state = state
+                Ok(PolicyEngineResult::Continue)
             }
-
-            Ok(())
-        } else {
-            error!("Unrecoverable result {:?} in sink state transition", result);
-            result
+            Err(err) => {
+                error!("Unrecoverable error {:?} in sink state transition", err);
+                Err(err)
+            }
         }
     }
 
     /// Run the sink's state machine continuously.
     ///
     /// The loop is only broken for unrecoverable errors, for example if the port partner is unresponsive.
-    pub async fn run(&mut self) -> Result<(), Error> {
+    pub async fn run(&mut self) -> Result<RunResult, Error> {
         loop {
-            self.run_step().await?;
+            let step_result = self.run_step().await?;
+
+            if let PolicyEngineResult::Exit(run_result) = step_result {
+                return Ok(run_result);
+            }
         }
     }
 
     /// Wait for source capabilities message (either Source_Capabilities or EPR_Source_Capabilities).
     ///
-    /// Per USB PD Spec R3.2 Section 8.3.3.3.3 (PE_SNK_Wait_for_Capabilities):
+    /// Per PD 3.2 Sec. 8.3.3.3.3 (PE_SNK_Wait_for_Capabilities):
     /// - In SPR Mode: Source_Capabilities Message is received
     /// - In EPR Mode: EPR_Source_Capabilities Message is received
     ///
-    /// EPR Mode persists through Soft Reset (unlike Hard Reset which exits EPR per spec 6.8.3.2).
-    /// Per spec section 6.4.1.2.2, after a Soft Reset while in EPR Mode, the source sends
+    /// EPR Mode persists through Soft Reset (unlike Hard Reset which exits EPR per PD 3.2 Sec. 6.8.3.2).
+    /// Per PD 3.2 Sec. 6.4.1.2.2, after a Soft Reset while in EPR Mode, the source sends
     /// EPR_Source_Capabilities. Therefore this function must handle both message types.
     async fn wait_for_source_capabilities(
         protocol_layer: &mut SinkProtocolLayer<DRIVER, TIMER>,
@@ -237,13 +389,13 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
         let capabilities = match message.payload {
             Some(Payload::Data(Data::SourceCapabilities(caps))) => caps,
             Some(Payload::Extended(extended::Extended::EprSourceCapabilities(pdos))) => SourceCapabilities(pdos),
-            _ => unreachable!(),
+            _ => return Err(Error::Protocol(ProtocolError::UnexpectedMessage)),
         };
 
         Ok(capabilities)
     }
 
-    async fn update_state(&mut self) -> Result<(), Error> {
+    async fn update_state(&mut self) -> Result<PolicyEngineResult, Error> {
         let new_state = match &self.state {
             State::Startup => {
                 self.contract = Default::default();
@@ -300,11 +452,11 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     (Contract::Safe5V, ControlMessageType::Wait | ControlMessageType::Reject) => {
                         State::WaitForCapabilities
                     }
-                    (Contract::Explicit, ControlMessageType::Reject) => State::Ready(*power_source, false),
-                    (Contract::Explicit, ControlMessageType::Wait) => {
-                        // Per spec 8.3.3.3.7: On entry to Ready as result of Wait,
+                    (Contract::Explicit(_), ControlMessageType::Reject) => State::Ready(false),
+                    (Contract::Explicit(_), ControlMessageType::Wait) => {
+                        // Per PD 3.2 Sec. 8.3.3.3.7: On entry to Ready as result of Wait,
                         // initialize and run SinkRequestTimer.
-                        State::Ready(*power_source, true)
+                        State::Ready(true)
                     }
                     _ => unreachable!(),
                 }
@@ -322,24 +474,27 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
 
                 self.contract = Contract::TransitionToExplicit;
                 self.device_policy_manager.transition_power(power_source).await;
-                State::Ready(*power_source, false)
+                self.contract = Contract::Explicit(*power_source);
+                State::Ready(false)
             }
-            State::Ready(power_source, after_wait) => {
+            State::Ready(after_wait) => {
                 // TODO: Entry: Init. and run DiscoverIdentityTimer(4)
                 // TODO: Entry: Send GetSinkCap message if sink supports fast role swap
                 // TODO: Exit: If initiating an AMS, notify protocol layer
                 //
                 // Timers implemented:
-                // - SinkRequestTimer: Per spec 8.3.3.3.7, after receiving Wait, wait tSinkRequest
+                // - SinkRequestTimer: Per PD 3.2 Sec. 8.3.3.3.7, after receiving Wait, wait tSinkRequest
                 //   before allowing re-request. On timeout, transition to SelectCapability.
                 // - SinkPPSPeriodicTimer: triggers SelectCapability in SPR PPS mode
                 // - SinkEPRKeepAliveTimer: triggers EprKeepAlive in EPR mode
-                self.contract = Contract::Explicit;
 
                 let receive_fut = self.protocol_layer.receive_message();
                 let event_fut = self
                     .device_policy_manager
                     .get_event(self.source_capabilities.as_ref().unwrap());
+                let Contract::Explicit(power_source) = self.contract else {
+                    unreachable!();
+                };
                 let pps_periodic_fut = async {
                     match power_source {
                         PowerSource::Pps(_) => TimerType::get_timer::<TIMER>(TimerType::SinkPPSPeriodic).await,
@@ -352,9 +507,9 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                         Mode::Spr => core::future::pending().await,
                     }
                 };
-                // Per spec 8.3.3.3.7: SinkRequestTimer runs concurrently when re-entering
+                // Per PD 3.2 Sec. 8.3.3.3.7: SinkRequestTimer runs concurrently when re-entering
                 // Ready after a Wait response. On timeout, transition to SelectCapability.
-                // Per spec 6.6.4.1: Ensures minimum tSinkRequest (100ms) delay before re-request.
+                // Per PD 3.2 Sec. 6.6.4.1: Ensures minimum tSinkRequest (100ms) delay before re-request.
                 let sink_request_fut = async {
                     if *after_wait {
                         TimerType::get_timer::<TIMER>(TimerType::SinkRequest).await
@@ -371,18 +526,20 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
 
                         match message.header.message_type() {
                             MessageType::Data(DataMessageType::SourceCapabilities) => {
-                                // Per USB PD Spec R3.2 Section 8.3.3.3.8:
+                                // Per PD 3.2 Sec. 8.3.3.3.8:
                                 // In EPR Mode, if a Source_Capabilities Message is received that
                                 // has not been requested using a Get_Source_Cap Message, trigger Hard Reset.
                                 if self.mode == Mode::Epr && !self.get_source_cap_pending {
                                     State::HardReset
                                 } else {
-                                    let Some(Payload::Data(Data::SourceCapabilities(capabilities))) = message.payload
-                                    else {
-                                        unreachable!()
-                                    };
                                     self.get_source_cap_pending = false;
-                                    State::EvaluateCapabilities(capabilities)
+                                    // Send `Not_Supported` per PD 3.2 Tab. 6.72 and resume.
+                                    match message.payload {
+                                        Some(Payload::Data(Data::SourceCapabilities(capabilities))) => {
+                                            State::EvaluateCapabilities(capabilities)
+                                        }
+                                        _ => State::SendNotSupported,
+                                    }
                                 }
                             }
                             MessageType::Extended(ExtendedMessageType::EprSourceCapabilities) => {
@@ -392,68 +549,102 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                                     self.get_source_cap_pending = false;
                                     let caps = SourceCapabilities(pdos);
 
-                                    // Per spec 8.3.3.3.8: In EPR Mode, if EPR_Source_Capabilities
-                                    // contains an EPR (A)PDO in positions 1-7 → Hard Reset
+                                    // Per PD 3.2 Sec. 8.3.3.3.8: In EPR Mode, if `EPR_Source_Capabilities` contains an
+                                    // EPR (A)PDO in positions 1-7, do a Hard Reset
                                     if self.mode == Mode::Epr && caps.has_epr_pdo_in_spr_positions() {
                                         State::HardReset
                                     } else {
                                         State::EvaluateCapabilities(caps)
                                     }
                                 } else {
-                                    unreachable!()
+                                    // Malformed `EPR_Source_Capabilities` payload.
+                                    State::HardReset
                                 }
                             }
                             MessageType::Data(DataMessageType::EprMode) => {
                                 // Handle source exit notification.
-                                State::EprExitReceived(*power_source)
+                                State::EprMode(EprState::ExitReceived)
                             }
-                            // Per spec 8.3.3.3.7: Get_Sink_Cap → GiveSinkCap (send Sink_Capabilities)
-                            MessageType::Control(ControlMessageType::GetSinkCap) => {
-                                State::GiveSinkCap(Mode::Spr, *power_source)
+                            MessageType::Control(ControlMessageType::PrSwap) => match self.dual_role {
+                                true => State::DrpSwap(SwapState::Power(PowerRoleSwap::Evaluate)),
+                                false => State::SendNotSupported,
+                            },
+                            MessageType::Control(ControlMessageType::DrSwap) => match self.dual_role {
+                                true => State::DrpSwap(SwapState::Data(DataRoleSwap::Evaluate)),
+                                false => State::SendNotSupported,
+                            },
+                            // Per PD 3.2 Sec. 8.3.3.3.7: Get_Sink_Cap → GiveSinkCap (send Sink_Capabilities)
+                            MessageType::Control(ControlMessageType::GetSinkCap) => State::GiveSinkCap(Mode::Spr),
+                            MessageType::Control(ControlMessageType::VconnSwap) => {
+                                State::VconnSwap(VcsState::EvaluateSwap)
                             }
-                            // Per spec 8.3.3.3.7: EPR_Get_Sink_Cap → GiveSinkCap (send EPR_Sink_Capabilities)
+                            // Per PD 3.2 Sec. 8.3.3.3.7: EPR_Get_Sink_Cap → GiveSinkCap (send EPR_Sink_Capabilities)
                             MessageType::Extended(ExtendedMessageType::ExtendedControl) => {
                                 if let Some(Payload::Extended(extended::Extended::ExtendedControl(ctrl))) =
                                     &message.payload
                                 {
-                                    if ctrl.message_type() == ExtendedControlMessageType::EprGetSinkCap {
-                                        State::GiveSinkCap(Mode::Epr, *power_source)
+                                    // Per PD 3.2 Tab. 6.67, values not explicitly defined are `Reserved`, answer `Not_Supported`.
+                                    if matches!(ctrl.try_message_type(), Ok(ExtendedControlMessageType::EprGetSinkCap))
+                                    {
+                                        State::GiveSinkCap(Mode::Epr)
                                     } else {
-                                        State::SendNotSupported(*power_source)
+                                        State::SendNotSupported
                                     }
                                 } else {
-                                    State::SendNotSupported(*power_source)
+                                    State::SendNotSupported
                                 }
                             }
-                            _ => State::SendNotSupported(*power_source),
+                            _ => State::SendNotSupported,
                         }
                     }
                     // Event from device policy manager.
                     Either3::Second(event) => match event {
-                        Event::RequestSprSourceCapabilities => State::GetSourceCap(Mode::Spr, *power_source),
-                        Event::RequestEprSourceCapabilities => State::GetSourceCap(Mode::Epr, *power_source),
-                        Event::EnterEprMode(pdp) => State::EprModeEntry(*power_source, pdp),
-                        Event::ExitEprMode => State::EprSendExit,
+                        Event::RequestSprSourceCapabilities => State::GetSourceCap(Mode::Spr),
+                        Event::RequestEprSourceCapabilities => State::GetSourceCap(Mode::Epr),
+                        Event::EnterEprMode(pdp) => State::EprMode(EprState::Entry(pdp)),
+                        Event::ExitEprMode => State::EprMode(EprState::SendExit),
                         Event::RequestPower(power_source) => State::SelectCapability(power_source),
-                        Event::None => State::Ready(*power_source, false),
+                        Event::RequestVconnSwap => State::VconnSwap(VcsState::SendSwap),
+                        Event::FastPowerRoleSwap => {
+                            if self.dual_role {
+                                State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::Send))
+                            } else {
+                                State::ErrorRecovery
+                            }
+                        }
+                        Event::RequestPowerRoleSwap => State::DrpSwap(SwapState::Power(PowerRoleSwap::Send)),
+                        Event::RequestDataRoleSwap => State::DrpSwap(SwapState::Data(DataRoleSwap::Send)),
+                        Event::None => State::Ready(false),
                     },
                     // Timer timeout handling
                     Either3::Third(timeout_source) => match timeout_source {
                         // PPS periodic timeout -> select capability again as keep-alive.
-                        Either3::First(_) => State::SelectCapability(*power_source),
+                        Either3::First(_) => State::SelectCapability(power_source),
                         // EPR keep-alive timeout
-                        Either3::Second(_) => State::EprKeepAlive(*power_source),
+                        Either3::Second(_) => State::EprMode(EprState::KeepAlive),
                         // SinkRequest timeout -> re-request power after Wait response
-                        Either3::Third(_) => State::SelectCapability(*power_source),
+                        Either3::Third(_) => State::SelectCapability(power_source),
                     },
                 }
             }
-            State::SendNotSupported(power_source) => {
+            State::SendNotSupported => {
                 self.protocol_layer
                     .transmit_control_message(ControlMessageType::NotSupported)
                     .await?;
 
-                State::Ready(*power_source, false)
+                State::Ready(false)
+            }
+            State::NotSupportedReceived => {
+                let Some(source_caps) = self.source_capabilities.clone() else {
+                    return Err(Error::Protocol(ProtocolError::UnexpectedMessage));
+                };
+
+                // Per PD 3.2 Sec. 8.3.3.6.2.2, the DPM Shall be informed of the
+                // Not_Supported receipt.
+                self.device_policy_manager
+                    .inform(&source_caps, Info::NotSupportedReceived)
+                    .await;
+                State::Ready(false)
             }
             State::SendSoftReset => {
                 self.protocol_layer.reset();
@@ -472,16 +663,17 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 State::WaitForCapabilities
             }
             State::SoftReset => {
+                // Per PD 3.2 Sec. 6.8.1: reset MessageIDCounter/RetryCounter before the
+                // Accept response.
+                self.protocol_layer.reset();
                 self.protocol_layer
                     .transmit_control_message(ControlMessageType::Accept)
                     .await?;
 
-                self.protocol_layer.reset();
-
                 State::WaitForCapabilities
             }
             State::HardReset => {
-                // Per USB PD Spec R3.2 Section 8.3.3.3.8 (PE_SNK_Hard_Reset):
+                // Per PD 3.2 Sec. 8.3.3.3.8 (PE_SNK_Hard_Reset):
                 // Entry conditions:
                 // - PSTransitionTimer timeout (when HardResetCounter <= nHardResetCount)
                 // - Hard reset request from Device Policy Manager
@@ -492,7 +684,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 // On entry: Request Hard Reset Signaling AND increment HardResetCounter
 
                 // Increment counter first - returns Err when counter > nHardResetCount.
-                // Per spec 8.3.3.3.8: If HardResetCounter > nHardResetCount (> 2),
+                // Per PD 3.2 Sec. 8.3.3.3.8: If HardResetCounter > nHardResetCount (> 2),
                 // the Sink shall assume that the Source is non-responsive.
                 // With counter max_value = 3, we allow 3 hard reset attempts (counter 1, 2, 3)
                 // before wrap returns Err.
@@ -506,7 +698,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 State::TransitionToDefault
             }
             State::TransitionToDefault => {
-                // Per USB PD Spec R3.2 Section 8.3.3.3.9 (PE_SNK_Transition_to_default):
+                // Per PD 3.2 Sec. 8.3.3.3.9 (PE_SNK_Transition_to_default):
                 // This state is entered when:
                 // - Hard Reset Signaling is detected (received or transmitted)
                 // - From PE_SNK_Hard_Reset after hard reset is complete
@@ -522,10 +714,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 // Notify DPM about hard reset (DPM should transition to default power level)
                 self.device_policy_manager.hard_reset().await;
 
-                // Reset protocol layer (per spec 6.8.3: "Protocol Layers shall be reset as for Soft Reset")
+                // Reset protocol layer (per PD 3.2 Sec. 6.8.3: "Protocol Layers shall be reset as for Soft Reset")
                 self.protocol_layer.reset();
 
-                // Reset EPR mode (per spec 6.8.3.2: "Hard Reset shall cause EPR Mode to be exited")
+                // Reset EPR mode (per PD 3.2 Sec. 6.8.3.2: "Hard Reset shall cause EPR Mode to be exited")
                 self.mode = Mode::Spr;
 
                 // Reset contract to default
@@ -536,8 +728,8 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
 
                 State::Startup
             }
-            State::GiveSinkCap(response_mode, power_source) => {
-                // Per USB PD Spec R3.2 Section 8.3.3.3.10:
+            State::GiveSinkCap(response_mode) => {
+                // Per PD 3.2 Sec. 8.3.3.3.10:
                 // - Send Sink_Capabilities when Get_Sink_Cap was received
                 // - Send EPR_Sink_Capabilities when EPR_Get_Sink_Cap was received
                 let sink_caps = self.device_policy_manager.sink_capabilities();
@@ -550,17 +742,17 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     }
                 }
 
-                State::Ready(*power_source, false)
+                State::Ready(false)
             }
-            State::GetSourceCap(requested_mode, power_source) => {
-                // Per USB PD Spec R3.2 Section 8.3.3.3.12 (PE_SNK_Get_Source_Cap):
+            State::GetSourceCap(requested_mode) => {
+                // Per PD 3.2 Sec. 8.3.3.3.12 (PE_SNK_Get_Source_Cap):
                 // - Send Get_Source_Cap (SPR) or EPR_Get_Source_Cap (EPR)
                 // - Start SenderResponseTimer
                 // - On timeout or mode mismatch → Ready
                 // - On matching capabilities received → EvaluateCapabilities
                 //
                 // Set flag before sending to track that we requested source capabilities.
-                // Per spec 8.3.3.3.8, in EPR mode, receiving an unrequested
+                // Per PD 3.2 Sec. 8.3.3.3.8, in EPR mode, receiving an unrequested
                 // Source_Capabilities message triggers a Hard Reset.
                 self.get_source_cap_pending = true;
 
@@ -579,7 +771,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     }
                 };
 
-                // Per spec 8.3.3.3.12: Use SenderResponseTimer (not SinkWaitCap)
+                // Per PD 3.2 Sec. 8.3.3.3.12: Use SenderResponseTimer (not SinkWaitCap)
                 let result = self
                     .protocol_layer
                     .receive_message_type(
@@ -593,19 +785,23 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
 
                 self.get_source_cap_pending = false;
 
-                // Per spec 8.3.3.3.12: On timeout, inform DPM and transition to Ready
+                // Per PD 3.2 Sec. 8.3.3.3.12: On timeout, inform DPM and transition to Ready
                 let message = match result {
                     Ok(msg) => msg,
                     Err(ProtocolError::RxError(RxError::ReceiveTimeout)) => {
-                        // Inform DPM of timeout (no capabilities received)
+                        // Per PD 3.2 Sec. 8.3.3.3.12, the DPM Shall be informed of the
+                        // timeout outcome. Fall back to stale capabilities.
+                        if let Some(caps) = self.source_capabilities.as_ref() {
+                            self.device_policy_manager.inform(caps, Info::GetSourceCapTimeout).await;
+                        }
                         warn!("Get_Source_Cap timeout, returning to Ready");
-                        self.state = State::Ready(*power_source, false);
-                        return Ok(());
+                        self.state = State::Ready(false);
+                        return Ok(PolicyEngineResult::Continue);
                     }
                     Err(e) => return Err(e.into()),
                 };
 
-                // Per spec 8.3.3.3.12:
+                // Per PD 3.2 Sec. 8.3.3.3.12:
                 // - In SPR mode + SPR caps requested + Source_Capabilities received → EvaluateCapabilities
                 // - In EPR mode + EPR caps requested + EPR_Source_Capabilities received → EvaluateCapabilities
                 // - Mode mismatch (e.g., EPR mode but SPR caps requested) → Ready
@@ -627,30 +823,397 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     Some(Payload::Extended(extended::Extended::EprSourceCapabilities(pdos))) => {
                         SourceCapabilities(pdos)
                     }
-                    _ => unreachable!(),
+                    // Send `Not_Supported` per PD 3.2 Tab. 6.72 and resume.
+                    _ => {
+                        self.state = State::SendNotSupported;
+                        return Ok(PolicyEngineResult::Continue);
+                    }
                 };
 
-                self.device_policy_manager.inform(&capabilities).await;
+                self.device_policy_manager.inform(&capabilities, Info::None).await;
 
                 if mode_matches {
                     State::EvaluateCapabilities(capabilities)
                 } else {
-                    State::Ready(*power_source, false)
+                    State::Ready(false)
                 }
             }
-            State::EprModeEntry(power_source, operational_pdp) => {
+
+            // PD 3.2 Sec. 8.3.3.19 Dual-Role Port States
+            State::DrpSwap(swap_state) => match swap_state {
+                SwapState::Data(dr) => self.execute_data_role_swap_state(*dr).await?,
+                SwapState::Power(pr) => self.execute_power_role_swap_state(*pr).await?,
+                SwapState::FastPower(fr) => self.execute_fast_power_role_swap_state(*fr).await?,
+            },
+
+            // PD 3.2 Sec. 8.3.3.20 Sink Vconn Swap
+            State::VconnSwap(vcs_state) => self.execute_vconn_swap_state(*vcs_state).await?,
+
+            // PD 3.2 Sec. 8.3.3.26.2/4 Sink EPR Mode Entry/Exit, 8.3.3.3.3, 8.3.3.3.11
+            State::EprMode(epr_state) => self.execute_epr_state(*epr_state).await?,
+
+            // Custom State - Exit sink running and signal to program to begin Source
+            State::PrSwapToSourceStartup => {
+                return Ok(PolicyEngineResult::Exit(RunResult::SwapToSource));
+            }
+
+            // PD 3.2 Sec. 8.3.3.28.1
+            State::ErrorRecovery => {
+                error!("Entered Error Recovery state! Reconnection required.");
+                Err(Error::ReconnectionRequired)?
+            }
+        };
+
+        self.state = new_state;
+
+        Ok(PolicyEngineResult::Continue)
+    }
+
+    async fn execute_data_role_swap_state(&mut self, state: DataRoleSwap) -> Result<State, Error> {
+        match state {
+            // PD 3.2 Sec. 8.3.3.19.2.1 (PE_DRS_DFP_UFP_Evaluate_Swap, PE_DRS_UFP_DFP_Evaluate_Swap):
+            DataRoleSwap::Evaluate => Ok(State::DrpSwap(SwapState::Data(
+                match self.device_policy_manager.evaluate_swap_request(SwapType::Data).await {
+                    true => DataRoleSwap::Accept,
+                    false => DataRoleSwap::Reject,
+                },
+            ))),
+            // PD 3.2 Sec. 8.3.3.19.1.3 (PE_DRS_DFP_UFP_Accept_Swap, PE_DRS_UFP_DFP_Accept_Swap):
+            DataRoleSwap::Accept => {
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::Accept)
+                    .await?;
+                Ok(State::DrpSwap(SwapState::Data(DataRoleSwap::Change)))
+            }
+            // PD 3.2 Sec. 8.3.3.19.1.4 (PE_DRS_DFP_UFP_Change_to_UFP_Swap, PE_DRS_UFP_DFP_Change_to_DFP_Swap):
+            DataRoleSwap::Change => {
+                let new_role = match self.protocol_layer.header().port_data_role() {
+                    DataRole::Ufp => DataRole::Dfp,
+                    DataRole::Dfp => DataRole::Ufp,
+                };
+                self.device_policy_manager.swap_data_role(new_role).await;
+                Ok(State::Ready(false))
+            }
+            // PD 3.2 Sec. 8.3.3.19.1.5 (PE_DRS_DFP_UFP_Send_Swap, PE_DRS_UFP_DFP_Send_Swap):
+            DataRoleSwap::Send => {
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::DrSwap)
+                    .await?;
+
+                let message = self
+                    .protocol_layer
+                    .receive_message_type(
+                        &[
+                            MessageType::Control(ControlMessageType::Accept),
+                            MessageType::Control(ControlMessageType::Reject),
+                            MessageType::Control(ControlMessageType::Wait),
+                        ],
+                        TimerType::SenderResponse,
+                    )
+                    .await?;
+
+                match message.header.message_type() {
+                    MessageType::Control(ControlMessageType::Accept) => {
+                        Ok(State::DrpSwap(SwapState::Data(DataRoleSwap::Change)))
+                    }
+
+                    MessageType::Control(ControlMessageType::Reject) => Ok(State::Ready(false)),
+
+                    // Per PD 3.2 Sec. 6.6.4.3: after a DR_Swap Wait, only a new DR_Swap is
+                    // gated (tDRSwapWait); a power Request must not be armed, so no
+                    // SinkRequestTimer. Re-initiating the DR_Swap is left to the DPM.
+                    MessageType::Control(ControlMessageType::Wait) => Ok(State::Ready(false)),
+
+                    _ => Err(Error::Protocol(ProtocolError::UnexpectedMessage)),
+                }
+            }
+            // PD 3.2 Sec. 8.3.3.19.1.6 (PE_DRS_DFP_UFP_Reject_Swap, PE_DRS_UFP_DFP_Reject_Swap):
+            DataRoleSwap::Reject => {
+                // FIXME: Wait Message logic
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::Reject)
+                    .await?;
+                Ok(State::Ready(false))
+            }
+        }
+    }
+
+    async fn execute_power_role_swap_state(&mut self, state: PowerRoleSwap) -> Result<State, Error> {
+        match state {
+            // PD 3.2 Sec. 8.3.3.19.4.2 (PE_PRS_SNK_SRC_Evaluate_Swap):
+            PowerRoleSwap::Evaluate => {
+                if self.device_policy_manager.evaluate_swap_request(SwapType::Power).await {
+                    Ok(State::DrpSwap(SwapState::Power(PowerRoleSwap::Accept)))
+                } else {
+                    Ok(State::DrpSwap(SwapState::Power(PowerRoleSwap::Reject)))
+                }
+            }
+            // PD 3.2 Sec. 8.3.3.19.4.3 (PE_PRS_SNK_SRC_Accept_Swap):
+            PowerRoleSwap::Accept => {
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::Accept)
+                    .await?;
+                Ok(State::DrpSwap(SwapState::Power(PowerRoleSwap::TransitionToOff)))
+            }
+            // PD 3.2 Sec. 8.3.3.19.4.4 (PE_PRS_SNK_SRC_Transition_to_off):
+            PowerRoleSwap::TransitionToOff => {
+                self.device_policy_manager.disable().await;
+
+                let timer_type = match self.mode {
+                    Mode::Spr => TimerType::PSSourceOffSpr,
+                    Mode::Epr => TimerType::PSSourceOffEpr,
+                };
+
+                self.protocol_layer
+                    .receive_message_type(&[MessageType::Control(ControlMessageType::PsRdy)], timer_type)
+                    .await?;
+
+                Ok(State::DrpSwap(SwapState::Power(PowerRoleSwap::AssertRp)))
+            }
+            // PD 3.2 Sec. 8.3.3.19.4.5 (PE_PRS_SNK_SRC_Assert_Rp):
+            PowerRoleSwap::AssertRp => {
+                self.device_policy_manager.cc_source().await;
+                Ok(State::DrpSwap(SwapState::Power(PowerRoleSwap::SourceOn)))
+            }
+            // PD 3.2 Sec. 8.3.3.19.4.6 (PE_PRS_SNK_SRC_Source_on):
+            PowerRoleSwap::SourceOn => {
+                self.device_policy_manager.source_on().await;
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::PsRdy)
+                    .await?;
+                Ok(State::PrSwapToSourceStartup)
+            }
+            // PD 3.2 Sec. 8.3.3.19.4.7 (PE_PRS_SNK_SRC_Send_Swap):
+            PowerRoleSwap::Send => {
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::PrSwap)
+                    .await?;
+
+                let message = self
+                    .protocol_layer
+                    .receive_message_type(
+                        &[
+                            MessageType::Control(ControlMessageType::Accept),
+                            MessageType::Control(ControlMessageType::Reject),
+                            MessageType::Control(ControlMessageType::Wait),
+                        ],
+                        TimerType::SenderResponse,
+                    )
+                    .await?;
+
+                match message.header.message_type() {
+                    MessageType::Control(ControlMessageType::Accept) => {
+                        Ok(State::DrpSwap(SwapState::Power(PowerRoleSwap::TransitionToOff)))
+                    }
+
+                    MessageType::Control(ControlMessageType::Reject)
+                    | MessageType::Control(ControlMessageType::Wait) => Ok(State::Ready(false)),
+
+                    _ => Err(Error::Protocol(ProtocolError::UnexpectedMessage)),
+                }
+            }
+            // PD 3.2 Sec. 8.3.3.19.4.8 (PE_PRS_SNK_SRC_Reject_Swap):
+            PowerRoleSwap::Reject => {
+                // FIXME: Wait Message logic
+                /*
+                   There is also the option to exit this state with a Wait message if the DPM decides
+                   that the swap request can be met in the future. Adding the ability for the DPM to
+                   return Waits to these types of message would be a good feature to implement in the
+                   future, but is not necessary.
+
+                   For example, a workaround to this would be if the DPM wants to respond Wait, but can't,
+                   the DPM can itself request a Swap once it can fulfill the requirements.
+                */
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::Reject)
+                    .await?;
+                Ok(State::Ready(false))
+            }
+        }
+    }
+
+    async fn execute_fast_power_role_swap_state(&mut self, state: FastPowerRoleSwap) -> Result<State, Error> {
+        match state {
+            // PD 3.2 Sec. 8.3.3.19.6.1 (PE_FRS_SNK_SRC_Start_AMS):
+            FastPowerRoleSwap::Start => Ok(State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::Send))),
+            // PD 3.2 Sec. 8.3.3.19.6.2 (PE_FRS_SNK_SRC_Send_Swap):
+            FastPowerRoleSwap::Send => {
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::FrSwap)
+                    .await?;
+
+                self.protocol_layer
+                    .receive_message_type(
+                        &[MessageType::Control(ControlMessageType::Accept)],
+                        TimerType::SenderResponse,
+                    )
+                    .await?;
+
+                Ok(State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::TransitionToOff)))
+            }
+            // PD 3.2 Sec. 8.3.3.19.6.3 (PE_FRS_SNK_SRC_Transition_to_off):
+            FastPowerRoleSwap::TransitionToOff => {
+                self.device_policy_manager.disable().await;
+
+                let timer_type = match self.mode {
+                    Mode::Spr => TimerType::PSSourceOffSpr,
+                    Mode::Epr => TimerType::PSSourceOffEpr,
+                };
+
+                self.protocol_layer
+                    .receive_message_type(&[MessageType::Control(ControlMessageType::PsRdy)], timer_type)
+                    .await?;
+
+                Ok(State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::VbusApplied)))
+            }
+            // PD 3.2 Sec. 8.3.3.19.6.4 (PE_FRS_SNK_SRC_Vbus_Applied):
+            FastPowerRoleSwap::VbusApplied => {
+                self.device_policy_manager.source_on().await;
+                Ok(State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::AssertRp)))
+            }
+            // PD 3.2 Sec. 8.3.3.19.6.5 (PE_FRS_SNK_SRC_Assert_Rp):
+            FastPowerRoleSwap::AssertRp => {
+                self.device_policy_manager.cc_source().await;
+                Ok(State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::SourceOn)))
+            }
+            // PD 3.2 Sec. 8.3.3.19.6.6 (PE_FRS_SNK_SRC_Source_on):
+            FastPowerRoleSwap::SourceOn => {
+                // FIXME: Determine if using .source_on() for `VbusApplied` is correct.
+                // self.device_policy_manager.source_on().await;
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::PsRdy)
+                    .await?;
+                Ok(State::PrSwapToSourceStartup)
+            }
+        }
+    }
+
+    // PD 3.2 Sec. 8.3.3.20 Sink Vconn Swap
+    async fn execute_vconn_swap_state(&mut self, state: VcsState) -> Result<State, Error> {
+        let new_state = match state {
+            // PD 3.2 Sec. 8.3.3.20.1 (PE_VCS_Send_Swap):
+            VcsState::SendSwap => {
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::VconnSwap)
+                    .await?;
+
+                let message = self
+                    .protocol_layer
+                    .receive_message_type(
+                        &[
+                            MessageType::Control(ControlMessageType::Accept),
+                            MessageType::Control(ControlMessageType::Reject),
+                            MessageType::Control(ControlMessageType::Wait),
+                            MessageType::Control(ControlMessageType::NotSupported),
+                        ],
+                        TimerType::SenderResponse,
+                    )
+                    .await?;
+
+                match message.header.message_type() {
+                    MessageType::Control(ControlMessageType::Accept) => match self.vconn_source {
+                        true => State::VconnSwap(VcsState::WaitForVconn),
+                        false => State::VconnSwap(VcsState::TurnOnVconn),
+                    },
+                    MessageType::Control(ControlMessageType::Reject) => State::Ready(false),
+                    MessageType::Control(ControlMessageType::Wait) => State::Ready(false), // FIXME: inform DPM and change to `true`
+                    // May also transition to ForceVconn if NotSupported message and port presently not vconn source
+                    MessageType::Control(ControlMessageType::NotSupported) => State::NotSupportedReceived,
+                    _ => Err(Error::Protocol(ProtocolError::UnexpectedMessage))?,
+                }
+            }
+            // PD 3.2 Sec. 8.3.3.20.2 (PE_VCS_Evaluate_Swap):
+            VcsState::EvaluateSwap => {
+                let request_accepted = self.device_policy_manager.evaluate_vconn_swap_request().await;
+
+                if request_accepted {
+                    State::VconnSwap(VcsState::AcceptSwap)
+                } else {
+                    State::VconnSwap(VcsState::RejectSwap)
+                }
+            }
+            // PD 3.2 Sec. 8.3.3.20.3 (PE_VCS_Accept_Swap):
+            VcsState::AcceptSwap => {
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::Accept)
+                    .await?;
+
+                if self.vconn_source {
+                    State::VconnSwap(VcsState::WaitForVconn)
+                } else {
+                    State::VconnSwap(VcsState::TurnOnVconn)
+                }
+            }
+            // PD 3.2 Sec. 8.3.3.20.4 (PE_VCS_Reject_Swap):
+            VcsState::RejectSwap => {
+                // FIXME: Wait Message logic
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::Reject)
+                    .await?;
+
+                State::Ready(false)
+            }
+            // PD 3.2 Sec. 8.3.3.20.5 (PE_VCS_Wait_for_Vconn):
+            VcsState::WaitForVconn => {
+                self.protocol_layer
+                    .receive_message_type(&[MessageType::Control(ControlMessageType::PsRdy)], TimerType::VCONNOn)
+                    .await?;
+
+                State::VconnSwap(VcsState::TurnOffVconn)
+            }
+            // PD 3.2 Sec. 8.3.3.20.6 (PE_VCS_Turn_Off_Vconn):
+            VcsState::TurnOffVconn => {
+                self.device_policy_manager
+                    .drive_vconn(false)
+                    .await
+                    .map_err(|_| Error::ReconnectionRequired)?;
+
+                State::Ready(false)
+            }
+            // PD 3.2 Sec. 8.3.3.20.7 (PE_VCS_Turn_On_Vconn):
+            VcsState::TurnOnVconn => {
+                self.device_policy_manager
+                    .drive_vconn(true)
+                    .await
+                    .map_err(|_| Error::ReconnectionRequired)?;
+                State::VconnSwap(VcsState::SendPsRdy)
+            }
+            // PD 3.2 Sec. 8.3.3.20.8 (PE_VCS_Send_PS_Rdy):
+            VcsState::SendPsRdy => {
+                self.protocol_layer
+                    .transmit_control_message(ControlMessageType::PsRdy)
+                    .await?;
+                State::Ready(false)
+            }
+            // PD 3.2 Sec. 8.3.3.20.9 (PE_VCS_Force_Vconn):
+            VcsState::ForceVconn => {
+                self.device_policy_manager
+                    .drive_vconn(true)
+                    .await
+                    .map_err(|_| Error::ReconnectionRequired)?;
+                State::Ready(false)
+            }
+        };
+
+        Ok(new_state)
+    }
+
+    async fn execute_epr_state(&mut self, state: EprState) -> Result<State, Error> {
+        let new_state = match state {
+            // PD 3.2 Sec. 8.3.3.26.2.1 (PE_SNK_Send_EPR_Mode_Entry):
+            EprState::Entry(operational_pdp) => {
                 // Request entry into EPR mode.
-                // Per spec 8.3.3.26.2.1 (PE_SNK_Send_EPR_Mode_Entry), sink sends EPR_Mode (Enter)
+                // Per PD 3.2 Sec. 8.3.3.26.2.1 (PE_SNK_Send_EPR_Mode_Entry), sink sends EPR_Mode (Enter)
                 // and starts SenderResponseTimer and SinkEPREnterTimer.
                 //
-                // Per spec 6.4.10, the Data field shall be set to the EPR Sink Operational PDP.
+                // Per PD 3.2 Sec. 6.4.10, the Data field shall be set to the EPR Sink Operational PDP.
                 //
                 // Note: The spec says SinkEPREnterTimer (500ms) should run continuously across
                 // both EprModeEntry and EprEntryWaitForResponse states until stopped or timeout.
                 // Our implementation uses SenderResponseTimer (30ms) here and a fresh
                 // SinkEPREnterTimer (500ms) in EprEntryWaitForResponse. This means the total
                 // timeout could be ~530ms instead of 500ms in edge cases. However, this is
-                // within the spec's allowed range (tEnterEPR max = 550ms per Table 6.71).
+                // within the spec's allowed range (tEnterEPR max = 550ms per PD 3.2 Tab. 6.71).
                 let pdp_watts: u8 = operational_pdp.get::<watt>() as u8;
                 self.protocol_layer.transmit_epr_mode(Action::Enter, pdp_watts).await?;
 
@@ -663,65 +1226,71 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     )
                     .await?;
 
+                // A partner-supplied frame may parse as `Data::Unknown` (e.g. wrong payload length).
+                // Per PD 3.2 Sec. 8.3.3.26.2.1 any invalid `EPR_Mode` message leads to Soft Reset.
                 let Some(Payload::Data(Data::EprMode(epr_mode))) = message.payload else {
-                    unreachable!()
+                    return Ok(State::SendSoftReset);
                 };
 
                 match epr_mode.action() {
                     Action::EnterAcknowledged => {
                         // Source acknowledged, now wait for EnterSucceeded
-                        State::EprEntryWaitForResponse(*power_source)
+                        State::EprMode(EprState::EntryWaitForResponse)
                     }
                     Action::EnterSucceeded => {
                         // Source skipped EnterAcknowledged and went directly to EnterSucceeded
                         self.mode = Mode::Epr;
-                        State::EprWaitForCapabilities(*power_source)
+                        State::EprMode(EprState::WaitForCapabilities)
                     }
-                    Action::Exit => State::EprExitReceived(*power_source),
+                    Action::Exit => State::EprMode(EprState::ExitReceived),
                     Action::EnterFailed => {
-                        // Per spec 8.3.3.26.2.1: EnterFailed → Soft Reset
+                        // Per PD 3.2 Sec. 8.3.3.26.2.1: EnterFailed → Soft Reset
                         // Notify DPM of the failure reason before soft reset
                         let reason = epr_mode::DataEnterFailed::from(epr_mode.data());
                         self.device_policy_manager.epr_mode_entry_failed(reason).await;
                         State::SendSoftReset
                     }
-                    // Per spec 8.3.3.26.2.1: any other EPR_Mode message → Soft Reset
+                    // Per PD 3.2 Sec. 8.3.3.26.2.1: any other EPR_Mode message → Soft Reset
                     _ => State::SendSoftReset,
                 }
             }
-            State::EprEntryWaitForResponse(power_source) => {
+            // PD 3.2 Sec. 8.3.3.26.2.2 (PE_SNK_EPR_Mode_Wait_For_Response):
+            EprState::EntryWaitForResponse => {
                 // Wait for EnterSucceeded after receiving EnterAcknowledged.
-                // Per spec 8.3.3.26.2.2 (PE_SNK_EPR_Mode_Wait_For_Response), use SinkEPREnterTimer
+                // Per PD 3.2 Sec. 8.3.3.26.2.2 (PE_SNK_EPR_Mode_Wait_For_Response), use SinkEPREnterTimer
                 // for the overall timeout while source performs cable discovery.
                 let message = self
                     .protocol_layer
                     .receive_message_type(&[MessageType::Data(DataMessageType::EprMode)], TimerType::SinkEPREnter)
                     .await?;
 
+                // A partner-supplied frame may parse as `Data::Unknown` (e.g. wrong payload length).
+                // Per PD 3.2 Sec. 8.3.3.26.2.2 any invalid EPR_Mode message leads to Soft Reset.
                 let Some(Payload::Data(Data::EprMode(epr_mode))) = message.payload else {
-                    unreachable!()
+                    return Ok(State::SendSoftReset);
                 };
 
                 match epr_mode.action() {
                     Action::EnterSucceeded => {
-                        // EPR mode entry succeeded. Per spec Table 8.39 step 21-29,
+                        // EPR mode entry succeeded. Per PD 3.2 Tab. 8.39 step 21-29,
                         // source will automatically send EPR_Source_Capabilities after this.
                         self.mode = Mode::Epr;
-                        State::EprWaitForCapabilities(*power_source)
+                        State::EprMode(EprState::WaitForCapabilities)
                     }
-                    Action::Exit => State::EprExitReceived(*power_source),
+                    Action::Exit => State::EprMode(EprState::ExitReceived),
                     Action::EnterFailed => {
-                        // Per spec 8.3.3.26.2.2: EnterFailed → Soft Reset
+                        // Per PD 3.2 Sec. 8.3.3.26.2.2: EnterFailed → Soft Reset
                         // Notify DPM of the failure reason before soft reset
                         let reason = epr_mode::DataEnterFailed::from(epr_mode.data());
                         self.device_policy_manager.epr_mode_entry_failed(reason).await;
                         State::SendSoftReset
                     }
-                    // Per spec 8.3.3.26.2.2: any other EPR_Mode message → Soft Reset
+                    // Per PD 3.2 Sec. 8.3.3.26.2.2: any other EPR_Mode message → Soft Reset
                     _ => State::SendSoftReset,
                 }
             }
-            State::EprWaitForCapabilities(_power_source) => {
+            // EPR Mode PE_SNK_Wait_for_Capabilities
+            EprState::WaitForCapabilities => {
                 // After successful EPR mode entry, source automatically sends EPR_Source_Capabilities.
                 // This may be a chunked extended message that requires assembly.
                 // Wait for the capabilities and evaluate them.
@@ -740,14 +1309,16 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     }
                 }
             }
-            State::EprSendExit => {
+            // PD 3.2 Sec. 8.3.3.26.4.1 (PE_SNK_Send_EPR_Mode_Exit):
+            EprState::SendExit => {
                 // Inform partner we are exiting EPR.
                 self.protocol_layer.transmit_epr_mode(Action::Exit, 0).await?;
                 self.mode = Mode::Spr;
                 State::WaitForCapabilities
             }
-            State::EprExitReceived(power_source) => {
-                // Per USB PD Spec R3.2 Section 8.3.3.26.4.2 (PE_SNK_EPR_Mode_Exit_Received):
+            // PD 3.2 Sec. 8.3.3.26.4.2 (PE_SNK_EPR_Mode_Exit_Received):
+            EprState::ExitReceived => {
+                // Per PD 3.2 Sec. 8.3.3.26.4.2 (PE_SNK_EPR_Mode_Exit_Received):
                 // - If in an Explicit Contract with an SPR (A)PDO → WaitForCapabilities
                 // - If NOT in an Explicit Contract with an SPR (A)PDO → HardReset
                 //
@@ -755,12 +1326,11 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 // In EPR mode, requests use EprRequest which contains the RDO with object position.
                 self.mode = Mode::Spr;
 
-                let is_epr_pdo_contract = match power_source {
-                    PowerSource::EprRequest(epr) => {
+                let is_epr_pdo_contract = match self.contract {
+                    Contract::Explicit(PowerSource::EprRequest(epr)) => {
                         // Extract object position from RDO (bits 28-31)
                         epr.object_position() >= 8
                     }
-                    // Non-EprRequest variants are only used in SPR mode, so always SPR PDOs
                     _ => false,
                 };
 
@@ -770,8 +1340,8 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                     State::WaitForCapabilities
                 }
             }
-            State::EprKeepAlive(power_source) => {
-                // Per spec 8.3.3.3.11 (PE_SNK_EPR_Keep_Alive):
+            // PD 3.2 Sec. 8.3.3.3.11 (PE_SNK_EPR_Keep_Alive):
+            EprState::KeepAlive => {
                 // - Entry: Send EPR_KeepAlive message, start SenderResponseTimer
                 // - On EPR_KeepAlive_Ack: transition to Ready (which restarts SinkEPRKeepAliveTimer)
                 // - On timeout: transition to HardReset
@@ -790,16 +1360,20 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 {
                     Ok(message) => {
                         if let Some(Payload::Extended(extended::Extended::ExtendedControl(control))) = message.payload {
-                            if control.message_type()
-                                == crate::protocol_layer::message::extended::extended_control::ExtendedControlMessageType::EprKeepAliveAck
+                            // Per PD 3.2 Tab. 6.67, values not explicitly
+                            // defined are Reserved; answer Not_Supported.
+                            if control.try_message_type()
+                                == Ok(
+                                    crate::protocol_layer::message::extended::extended_control::ExtendedControlMessageType::EprKeepAliveAck
+                                )
                             {
                                 self.mode = Mode::Epr;
-                                State::Ready(*power_source, false)
+                                State::Ready(false)
                             } else {
-                                State::SendNotSupported(*power_source)
+                                State::SendNotSupported
                             }
                         } else {
-                            State::SendNotSupported(*power_source)
+                            State::SendNotSupported
                         }
                     }
                     Err(_) => State::HardReset,
@@ -807,8 +1381,6 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
             }
         };
 
-        self.state = new_state;
-
-        Ok(())
+        Ok(new_state)
     }
 }

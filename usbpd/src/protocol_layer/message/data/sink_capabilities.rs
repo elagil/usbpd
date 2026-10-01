@@ -1,7 +1,7 @@
 //! Definitions of sink capabilities data message content.
 //!
 //! Sink capabilities are sent in response to Get_Sink_Cap messages.
-//! Per USB PD Spec R3.2 Section 6.4.1.6, the Sink_Capabilities message
+//! Per PD 3.2 Sec. 6.4.1.6, the Sink_Capabilities message
 //! contains Power Data Objects describing what power levels the sink can operate at.
 use heapless::Vec;
 use proc_bitfield::bitfield;
@@ -12,7 +12,7 @@ use crate::_250milliwatts_mod::_250milliwatts;
 use crate::units::{ElectricCurrent, ElectricPotential, Power};
 
 /// Fast Role Swap required USB Type-C current.
-/// Per USB PD Spec R3.2 Table 6.17.
+/// Per PD 3.2 Tab. 6.17.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum FastRoleSwapCurrent {
@@ -42,7 +42,7 @@ impl From<u8> for FastRoleSwapCurrent {
 bitfield! {
     /// A Sink Fixed Supply PDO.
     ///
-    /// Per USB PD Spec R3.2 Table 6.17 (Fixed Supply PDO - Sink).
+    /// Per PD 3.2 Tab. 6.17 (Fixed Supply PDO - Sink).
     /// Different from Source Fixed Supply PDO in bits 28-20.
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -116,7 +116,7 @@ impl FixedSupply {
 bitfield! {
     /// A Sink Battery Supply PDO.
     ///
-    /// Per USB PD Spec R3.2 Table 6.19 (Battery Supply PDO - Sink).
+    /// Per PD 3.2 Tab. 6.19 (Battery Supply PDO - Sink).
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -168,7 +168,7 @@ impl Default for Battery {
 bitfield! {
     /// A Sink Variable Supply PDO.
     ///
-    /// Per USB PD Spec R3.2 Table 6.18 (Variable Supply PDO - Sink).
+    /// Per PD 3.2 Tab. 6.18 (Variable Supply PDO - Sink).
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -219,7 +219,7 @@ impl Default for VariableSupply {
 
 /// A Sink Power Data Object.
 ///
-/// Per USB PD Spec R3.2 Section 6.4.1.6, sinks report power levels they can
+/// Per PD 3.2 Sec. 6.4.1.6, sinks report power levels they can
 /// operate at using Fixed, Variable, or Battery PDOs.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -250,7 +250,7 @@ const MAX_CAPABILITIES_LEN: usize = 7;
 /// Sink capabilities message content.
 ///
 /// Contains a list of Power Data Objects describing what power levels the sink
-/// can operate at. Per USB PD Spec R3.2 Section 6.4.1.6:
+/// can operate at. Per PD 3.2 Sec. 6.4.1.6:
 /// - All sinks shall minimally offer one PDO at vSafe5V
 /// - Maximum 7 PDOs for SPR mode
 #[derive(Clone, Debug, Default)]
@@ -261,7 +261,7 @@ pub struct SinkCapabilities(pub Vec<SinkPowerDataObject, MAX_CAPABILITIES_LEN>);
 impl SinkCapabilities {
     /// Create new sink capabilities with a single vSafe5V PDO.
     ///
-    /// This is the minimum required per spec - all sinks must support 5V.
+    /// This is the minimum required per PD 3.2 Sec. 6.4.1.6 - all sinks must support 5V.
     pub fn new_vsafe5v_only(operational_current_10ma: u16) -> Self {
         let mut pdos = Vec::new();
         pdos.push(SinkPowerDataObject::FixedSupply(FixedSupply::new_vsafe5v(
@@ -276,12 +276,12 @@ impl SinkCapabilities {
         Self(pdos)
     }
 
-    /// Get the PDOs.
+    /// The sink power data objects.
     pub fn pdos(&self) -> &[SinkPowerDataObject] {
         &self.0
     }
 
-    /// Get the number of PDOs.
+    /// The number of contained sink power data objects.
     pub fn num_objects(&self) -> u8 {
         self.0.len() as u8
     }

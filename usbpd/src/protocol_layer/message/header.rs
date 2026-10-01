@@ -1,6 +1,6 @@
 //! Definitions for a USB PD message header.
 //!
-//! See [6.2.1.1].
+//! Per PD 3.2 Sec. 6.2.1.1.
 use core::convert::TryFrom;
 
 use byteorder::{ByteOrder, LittleEndian};
@@ -34,7 +34,7 @@ bitfield! {
         pub spec_revision: u8 [try_get SpecificationRevision, set SpecificationRevision] @ 6..=7,
         /// The port's data role (0 -> UFP, 1 -> DFP).
         pub port_data_role: bool [get DataRole, set DataRole] @ 5,
-        /// The type of message being sent. See [6.2.1.1.8] for details
+        /// The type of message being sent. See PD 3.2 Sec. 6.2.1.1.8 for details
         pub message_type_raw: u8 @ 0..=4,
     }
 }
@@ -132,7 +132,7 @@ impl Header {
     }
 }
 
-/// Specification revieions.
+/// PD specification revision (PD 3.2 Sec. 1.4 Terms and Abbreviations).
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[allow(non_camel_case_types)]

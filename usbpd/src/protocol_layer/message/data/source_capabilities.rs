@@ -47,7 +47,7 @@ pub enum PowerDataObject {
 impl PowerDataObject {
     /// Check if this PDO is zero-padding (used in EPR capabilities messages).
     ///
-    /// Per USB PD Spec R3.2 Section 6.5.15.1, if the SPR Capabilities Message
+    /// Per PD 3.2 Sec. 6.5.15.1, if the SPR Capabilities Message
     /// contains fewer than 7 PDOs, the unused Data Objects are zero-filled.
     pub fn is_zero_padding(&self) -> bool {
         self.to_raw() == 0
@@ -213,16 +213,16 @@ impl VariableSupply {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Augmented {
-    /// SPR PPS
+    /// SPR programmable power supply (PPS).
     Spr(SprProgrammablePowerSupply),
-    /// EPR AVS
+    /// EPR adjustable voltage supply (AVS).
     Epr(EprAdjustableVoltageSupply),
     /// Unknown
     Unknown(u32),
 }
 
 bitfield! {
-    /// Augmented power data object, see PD Spec `6.4.1.2.4`
+    /// Augmented power data object, per PD 3.2 Sec. 6.4.1.2.4.
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -237,7 +237,7 @@ bitfield! {
 }
 
 bitfield! {
-    /// SPR PPS
+    /// SPR programmable power supply (PPS), per PD 3.2 Sec. 6.4.1.3.
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -281,7 +281,7 @@ impl SprProgrammablePowerSupply {
 }
 
 bitfield! {
-    /// EPR AVS PDO
+    /// EPR adjustable voltage supply (AVS), per PD 3.2 Sec. 6.4.1.4.5.
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -400,7 +400,7 @@ impl SourceCapabilities {
 
     /// Check if this is an EPR capabilities message (has PDOs at position 8+).
     ///
-    /// Per USB PD Spec R3.2 Section 6.5.15.1, EPR Capabilities Messages have
+    /// Per PD 3.2 Sec. 6.5.15.1, EPR Capabilities Messages have
     /// SPR PDOs in positions 1-7 and EPR PDOs starting at position 8.
     pub fn is_epr_capabilities(&self) -> bool {
         self.0.len() > 7
@@ -408,7 +408,7 @@ impl SourceCapabilities {
 
     /// Get SPR PDOs (positions 1-7), excluding zero-padding entries.
     ///
-    /// Per USB PD Spec R3.2 Section 6.5.15.1:
+    /// Per PD 3.2 Sec. 6.5.15.1:
     /// - Positions 1-7 contain SPR (A)PDOs
     /// - If fewer than 7 SPR PDOs exist, unused positions are zero-filled
     ///
@@ -424,7 +424,7 @@ impl SourceCapabilities {
 
     /// Get EPR PDOs (positions 8+).
     ///
-    /// Per USB PD Spec R3.2 Section 6.5.15.1:
+    /// Per PD 3.2 Sec. 6.5.15.1:
     /// - EPR (A)PDOs start at Data Object position 8
     /// - Only valid in EPR Capabilities Messages
     ///
@@ -435,11 +435,11 @@ impl SourceCapabilities {
 
     /// Check if any EPR PDO is in invalid position (1-7).
     ///
-    /// Per USB PD Spec R3.2 Section 8.3.3.3.8:
+    /// Per PD 3.2 Sec. 8.3.3.3.8:
     /// "In EPR Mode and An EPR_Source_Capabilities Message is received with
     /// an EPR (A)PDO in object positions 1... 7" → Hard Reset
     ///
-    /// EPR (A)PDOs per spec:
+    /// EPR (A)PDOs per PD 3.2 Sec. 6.5.15.1:
     /// - Fixed Supply PDOs offering 28V, 36V, or 48V (voltage > 20V)
     /// - EPR AVS APDOs
     pub fn has_epr_pdo_in_spr_positions(&self) -> bool {
