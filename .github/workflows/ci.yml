@@ -59,13 +59,13 @@ jobs:
           # crate. One matrix job per variant; the binaries are copied aside
           # under distinct names (the feature flag only const-evaluates
           # cfg!(feature = "role-initiator"), but the binaries differ).
-          - name: drp-initiator
+          - name: g474re-drp-initiator
             dir: examples/embassy-nucleo-g474re-drp
             features: role-initiator
             source-binary: usbpd-g474re-drp
             artifact-binary: usbpd-g474re-drp-initiator
             artifact-name: drp-initiator-firmware
-          - name: drp-acceptor
+          - name: g474re-drp-acceptor
             dir: examples/embassy-nucleo-g474re-drp
             features: role-acceptor
             source-binary: usbpd-g474re-drp
