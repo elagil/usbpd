@@ -37,6 +37,7 @@ const ADDRESS: u8 = 0x34;
 
 // Serves the DMA transfers of VBUS ADC conversions.
 bind_interrupts!(struct AdcIrqs {
+    ADC1_2 => adc::InterruptHandler<embassy_stm32::peripherals::ADC1>;
     DMA1_CHANNEL4 => dma::InterruptHandler<embassy_stm32::peripherals::DMA1_CH4>;
 });
 
@@ -194,8 +195,8 @@ pub struct Tcpp {
     i2c: I2c<'static, embassy_stm32::mode::Blocking, i2c::mode::Master>,
     enable: Output<'static>,
     flgn: ExtiInput<'static, embassy_stm32::mode::Async>,
-    adc: Adc<'static, embassy_stm32::peripherals::ADC1>,
-    vbus_sense: embassy_stm32::adc::AnyAdcChannel<'static, embassy_stm32::peripherals::ADC1>,
+    adc: Adc<'static, embassy_stm32::peripherals::ADC1, embassy_stm32::mode::Async>,
+    vbus_sense: embassy_stm32::adc::BorrowedAdcChannel<'static, embassy_stm32::peripherals::ADC1>,
     adc_dma: Peri<'static, embassy_stm32::peripherals::DMA1_CH4>,
     state: State,
 }
@@ -214,8 +215,8 @@ impl Tcpp {
         let mut enable = enable;
         enable.set_low();
 
-        let adc_config = adc::AdcConfig::default();
-        let adc = Adc::new(adc, adc_config);
+        let adc_config = adc::Config::default();
+        let adc = Adc::new(adc, AdcIrqs, adc_config);
         let vbus_sense = vbus_sense.degrade_adc();
 
         Self {
@@ -338,10 +339,11 @@ impl Tcpp {
     pub async fn vbus_mv(&mut self) -> Result<u16, Error> {
         let mut buffer = [0u16; 1];
         self.adc
-            .read(
+            .read_sequence(
                 self.adc_dma.reborrow(),
                 AdcIrqs,
-                [(&mut self.vbus_sense, SampleTime::CYCLES247_5)].into_iter(),
+                [(self.vbus_sense.reborrow_adc(), SampleTime::Cycles2475)].into_iter(),
+                None,
                 &mut buffer,
             )
             .await;

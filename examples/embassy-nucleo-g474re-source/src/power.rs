@@ -100,7 +100,7 @@ impl SourceDriver for UcpdSourceDriver<'_> {
 async fn wait_detached<T: ucpd::Instance>(cc_phy: &mut CcPhy<'_, T>) {
     loop {
         let (cc1, cc2) = cc_phy.vstate();
-        if cc1 == CcVState::LOWEST && cc2 == CcVState::LOWEST {
+        if cc1 == CcVState::Lowest && cc2 == CcVState::Lowest {
             return;
         }
         cc_phy.wait_for_vstate_change().await;
@@ -110,7 +110,7 @@ async fn wait_detached<T: ucpd::Instance>(cc_phy: &mut CcPhy<'_, T>) {
 async fn wait_attached<T: ucpd::Instance>(cc_phy: &mut CcPhy<'_, T>) -> CableOrientation {
     loop {
         let (cc1, cc2) = cc_phy.vstate();
-        if cc1 == CcVState::LOWEST && cc2 == CcVState::LOWEST {
+        if cc1 == CcVState::Lowest && cc2 == CcVState::Lowest {
             cc_phy.wait_for_vstate_change().await;
             continue;
         }
@@ -123,8 +123,8 @@ async fn wait_attached<T: ucpd::Instance>(cc_phy: &mut CcPhy<'_, T>) -> CableOri
         };
 
         return match (cc1, cc2) {
-            (_, CcVState::LOWEST) => CableOrientation::Normal,
-            (CcVState::LOWEST, _) => CableOrientation::Flipped,
+            (_, CcVState::Lowest) => CableOrientation::Normal,
+            (CcVState::Lowest, _) => CableOrientation::Flipped,
             _ => CableOrientation::DebugAccessoryMode,
         };
     }
@@ -189,9 +189,9 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
     loop {
         let mut ucpd = Ucpd::new(
             ucpd_resources.ucpd.reborrow(),
-            Irqs {},
             ucpd_resources.pin_cc1.reborrow(),
             ucpd_resources.pin_cc2.reborrow(),
+            Irqs {},
             Default::default(),
         );
 
@@ -206,11 +206,11 @@ pub async fn ucpd_task(mut ucpd_resources: UcpdResources) {
         let cc_sel = match cable_orientation {
             CableOrientation::Normal => {
                 info!("Starting PD communication on CC1 pin");
-                CcSel::CC1
+                CcSel::Cc1
             }
             CableOrientation::Flipped => {
                 info!("Starting PD communication on CC2 pin");
-                CcSel::CC2
+                CcSel::Cc2
             }
             CableOrientation::DebugAccessoryMode => panic!("No PD communication in DAM"),
         };

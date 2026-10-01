@@ -23,7 +23,7 @@ async fn main(spawner: Spawner) {
     let mut stm32_config = embassy_stm32::Config::default();
     stm32_config.rcc.hsi = true;
     // ADC12 clock mux must be set explicitly for the VBUS sense ADC.
-    stm32_config.rcc.mux.adc12sel = embassy_stm32::rcc::mux::Adcsel::SYS;
+    stm32_config.rcc.mux.adc12sel = embassy_stm32::rcc::mux::Adcsel::Sys;
 
     let p = embassy_stm32::init(stm32_config);
 
