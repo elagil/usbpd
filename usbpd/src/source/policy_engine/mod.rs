@@ -671,7 +671,8 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     Ok(message) => match message.payload {
                         Some(Payload::Data(Data::SinkCapabilities(caps))) => Some(caps),
                         Some(Payload::Extended(Extended::EprSinkCapabilities(pdos))) => Some(SinkCapabilities(pdos)),
-                        _ => unreachable!(),
+                        // Handle malformed payload gracefully.
+                        _ => None,
                     },
                     Err(ProtocolError::RxError(RxError::ReceiveTimeout)) => None,
                     Err(err) => return Err(Error::Protocol(err)),
@@ -1076,7 +1077,8 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                         | MessageType::Control(ControlMessageType::Wait) => Ok(State::Ready),
                         // May also transition to ForceVconn if NotSupported message and port presently not vconn source
                         MessageType::Control(ControlMessageType::NotSupported) => Ok(State::NotSupportedReceived),
-                        _ => unreachable!(),
+                        // `receive_message_type` filtered to the control types above.
+                        _ => Err(Error::Protocol(ProtocolError::UnexpectedMessage)),
                     },
                     Err(ProtocolError::RxError(RxError::ReceiveTimeout)) => Ok(State::Ready),
                     Err(err) => Err(Error::Protocol(err)),
@@ -1280,11 +1282,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     return Err(Error::Protocol(ProtocolError::RxError(RxError::HardReset)));
                 }
 
-                let Some(Payload::Data(Data::Request(power_source))) = message.payload else {
-                    unreachable!();
-                };
-
-                State::NegotiateCapability(power_source)
+                match message.payload {
+                    Some(Payload::Data(Data::Request(power_source))) => State::NegotiateCapability(power_source),
+                    _ => State::SendNotSupported,
+                }
             }
 
             MessageType::Data(DataMessageType::EprRequest) => {
@@ -1292,11 +1293,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     return Err(Error::Protocol(ProtocolError::RxError(RxError::HardReset)));
                 }
 
-                let Some(Payload::Data(Data::Request(power_source))) = message.payload else {
-                    unreachable!();
-                };
-
-                State::NegotiateCapability(power_source)
+                match message.payload {
+                    Some(Payload::Data(Data::Request(power_source))) => State::NegotiateCapability(power_source),
+                    _ => State::SendNotSupported,
+                }
             }
 
             MessageType::Data(DataMessageType::EprMode) => match message.payload {
@@ -1412,9 +1412,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
             }
         };
 
-        // Extract the power source from the request
+        // Extract the power source from the request. Handle malformed payload gracefully (protocol violation).
+        // The caller's UnexpectedMessage handler (per spec 6.6.2) transitions to Soft Reset.
         let Some(Payload::Data(Data::Request(power_source))) = message.payload else {
-            unreachable!();
+            return Err(Error::Protocol(ProtocolError::UnexpectedMessage));
         };
 
         Ok(power_source)
@@ -1434,8 +1435,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
             )
             .await?;
 
+        // Extract the power source from the request. Handle malformed payload gracefully (protocol violation).
+        // The caller's UnexpectedMessage handler (per spec 6.6.2) transitions to Soft Reset.
         let Some(Payload::Data(Data::SourceCapabilities(caps))) = message.payload else {
-            unreachable!()
+            return Err(Error::Protocol(ProtocolError::UnexpectedMessage));
         };
 
         Ok(caps)
@@ -1457,7 +1460,9 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
 
         match message.payload {
             Some(Payload::Extended(Extended::EprSourceCapabilities(cap))) => Ok(SourceCapabilities(cap)),
-            _ => unreachable!(),
+            // A malformed payload is a protocol violation, not a bug; the caller's
+            // UnexpectedMessage handler (spec 6.6.2) transitions to Soft Reset.
+            _ => Err(Error::Protocol(ProtocolError::UnexpectedMessage)),
         }
     }
 }

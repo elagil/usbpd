@@ -23,6 +23,7 @@ pub enum Error {
 
 /// Dual Role Port that will automatically undergo role swaps,
 /// using the defined functions in the two `DualRoleDevicePolicyManagers`
+#[derive(Debug)]
 pub struct DualRolePort<DRIVER, TIMER, DPM>
 where
     DRIVER: Driver,
