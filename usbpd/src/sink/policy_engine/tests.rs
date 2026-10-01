@@ -1,6 +1,8 @@
 //! Tests for the policy engine.
 
-use super::Sink;
+use uom::si::power::watt;
+
+use super::{EprState, Sink};
 use crate::counters::{Counter, CounterType};
 use crate::dummy::{DUMMY_CAPABILITIES, DummyDriver, DummySinkDevice, DummyTimer, MAX_DATA_MESSAGE_SIZE};
 use crate::protocol_layer::message::data::Data;
@@ -601,5 +603,38 @@ async fn test_pr_swap_to_source_startup_exits() {
         matches!(result, crate::PolicyEngineResult::Exit(crate::RunResult::SwapToSource)),
         "run_step from PrSwapToSourceStartup must yield Exit(SwapToSource), got {:?}",
         result
+    );
+}
+
+/// A malformed `EPR_Mode`-typed frame (payload length != 4 bytes) parses as `Data::Unknown` and must Soft Reset.
+#[tokio::test]
+async fn test_epr_mode_entry_unknown_payload_soft_resets() {
+    let driver = DummyDriver::new();
+    let device = DummySinkDevice {};
+    let mut policy_engine =
+        Sink::<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DummySinkDevice>::new(driver, device);
+
+    policy_engine.state = State::EprMode(EprState::Entry(crate::units::Power::new::<watt>(140)));
+
+    // Malformed `EPR_Mode` frame from the source: valid header, payload shorter than one `EPR_Mode Data Object` (4 bytes),
+    // so it parses as `Data::Unknown`.
+    let source_header = get_source_header_template();
+    let header = Header::new_data(
+        source_header,
+        Counter::new_from_value(CounterType::MessageId, 0),
+        DataMessageType::EprMode,
+        1,
+    );
+    let mut buf = [0u8; MAX_DATA_MESSAGE_SIZE];
+    let len = Message::new(header).to_bytes(&mut buf);
+    policy_engine.protocol_layer.driver().inject_received_data(&buf[..len]);
+
+    // `EprModeEntry` sends `EPR_Mode (Enter)`, reads the malformed response and must not panic.
+    policy_engine.run_step().await.unwrap();
+
+    assert!(
+        matches!(policy_engine.state, State::SendSoftReset),
+        "malformed EPR_Mode payload must transition to SendSoftReset, got {:?}",
+        policy_engine.state
     );
 }

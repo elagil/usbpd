@@ -389,7 +389,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
         let capabilities = match message.payload {
             Some(Payload::Data(Data::SourceCapabilities(caps))) => caps,
             Some(Payload::Extended(extended::Extended::EprSourceCapabilities(pdos))) => SourceCapabilities(pdos),
-            _ => unreachable!(),
+            _ => return Err(Error::Protocol(ProtocolError::UnexpectedMessage)),
         };
 
         Ok(capabilities)
@@ -532,12 +532,14 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                                 if self.mode == Mode::Epr && !self.get_source_cap_pending {
                                     State::HardReset
                                 } else {
-                                    let Some(Payload::Data(Data::SourceCapabilities(capabilities))) = message.payload
-                                    else {
-                                        unreachable!()
-                                    };
                                     self.get_source_cap_pending = false;
-                                    State::EvaluateCapabilities(capabilities)
+                                    // Send `Not_Supported` per spec Table 6.72 and resume.
+                                    match message.payload {
+                                        Some(Payload::Data(Data::SourceCapabilities(capabilities))) => {
+                                            State::EvaluateCapabilities(capabilities)
+                                        }
+                                        _ => State::SendNotSupported,
+                                    }
                                 }
                             }
                             MessageType::Extended(ExtendedMessageType::EprSourceCapabilities) => {
@@ -547,15 +549,16 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                                     self.get_source_cap_pending = false;
                                     let caps = SourceCapabilities(pdos);
 
-                                    // Per spec 8.3.3.3.8: In EPR Mode, if EPR_Source_Capabilities
-                                    // contains an EPR (A)PDO in positions 1-7 → Hard Reset
+                                    // Per spec 8.3.3.3.8: In EPR Mode, if `EPR_Source_Capabilities` contains an
+                                    // EPR (A)PDO in positions 1-7, do a Hard Reset
                                     if self.mode == Mode::Epr && caps.has_epr_pdo_in_spr_positions() {
                                         State::HardReset
                                     } else {
                                         State::EvaluateCapabilities(caps)
                                     }
                                 } else {
-                                    unreachable!()
+                                    // Malformed `EPR_Source_Capabilities` payload.
+                                    State::HardReset
                                 }
                             }
                             MessageType::Data(DataMessageType::EprMode) => {
@@ -820,7 +823,11 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                     Some(Payload::Extended(extended::Extended::EprSourceCapabilities(pdos))) => {
                         SourceCapabilities(pdos)
                     }
-                    _ => unreachable!(),
+                    // Send `Not_Supported` per spec Table 6.72 and resume.
+                    _ => {
+                        self.state = State::SendNotSupported;
+                        return Ok(PolicyEngineResult::Continue);
+                    }
                 };
 
                 self.device_policy_manager.inform(&capabilities, Info::None).await;
@@ -1219,8 +1226,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                     )
                     .await?;
 
+                // A partner-supplied frame may parse as `Data::Unknown` (e.g. wrong payload length).
+                // Per spec 8.3.3.26.2.1 any invalid `EPR_Mode` message leads to Soft Reset.
                 let Some(Payload::Data(Data::EprMode(epr_mode))) = message.payload else {
-                    unreachable!()
+                    return Ok(State::SendSoftReset);
                 };
 
                 match epr_mode.action() {
@@ -1255,8 +1264,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                     .receive_message_type(&[MessageType::Data(DataMessageType::EprMode)], TimerType::SinkEPREnter)
                     .await?;
 
+                // A partner-supplied frame may parse as `Data::Unknown` (e.g. wrong payload length).
+                // Per spec 8.3.3.26.2.2 any invalid EPR_Mode message leads to Soft Reset.
                 let Some(Payload::Data(Data::EprMode(epr_mode))) = message.payload else {
-                    unreachable!()
+                    return Ok(State::SendSoftReset);
                 };
 
                 match epr_mode.action() {

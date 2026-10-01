@@ -17,8 +17,7 @@ use core::marker::PhantomData;
 
 use byteorder::{ByteOrder, LittleEndian};
 use embassy_futures::select::{Either, select};
-use heapless::Deque;
-use heapless::Vec;
+use heapless::{Deque, Vec};
 use message::Message;
 use message::data::{Data, request};
 use message::extended::extended_control::ExtendedControlMessageType;
@@ -1165,11 +1164,10 @@ mod tests {
     /// Build a serialized single-chunk Extended_Control (`EPR_KeepAlive_Ack`) frame from the partner,
     /// exercising the extended-message parking path during a `GoodCRC` wait.
     fn extended_control_bytes(message_id: u8) -> [u8; 8] {
-        use crate::protocol_layer::message::extended::{
-            ExtendedHeader,
-            extended_control::{ExtendedControl, ExtendedControlMessageType},
-        };
         use byteorder::{ByteOrder, LittleEndian};
+
+        use crate::protocol_layer::message::extended::ExtendedHeader;
+        use crate::protocol_layer::message::extended::extended_control::{ExtendedControl, ExtendedControlMessageType};
 
         // Header: Extended Extended_Control (raw type 16), spec rev 3.x.
         let header = Header::new_extended(
