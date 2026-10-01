@@ -35,7 +35,7 @@ probe-rs attach --chip "$CHIP" --probe "$PROBE_VID_PID:$PROBE_B" "$ACCEPTOR_ELF"
 PID_B=$!
 
 # A probe-rs process that vanished before the kill below failed to flash or
-# attach; do not mistake its empty log for a firmware failure.
+# attach. Do not mistake its empty log for a firmware failure.
 fail_dead_process() {
   local name="$1" pid="$2" errfile="$3"
   if ! kill -0 "$pid" 2>/dev/null; then
@@ -47,8 +47,7 @@ fail_dead_process() {
 
 # Poll until both logs show the completed swap flow, or the deadline expires.
 # A timeout falls through to the marker checks below, which then fail with
-# their specific reasons. Note: unlike a plain `sleep $TIMEOUT_SECS`, this
-# bounds the whole flash+run window, not just the capture after flashing.
+# their specific reasons.
 deadline=$((SECONDS + TIMEOUT_SECS))
 while [ "$SECONDS" -lt "$deadline" ]; do
   fail_dead_process "initiator" "$PID_A" "$ERR_A"
@@ -59,10 +58,15 @@ while [ "$SECONDS" -lt "$deadline" ]; do
   sleep 1
 done
 
-# Release the probes. SIGKILL: probe-rs attach does not exit on SIGTERM quickly
-# enough, and lingering processes would block subsequent invocations.
+# Release the probes: SIGTERM triggers probe-rs' graceful shutdown (the CLI
+# detaches and releases the USB probe since v0.30). Fall back to SIGKILL so a
+# hung process cannot block subsequent invocations.
+kill "$PID_A" "$PID_B" 2>/dev/null || true
+for _ in $(seq 1 50); do
+  kill -0 "$PID_A" 2>/dev/null || kill -0 "$PID_B" 2>/dev/null || break
+  sleep 0.1
+done
 kill -9 "$PID_A" "$PID_B" 2>/dev/null || true
-sleep 2
 
 # Verify board identities, so swapped probes/devices can not fake a pass, then
 # verify success markers.
