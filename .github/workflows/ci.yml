@@ -4,54 +4,113 @@ on:
 
 name: CI
 
+concurrency:
+  # Cancel superseded in-progress/queued runs for the same ref (PRs only).
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
+  # Applies to every cargo invocation, so build/test/clippy share one cache.
+  RUSTFLAGS: "-D warnings"
 
 jobs:
-  build_and_test:
-    name: Build & Test
+  host:
+    name: Host tests
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-        with:
-          submodules: true
 
-      - run: rustup toolchain install nightly -c rustfmt
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+
+      - name: Cache build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format, lint, build, test
+        run: bash .github/ci/host.sh
+
+  firmware:
+    name: Firmware ${{ matrix.name }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: h563zi
+            dir: examples/embassy-nucleo-h563zi
+          - name: g474re-sink
+            dir: examples/embassy-nucleo-g474re-sink
+          - name: g474re-sink-epr
+            dir: examples/embassy-nucleo-g474re-sink-epr
+          - name: g474re-source
+            dir: examples/embassy-nucleo-g474re-source
+          # The DRP example builds two role feature variants from the same
+          # crate. One matrix job per variant; the binaries are copied aside
+          # under distinct names (the feature flag only const-evaluates
+          # cfg!(feature = "role-initiator"), but the binaries differ).
+          - name: drp-initiator
+            dir: examples/embassy-nucleo-g474re-drp
+            features: role-initiator
+            source-binary: usbpd-g474re-drp
+            artifact-binary: usbpd-g474re-drp-initiator
+            artifact-name: drp-initiator-firmware
+          - name: drp-acceptor
+            dir: examples/embassy-nucleo-g474re-drp
+            features: role-acceptor
+            source-binary: usbpd-g474re-drp
+            artifact-binary: usbpd-g474re-drp-acceptor
+            artifact-name: drp-acceptor-firmware
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabihf,thumbv8m.main-none-eabihf
+          components: clippy
+
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
 
       - name: Cache build
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: |
-            usbpd
-            examples/embassy-nucleo-h563zi
-            examples/embassy-nucleo-g474re-sink
-            examples/embassy-nucleo-g474re-sink-epr
-            examples/embassy-nucleo-g474re-source
+          workspaces: ${{ matrix.dir }}
+          key: ${{ matrix.name }}
 
-      - name: Build
-        run: bash .github/ci/build.sh
+      - name: Format, lint, build
+        run: bash .github/ci/firmware.sh ${{ matrix.dir }} '${{ matrix.features }}' ${{ matrix.source-binary }} ${{ matrix.artifact-binary }}
 
-      - name: Test
-        run: bash .github/ci/test.sh
-
-      - name: Upload sink firmware
+      - name: Upload firmware artifact
+        if: matrix.artifact-name != ''
         uses: actions/upload-artifact@v4
         with:
-          name: sink-firmware
-          path: examples/embassy-nucleo-g474re-sink/target/thumbv7em-none-eabihf/release/usbpd-g474re-sink
-
-      - name: Upload source firmware
-        uses: actions/upload-artifact@v4
-        with:
-          name: source-firmware
-          path: examples/embassy-nucleo-g474re-source/target/thumbv7em-none-eabihf/release/usbpd-g474re-source
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.dir }}/target/thumbv7em-none-eabihf/release/${{ matrix.artifact-binary }}
+          if-no-files-found: error
 
   msrv:
     name: Minimum Supported Rust Version
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         include:
           - crate: usbpd
@@ -60,14 +119,18 @@ jobs:
             features: serde,defmt
           - crate: usbpd-traits
             features: defmt
-    env:
-      RUSTFLAGS: "-D warnings"
     steps:
       - name: Checkout sources
         uses: actions/checkout@v7
 
       - name: Install cargo-hack
         uses: taiki-e/install-action@cargo-hack
+
+      - name: Cache build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ matrix.crate }}
+          key: msrv-${{ matrix.crate }}-${{ matrix.features }}
 
       - name: Check MSRV
         run: cargo hack check --rust-version -p ${{ matrix.crate }} --features ${{ matrix.features }}
@@ -76,6 +139,7 @@ jobs:
     name: Semantic Versioning
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         include:
           - crate: usbpd
@@ -99,6 +163,7 @@ jobs:
     name: Minimal Direct Dependency Versions
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         include:
           - crate: usbpd
@@ -123,24 +188,52 @@ jobs:
         run: cargo minimal-versions check -p ${{ matrix.crate }} --features ${{ matrix.features }}
 
   hardware_test:
-    needs: build_and_test
+    name: Hardware test
+    needs: [firmware]
     runs-on: self-hosted
+    # The physical rig (two boards, two probes) only allows one test at a
+    # time: strictly queue runs, never cancel an in-progress rig run.
+    concurrency:
+      group: hardware-probes
+      cancel-in-progress: false
 
     steps:
-      - name: Download sink firmware
-        uses: actions/download-artifact@v4
-        with:
-          name: sink-firmware
+      - name: Checkout
+        uses: actions/checkout@v7
 
-      - name: Download source firmware
+      - name: Check for hardware-relevant changes
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            src:
+              - 'usbpd/**'
+              - 'usbpd-traits/**'
+              - 'examples/embassy-nucleo-g474re-drp/**'
+              - 'embassy'
+              - 'embassy/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.github/ci/hardware_test.sh'
+
+      - name: Download initiator firmware
+        if: steps.changes.outputs.src == 'true' || github.event_name == 'workflow_dispatch'
         uses: actions/download-artifact@v4
         with:
-          name: source-firmware
+          name: drp-initiator-firmware
+
+      - name: Download acceptor firmware
+        if: steps.changes.outputs.src == 'true' || github.event_name == 'workflow_dispatch'
+        uses: actions/download-artifact@v4
+        with:
+          name: drp-acceptor-firmware
 
       - name: Verify probes connected
+        if: steps.changes.outputs.src == 'true' || github.event_name == 'workflow_dispatch'
         run: probe-rs list
 
       - name: Hardware test
+        if: steps.changes.outputs.src == 'true' || github.event_name == 'workflow_dispatch'
         env:
           PROBE_SERIAL_A: ${{ secrets.PROBE_SERIAL_A }}
           PROBE_SERIAL_B: ${{ secrets.PROBE_SERIAL_B }}
