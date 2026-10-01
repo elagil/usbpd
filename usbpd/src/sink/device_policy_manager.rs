@@ -51,6 +51,7 @@ pub enum Event {
 
 /// Information that the policy engine will publish to the DPM
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Info {
     /// Request is not supported by the Source
     NotSupportedReceived,

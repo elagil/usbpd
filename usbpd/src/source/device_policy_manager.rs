@@ -33,6 +33,7 @@ pub enum Event {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 /// Information that the policy engine will publish to the DPM
 pub enum Info {
     /// Request is not supported by the Sink
