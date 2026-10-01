@@ -1,6 +1,6 @@
 //! Definitions and implementations of extended messages.
 //!
-//! See [6.5].
+//! Per PD 3.2 Sec. 6.5.
 
 pub mod chunked;
 pub mod extended_control;
@@ -11,14 +11,13 @@ use proc_bitfield::bitfield;
 use crate::protocol_layer::message::data::sink_capabilities::SinkPowerDataObject;
 use crate::protocol_layer::message::data::source_capabilities::PowerDataObject;
 
-/// Types of extended messages.
-///
-/// TODO: Add missing types as per [6.5] and [Table 6.53].
+/// Extended message payload types, per PD 3.2 Sec. 6.5.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[allow(unused)]
+// TODO: Add missing types per PD 3.2 Sec. 6.5 and Tab. 6.53.
 pub enum Extended {
     /// Extended source capabilities.
     SourceCapabilitiesExtended,

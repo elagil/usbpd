@@ -247,7 +247,7 @@ async fn test_epr_negotiation() {
     eprintln!("\n=== Phase 1 Complete: SPR negotiation at 20V ===\n");
 
     // === Phase 2: EPR Mode Entry ===
-    // Per spec 8.3.3.26.2, EPR mode entry flow:
+    // Per PD 3.2 Sec. 8.3.3.26.2, EPR mode entry flow:
     // 1. Sink sends EPR_Mode (Enter), starts SenderResponseTimer
     // 2. Source sends EnterAcknowledged
     // 3. Source performs cable discovery (we skip this in test)
@@ -335,7 +335,7 @@ async fn test_epr_negotiation() {
     eprintln!("=== Phase 2 Complete: EPR mode entry succeeded ===\n");
 
     // === Phase 3: Chunked EPR Source Capabilities ===
-    // This follows the real-world capture flow per USB PD spec 6.12.2.1.2:
+    // This follows the real-world capture flow per PD 3.2 Sec. 6.12.2.1.2:
     // 1. Source sends chunk 0 -> Sink sends GoodCRC
     // 2. Sink sends Chunk Request (chunk=1) -> Source sends GoodCRC
     // 3. Source sends chunk 1 -> Sink sends GoodCRC
@@ -374,7 +374,7 @@ async fn test_epr_negotiation() {
         MessageType::Control(ControlMessageType::GoodCRC)
     ));
 
-    // Probe the Chunk Request message (per spec 6.12.2.1.2.4)
+    // Probe the Chunk Request message (per PD 3.2 Sec. 6.12.2.1.2.4)
     // Chunk requests are parsed as ChunkedExtendedMessage error, so we use parse_extended_chunk
     let chunk_req_data = policy_engine.protocol_layer.driver().probe_transmitted_data();
     let (chunk_req_header, chunk_req_ext_header, _chunk_data) = Message::parse_extended_chunk(&chunk_req_data).unwrap();
@@ -487,7 +487,7 @@ async fn test_epr_negotiation() {
     eprintln!("=== Phase 4 Complete: EPR power negotiation at 28V/5A (140W) ===\n");
 
     // === Phase 5: EPR Keep-Alive ===
-    // Per USB PD spec 8.3.3.3.11, sink must send EprKeepAlive periodically in EPR mode.
+    // Per PD 3.2 Sec. 8.3.3.3.11, sink must send EprKeepAlive periodically in EPR mode.
     // Real capture shows multiple keep-alive exchanges after EPR contract (lines 145-214).
     // We manually transition to EprKeepAlive state to test this flow, simulating multiple
     // keep-alive cycles to verify the sink continues sending them.

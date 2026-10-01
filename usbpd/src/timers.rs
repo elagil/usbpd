@@ -9,48 +9,81 @@ pub trait Timer {
 use core::future::Future;
 
 /// Types of timers that are used for timeouts.
-#[allow(missing_docs)]
+///
+/// Timer names, parameters and values per PD 3.2 Tab. 6.69 and Tab. 6.68.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TimerType {
+    /// BISTContModeTimer (tBISTContMode, 30–60 ms).
     BISTContMode,
+    /// ChunkingNotSupportedTimer (tChunkingNotSupported, 40–50 ms).
     ChunkingNotSupported,
+    /// ChunkSenderRequestTimer (tChunkSenderRequest, 24–30 ms).
     ChunkSenderRequest,
+    /// ChunkSenderResponseTimer (tChunkSenderResponse, 24–30 ms).
     ChunkSenderResponse,
+    /// CRCReceiveTimer (tReceive, 0.9–1.1 ms).
     CRCReceive,
+    /// DataResetFailTimer (tDataResetFail, 300–400 ms).
     DataResetFail,
+    /// DataResetFailUFPTimer (tDataResetFailUFP, 450–550 ms).
     DataResetFailUFP,
+    /// DiscoverIdentityTimer (tDiscoverIdentity, 40–50 ms).
     DiscoverIdentity,
+    /// HardResetCompleteTimer (tHardResetComplete, 4–5 ms).
     HardResetComplete,
+    /// NoResponseTimer (tNoResponse, 4.5–5.5 s).
     NoResponse,
+    /// PSHardResetTimer (tPSHardReset, 25–35 ms).
     PSHardReset,
+    /// PSSourceOffTimer, SPR Mode (tPSSourceOff, 750–920 ms).
     PSSourceOffSpr,
+    /// PSSourceOffTimer, EPR Mode (tPSSourceOff, 1120–1400 ms).
     PSSourceOffEpr,
+    /// PSSourceOnTimer, SPR Mode (tPSSourceOn, 390–480 ms).
     PSSourceOnSpr,
+    /// PSTransitionTimer, SPR Mode (tPSTransition, 450–550 ms).
     PSTransitionSpr,
+    /// PSTransitionTimer, EPR Mode (tPSTransition, 830–1020 ms).
     PSTransitionEpr,
+    /// SenderResponseTimer (tSenderResponse, 27–33 ms).
     SenderResponse,
+    /// SinkEPREnterTimer (tEnterEPR, 450–550 ms).
     SinkEPREnter,
+    /// SinkEPRKeepAliveTimer (tSinkEPRKeepAlive, 0.25–0.5 s).
     SinkEPRKeepAlive,
+    /// SinkPPSPeriodicTimer (tPPSRequest, max 10 s).
     SinkPPSPeriodic,
+    /// SinkRequestTimer (tSinkRequest, min 100 ms).
     SinkRequest,
+    /// SinkWaitCapTimer (tTypeCSinkWaitCap, 310–620 ms).
     SinkWaitCap,
+    /// SourceCapabilityTimer (tTypeCSendSourceCap, 100–200 ms).
     SourceCapability,
+    /// SourceEPRKeepAliveTimer (tSourceEPRKeepAlive, 0.75–1.0 s).
     SourceEPRKeepAlive,
+    /// SourcePPSCommTimer (tPPSTimeout, 12–15 s).
     SourcePPSComm,
+    /// SinkTxTimer (tSinkTx, 16–20 ms).
     SinkTx,
+    /// SwapSourceStartTimer (tSwapSourceStart, min 20 ms).
     SwapSourceStart,
+    /// VCONNDischargeTimer (tVCONNSourceDischarge, 160–240 ms).
     VCONNDischarge,
+    /// VCONNOnTimer (tVCONNSourceTimeout, 100–200 ms).
     VCONNOn,
+    /// VDMModeEntryTimer (tVDMWaitModeEntry, 40–50 ms).
     VDMModeEntry,
+    /// VDMModeExitTimer (tVDMWaitModeExit, 40–50 ms).
     VDMModeExit,
+    /// VDMResponseTimer (tVDMSenderResponse, 24–30 ms).
     VDMResponse,
 }
 
 impl TimerType {
     /// Create a new timer for a given type.
     ///
-    /// Times out after a duration that is given by the USB PD specification.
+    /// Per PD 3.2 Tab. 6.68, the timeout is a fixed value within the specified range.
     pub fn get_timer<TIMER: Timer>(timer_type: TimerType) -> impl Future<Output = ()> {
         match timer_type {
             TimerType::BISTContMode => TIMER::after_millis(45),

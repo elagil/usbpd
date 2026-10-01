@@ -4,11 +4,10 @@
 //! - construction of messages,
 //! - message timers and timeouts,
 //! - message retry counters,
+//! - extended message chunking and assembly,
 //! - reset operation,
 //! - error handling,
 //! - state behaviour.
-//!
-//! At this point in time, the protocol layer does not support extended messages.
 
 pub mod message;
 
@@ -38,7 +37,7 @@ const MAX_MESSAGE_SIZE: usize = 272;
 
 /// Capacity of the pending received-message queue.
 ///
-/// Overflow indicates a misbehaving peer. See spec 6.12.2.2. If full drop oldest message per spec 6.11.
+/// Overflow indicates a misbehaving peer. Per PD 3.2 Sec. 6.12.2.2. If full drop oldest message per PD 3.2 Sec. 6.11.
 const PENDING_RX_CAPACITY: usize = 2;
 
 /// Size of the message header in bytes.
@@ -99,7 +98,7 @@ pub enum TxError {
     /// unchunked_extended_messages_supported must be false (library uses chunked mode).
     #[error("unchunked extended messages not supported")]
     UnchunkedExtendedMessagesNotSupported,
-    /// AVS voltage LSB 2 bits must be zero per USB PD 3.2 Table 6.26.
+    /// AVS voltage LSB 2 bits must be zero per PD 3.2 Tab. 6.26.
     #[error("AVS voltage alignment invalid")]
     AvsVoltageAlignmentInvalid,
 }
@@ -129,7 +128,7 @@ impl Default for Counters {
 
 /// Queue of messages received while this port was awaiting GoodCRC for its own transmission.
 ///
-/// Per spec 6.12.2.3.1 the receive state machine runs concurrently, so messages are acknowledged and stored for
+/// Per PD 3.2 Sec. 6.12.2.3.1 the receive state machine runs concurrently, so messages are acknowledged and stored for
 /// later delivery instead of being dropped.
 #[derive(Debug, Default)]
 struct PendingRx<const N: usize> {
@@ -138,7 +137,7 @@ struct PendingRx<const N: usize> {
 }
 
 impl<const N: usize> PendingRx<N> {
-    /// Park a message, dropping the oldest one on overflow (per spec 6.11).
+    /// Park a message, dropping the oldest one on overflow (per PD 3.2 Sec. 6.11).
     fn push(&mut self, message: Message) {
         if self.queue.is_full() {
             _ = self.queue.pop_front();
@@ -152,13 +151,16 @@ impl<const N: usize> PendingRx<N> {
         self.queue.pop_front()
     }
 
-    /// Discard all parked messages (§6.12.2.3.2, layer reset for receive).
+    /// Discard all parked messages (per PD 3.2 Sec. 6.12.2.3.2, layer reset for receive).
     fn clear(&mut self) {
         self.queue.clear();
     }
 }
 
 /// The USB PD protocol layer.
+///
+/// Implements message-level state including message IDs, retries,
+/// `GoodCRC` handling (also via parked extended messages) and hard resets.
 #[derive(Debug)]
 pub(crate) struct ProtocolLayer<DRIVER: Driver, TIMER: Timer> {
     driver: DRIVER,
@@ -235,10 +237,10 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
 
     /// Wait until a GoodCrc message is received, or a timeout occurs.
     ///
-    /// Per spec 6.12.2.3.1 the receive state machine runs concurrently with the
+    /// Per PD 3.2 Sec. 6.12.2.3.1 the receive state machine runs concurrently with the
     /// transmit state machine, so a port partner may transmit while this port
     /// awaits GoodCRC. Such messages are acknowledged and parked for later
-    /// delivery instead of aborting the wait (§6.12.2.2.1.5, Table 8.2).
+    /// delivery instead of aborting the wait (per PD 3.2 Sec. 6.12.2.2.1.5, Tab. 8.2).
     async fn wait_for_good_crc(&mut self) -> Result<(), RxError> {
         trace!("Wait for GoodCrc");
 
@@ -257,7 +259,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                         self.counters.tx_message.value()
                     );
                     if message.header.message_id() == self.counters.tx_message.value() {
-                        // See spec, [6.7.1.1]
+                        // Per PD 3.2 Sec. 6.7.1.1
                         self.counters.retry.reset();
                         _ = self.counters.tx_message.increment();
                         return Ok(());
@@ -283,10 +285,10 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
 
     /// Park a regular (not `GoodCRC`) message received while awaiting `GoodCRC` for our own transmission.
     ///
-    /// Acknowledges the message (per 6.7.1.2), skipping GoodCRC emission for drivers with automatic acknowledgement.
-    /// Duplicates are only acknowledged again, not parked twice (per 6.7.1.2).
+    /// Acknowledges the message (per PD 3.2 Sec. 6.7.1.2), skipping GoodCRC emission for drivers with automatic acknowledgement.
+    /// Duplicates are only acknowledged again, not parked twice (per PD 3.2 Sec. 6.7.1.2).
     ///
-    /// Per spec 6.2.1.1.5, the sender of a GoodCRC Message Shall set the Specification Revision field to match the
+    /// Per PD 3.2 Sec. 6.2.1.1.5, the sender of a GoodCRC Message Shall set the Specification Revision field to match the
     /// revision of the message being acknowledged. Adopt the received revision before acknowledging.
     async fn park_received_message(&mut self, message: Message) -> Result<(), RxError> {
         if let Ok(revision) = message.header.spec_revision() {
@@ -311,7 +313,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     ///
     /// This catches common mistakes when constructing messages:
     /// - unchunked_extended_messages_supported should always be false
-    /// - AVS voltage LSB 2 bits should be zero (per USB PD 3.2 Table 6.26)
+    /// - AVS voltage LSB 2 bits should be zero (per PD 3.2 Tab. 6.26)
     ///
     /// Only validates outgoing messages - never called when parsing received data.
     /// Returns an error if validation fails, allowing the caller to handle it appropriately.
@@ -337,7 +339,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                         return Err(TxError::UnchunkedExtendedMessagesNotSupported);
                     }
 
-                    // The requested PDO identifies the RDO format. An AVS RDO (Table 6.26) requires
+                    // The requested PDO identifies the RDO format. An AVS RDO (per PD 3.2 Tab. 6.26) requires
                     // the voltage LSB two bits to be zero.
                     if matches!(
                         epr.pdo,
@@ -399,7 +401,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                 }
                 Err(DriverTxError::HardReset) => Err(TxError::HardReset.into()),
                 Err(DriverTxError::Discarded) => {
-                    // Per spec 6.12.2.2.1.9 (`PRL_Tx_Transmission_Error`): increment the `MessageIDCounter` and
+                    // Per PD 3.2 Sec. 6.12.2.2.1.9 (`PRL_Tx_Transmission_Error`): increment the `MessageIDCounter` and
                     // inform the Policy Engine of the transmission error, so the partner's stored ID is not reused.
                     _ = self.counters.tx_message.increment();
                     Err(ProtocolError::TransmitRetriesExceeded(self.counters.retry.max_value()))
@@ -422,7 +424,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                                     // Retry transmission, until the retry counter is exceeded.
                                 }
                                 Err(CounterError::Exceeded) => {
-                                    // Per spec 6.12.2.2.1.9 (PRL_Tx_Transmission_Error): increment the `MessageIDCounter`
+                                    // Per PD 3.2 Sec. 6.12.2.2.1.9 (PRL_Tx_Transmission_Error): increment the `MessageIDCounter`
                                     // and inform the Policy Engine of the transmission error, so the partner's stored ID is not reused.
                                     let _ = self.counters.tx_message.increment();
                                     return Err(ProtocolError::TransmitRetriesExceeded(
@@ -586,7 +588,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                     }
 
                     if self.extended_rx_buffer.len() < total_size as usize {
-                        // Need more chunks - send chunk request per spec 6.12.2.1.2.4
+                        // Need more chunks - send chunk request per PD 3.2 Sec. 6.12.2.1.2.4
                         let next_chunk = self
                             .extended_rx_expected
                             .as_ref()
@@ -640,11 +642,11 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                     return Err(RxError::UnsupportedMessage);
                 }
                 MessageType::Control(ControlMessageType::SoftReset) => {
-                    // Per spec 6.12.2.3.2/.3: reset the `MessageIDCounter` and clear the stored `MessageID` in
+                    // Per PD 3.2 Sec. 6.12.2.3.2/.3: reset the `MessageIDCounter` and clear the stored `MessageID` in
                     // `PRL_Rx_Layer_Reset_for_Receive`, then send `GoodCRC` from `PRL_RxSend_GoodCRC`
                     // once reset actions completed.
                     //
-                    // Per spec 6.8.1, the receiver resets its `MessageIDCounter` and `RetryCounter`
+                    // Per PD 3.2 Sec. 6.8.1, the receiver resets its `MessageIDCounter` and `RetryCounter`
                     // before the `Accept` response.
                     self.reset();
                     match self.handle_rx_ack(&message).await? {
@@ -666,6 +668,8 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     }
 
     /// Receive a message.
+    ///
+    /// Waits until a valid message arrives or the receive timeout expires.
     pub async fn receive_message(&mut self) -> Result<Message, ProtocolError> {
         self.receive_message_inner().await.map_err(|err| err.into())
     }
@@ -731,7 +735,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                         };
                     }
                     Err(RxError::ParseError(err)) => {
-                        // Per spec 6.6.1, a corrupt header is dropped.
+                        // Per PD 3.2 Sec. 6.6.1, a corrupt header is dropped.
                         // The sender retries after its `CRCReceiveTimer` expiry.
                         trace!("Dropping frame with parse error: {:?}", err);
                         continue;
@@ -749,11 +753,11 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
 
     /// Perform a hard-reset procedure.
     ///
-    // See spec, [6.7.1.1]
+    // Per PD 3.2 Sec. 6.7.1.1
     pub async fn hard_reset(&mut self) -> Result<(), ProtocolError> {
-        // Per spec 6.12.2.3.2, pending receive state is cleared on layer reset.
+        // Per PD 3.2 Sec. 6.12.2.3.2, pending receive state is cleared on layer reset.
         self.pending_rx.clear();
-        // Per spec 6.12.2.4.1 / Table 8.58: the `MessageIDCounter`, the stored copy of the `MessageID` and
+        // Per PD 3.2 Sec. 6.12.2.4.1 / Tab. 8.58: the `MessageIDCounter`, the stored copy of the `MessageID` and
         // the `RetryCounter` are all reset.
         self.reset();
         self.counters.retry.reset();
@@ -792,7 +796,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         &mut self,
         message_type: ExtendedControlMessageType,
     ) -> Result<(), ProtocolError> {
-        // Per USB PD spec 6.2.1.1.2: for extended messages, num_objects must be non-zero.
+        // Per PD 3.2 Sec. 6.2.1.1.2: for extended messages, num_objects must be non-zero.
         // ExtendedControl = 2-byte extended header + 2-byte data = 4 bytes = 1 data object.
         let mut message = Message::new(Header::new_extended(
             self.default_header,
@@ -826,7 +830,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         self.transmit(Message::new_with_data(header, Data::EprMode(mdo))).await
     }
 
-    /// Transmit a chunk request message per USB PD spec 6.12.2.1.2.4.
+    /// Transmit a chunk request message per PD 3.2 Sec. 6.12.2.1.2.4.
     ///
     /// A chunk request is an extended message with:
     /// - The same message type as the chunked message being received
@@ -851,7 +855,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         let mut buffer = Self::get_message_buffer();
         let mut offset = header.to_bytes(&mut buffer);
         offset += ext_header.to_bytes(&mut buffer[offset..]);
-        // Pad to 4-byte Data Object boundary per USB PD spec.
+        // Pad to 4-byte Data Object boundary per PD 3.2.
         // Extended header is 2 bytes, so add 2 bytes padding to complete the Data Object.
         // Buffer is already zeroed, so just advance offset.
         offset += 2;
@@ -880,7 +884,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
 
     /// Transmit sink capabilities in response to Get_Sink_Cap.
     ///
-    /// Per USB PD Spec R3.2 Section 6.4.1.6, sinks respond to Get_Sink_Cap messages
+    /// Per PD 3.2 Sec. 6.4.1.6, sinks respond to Get_Sink_Cap messages
     /// with a Sink_Capabilities message containing PDOs describing what power levels
     /// the sink can operate at.
     pub async fn transmit_sink_capabilities(
@@ -901,7 +905,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
 
     /// Transmit EPR sink capabilities in response to EPR_Get_Sink_Cap.
     ///
-    /// Per USB PD Spec R3.2 Section 8.3.3.3.10, sinks respond to EPR_Get_Sink_Cap
+    /// Per PD 3.2 Sec. 8.3.3.3.10, sinks respond to EPR_Get_Sink_Cap
     /// messages with an EPR_Sink_Capabilities message.
     pub async fn transmit_epr_sink_capabilities(
         &mut self,
@@ -1128,7 +1132,7 @@ mod tests {
         }
     }
 
-    /// Build a `GoodCRC` frame acknowledging `message_id` (per spec 6.3.1).
+    /// Build a `GoodCRC` frame acknowledging `message_id` (per PD 3.2 Sec. 6.3.1).
     fn good_crc_bytes(message_id: u8) -> [u8; 2] {
         // Header: Control `GoodCRC` (raw type 1), num_objects = 0, spec rev 3.x,
         // power role sink (0), data role UFP (0). Little-endian on the wire.

@@ -49,11 +49,11 @@ pub enum Info {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 /// How the source DPM can respond to a request from the sink
 pub enum CapabilityResponse {
-    /// Request is rejected
+    /// Request is rejected.
     Reject,
-    /// Request could be met later from the power reserve & present contract is still valid
+    /// Request could be met later from the power reserve & present contract is still valid.
     Wait,
-    /// Requast can be met now
+    /// Request can be met now.
     Accept,
 }
 
@@ -166,7 +166,7 @@ pub trait DrpDevicePolicyManager {
 
     /// **DRP** Detect whether a fast role swap is signaled on the cc lines
     ///
-    /// Table 1.4 - Fast Role Swap Request:
+    /// Fast Role Swap Request (PD 3.2 Tab. 1.4):
     ///
     /// An indication from an Initial Source to the Initial Sink that a
     /// Fast Role Swap is needed. The Fast Role Swap Request is indicated by

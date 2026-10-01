@@ -1,6 +1,6 @@
 //! Definitions of EPR mode data message content.
 //!
-//! See [6.4.10].
+//! Per PD 3.2 Sec. 6.4.10.
 use proc_bitfield::bitfield;
 
 /// Possible actions, encoded in the EPR mode data object.
@@ -47,7 +47,7 @@ impl From<u8> for Action {
 bitfield! {
     /// The EPR mode data object that encodes an action, as well as corresponding payload data.
     ///
-    /// See [Table 6.50].
+    /// Per PD 3.2 Tab. 6.50.
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
