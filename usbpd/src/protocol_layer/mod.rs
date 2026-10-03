@@ -497,7 +497,9 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                         ExtendedMessageType::EprSourceCapabilities => {
                             Payload::Extended(message::extended::Extended::EprSourceCapabilities(
                                 ext_payload
-                                    .chunks_exact(4)
+                                    .as_chunks::<4>()
+                                    .0
+                                    .iter()
                                     .map(|buf| {
                                         message::data::source_capabilities::parse_raw_pdo(LittleEndian::read_u32(buf))
                                     })
