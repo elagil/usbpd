@@ -56,9 +56,6 @@ pub enum Data {
     /// Used to enter, acknowledge or exit EPR mode.
     EprMode(epr_mode::EprModeDataObject),
     /// Vendor defined messages (VDM).
-    ///
-    /// Currently parsed from the wire but not forwarded to user applications.
-    /// TODO: Add DevicePolicyManager callback to allow applications to handle vendor-specific messages.
     VendorDefined((vendor_defined::VdmHeader, Vec<u32, 7>)),
     /// Unknown data type.
     Unknown,
@@ -212,7 +209,13 @@ impl Data {
                 LittleEndian::write_u32(payload, *data_object);
                 PDO_SIZE
             }
-            Self::VendorDefined(_) => unimplemented!(),
+            Self::VendorDefined((header, vdos)) => {
+                header.to_bytes(payload);
+                for (i, vdo) in vdos.iter().enumerate() {
+                    LittleEndian::write_u32(&mut payload[(i + 1) * PDO_SIZE..], *vdo);
+                }
+                (1 + vdos.len()) * PDO_SIZE
+            }
         }
     }
 }

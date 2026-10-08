@@ -96,6 +96,9 @@ pub enum TxError {
     /// AVS voltage LSB 2 bits must be zero per USB PD 3.2 Table 6.26.
     #[error("AVS voltage alignment invalid")]
     AvsVoltageAlignmentInvalid,
+    /// A Vendor_Defined message needs at least the VDM header.
+    #[error("vendor defined message without VDM header")]
+    EmptyVendorDefined,
 }
 
 #[derive(Debug)]
@@ -736,11 +739,35 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             match self.transmit_inner(&buffer[..offset]).await {
                 Ok(_) => self.wait_for_good_crc().await,
                 Err(TxError::HardReset) => Err(RxError::HardReset),
-                Err(TxError::UnchunkedExtendedMessagesNotSupported | TxError::AvsVoltageAlignmentInvalid) => {
+                Err(
+                    TxError::UnchunkedExtendedMessagesNotSupported
+                    | TxError::AvsVoltageAlignmentInvalid
+                    | TxError::EmptyVendorDefined,
+                ) => {
                     unreachable!("validation should happen before transmit_inner")
                 }
             }
         }
+    }
+
+    /// Transmit a Vendor_Defined message.
+    ///
+    /// `objects` holds the VDM header first, then up to six VDOs.
+    pub async fn transmit_vendor_defined(&mut self, objects: &[u32]) -> Result<(), ProtocolError> {
+        let Some((&vdm_header, vdos)) = objects.split_first() else {
+            return Err(TxError::EmptyVendorDefined.into());
+        };
+        let vdos: heapless::Vec<u32, 7> = vdos.iter().copied().take(6).collect();
+
+        let header = Header::new_data(
+            self.default_header,
+            self.counters.tx_message,
+            DataMessageType::VendorDefined,
+            (1 + vdos.len()) as u8,
+        );
+
+        let data = Data::VendorDefined((message::data::vendor_defined::VdmHeader::from(vdm_header), vdos));
+        self.transmit(Message::new_with_data(header, data)).await
     }
 
     /// Transmit sink capabilities in response to Get_Sink_Cap.

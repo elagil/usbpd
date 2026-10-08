@@ -7,6 +7,9 @@ use core::future::Future;
 use crate::protocol_layer::message::data::{epr_mode, request, sink_capabilities, source_capabilities};
 use crate::units::Power;
 
+/// Payload of a vendor defined message.
+pub type VdmObjects = heapless::Vec<u32, 7>;
+
 /// Events that the device policy manager can send to the policy engine.
 #[derive(Debug)]
 pub enum Event {
@@ -37,6 +40,8 @@ pub enum Event {
     ExitEprMode,
     /// Request a certain power level.
     RequestPower(request::PowerSource),
+    /// Send a vendor defined message.
+    SendVdm(VdmObjects),
 }
 
 /// Trait for the device policy manager.
@@ -112,6 +117,15 @@ pub trait DevicePolicyManager {
     fn sink_capabilities(&self) -> sink_capabilities::SinkCapabilities {
         // Default: 5V @ 100mA (1A = 100 * 10mA)
         sink_capabilities::SinkCapabilities::new_vsafe5v_only(100)
+    }
+
+    /// A vendor defined message was received in the ready state.
+    ///
+    /// `objects` holds the VDM header first, then the VDOs. Return the objects to
+    /// send back (VDM header first), or `None` to answer with Not_Supported, which
+    /// is the default.
+    fn vdm(&mut self, _objects: &[u32]) -> impl Future<Output = Option<VdmObjects>> {
+        async { None }
     }
 
     /// The policy engine gets and evaluates device policy events when ready.

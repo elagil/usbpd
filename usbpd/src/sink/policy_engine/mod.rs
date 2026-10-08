@@ -17,7 +17,7 @@ use crate::protocol_layer::message::header::{
 };
 use crate::protocol_layer::message::{Payload, extended};
 use crate::protocol_layer::{ProtocolError, RxError, SinkProtocolLayer, TxError};
-use crate::sink::device_policy_manager::Event;
+use crate::sink::device_policy_manager::{Event, VdmObjects};
 use crate::timers::{Timer, TimerType};
 use crate::{DataRole, PowerRole, units};
 
@@ -57,6 +57,7 @@ enum State {
     /// which requires running SinkRequestTimer before allowing re-request.
     Ready(request::PowerSource, bool),
     SendNotSupported(request::PowerSource),
+    SendVdm(request::PowerSource, VdmObjects),
     SendSoftReset,
     SoftReset,
     HardReset,
@@ -407,6 +408,20 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                                 // Handle source exit notification.
                                 State::EprExitReceived(*power_source)
                             }
+                            MessageType::Data(DataMessageType::VendorDefined) => {
+                                let Some(Payload::Data(Data::VendorDefined((vdm_header, vdos)))) = &message.payload
+                                else {
+                                    unreachable!()
+                                };
+                                let mut objects = VdmObjects::new();
+                                let _ = objects.push(u32::from(*vdm_header));
+                                let _ = objects.extend_from_slice(vdos);
+
+                                match self.device_policy_manager.vdm(&objects).await {
+                                    Some(reply) => State::SendVdm(*power_source, reply),
+                                    None => State::SendNotSupported(*power_source),
+                                }
+                            }
                             // Per spec 8.3.3.3.7: Get_Sink_Cap → GiveSinkCap (send Sink_Capabilities)
                             MessageType::Control(ControlMessageType::GetSinkCap) => {
                                 State::GiveSinkCap(Mode::Spr, *power_source)
@@ -435,6 +450,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                         Event::EnterEprMode(pdp) => State::EprModeEntry(*power_source, pdp),
                         Event::ExitEprMode => State::EprSendExit,
                         Event::RequestPower(power_source) => State::SelectCapability(power_source),
+                        Event::SendVdm(objects) => State::SendVdm(*power_source, objects),
                         Event::None => State::Ready(*power_source, false),
                     },
                     // Timer timeout handling
@@ -452,6 +468,11 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: DevicePolicyManager> Sink<DRIVER, TIMER,
                 self.protocol_layer
                     .transmit_control_message(ControlMessageType::NotSupported)
                     .await?;
+
+                State::Ready(*power_source, false)
+            }
+            State::SendVdm(power_source, objects) => {
+                self.protocol_layer.transmit_vendor_defined(objects).await?;
 
                 State::Ready(*power_source, false)
             }
