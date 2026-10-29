@@ -39,7 +39,7 @@ pub mod dummy;
 
 /// This module defines the CGS (centimeter-gram-second) unit system
 /// for use in the USB Power Delivery Protocol layer. These units are
-/// defined using the `uom` (units of measurement) library and are
+/// defined using [uom-ng](https://docs.rs/uom-ng) and are
 /// expressed as `u32` values for milliamps, millivolts, and microwatts.
 pub mod units {
     ISQ!(

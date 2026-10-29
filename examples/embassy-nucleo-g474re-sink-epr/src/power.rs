@@ -6,7 +6,9 @@ use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
 use embassy_stm32::{Peri, bind_interrupts, dma, peripherals};
 use embassy_time::{Duration, Timer, with_timeout};
 use panic_probe as _;
-use uom::si::electric_current::{centiampere, milliampere};
+#[cfg(not(feature = "avs"))]
+use uom::si::electric_current::centiampere;
+use uom::si::electric_current::milliampere;
 use uom::si::electric_potential::millivolt;
 use uom::si::power::{milliwatt, watt};
 #[cfg(not(feature = "avs"))]
