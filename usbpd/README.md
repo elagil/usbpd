@@ -23,6 +23,16 @@ USB PD PHYs.
 
 Find usage examples for different platforms and modes in the [GitHub repository](https://github.com/elagil/usbpd/tree/main/examples).
 
+Quantities use [uom-ng](https://crates.io/crates/uom-ng), which evaluates supported integer
+conversion factors at compile time. Applications defining units or exchanging quantities with
+`usbpd` should use the same package under the `uom` dependency name:
+
+```sh
+cargo add uom-ng@0.39 --rename uom --no-default-features --features si,u32
+```
+
+Rust imports remain `uom::`. Quantities from the original `uom` package are distinct types.
+
 # Credit
 
 Inherits message parsing code from [usb-pd-rs](https://github.com/fmckeogh/usb-pd-rs).

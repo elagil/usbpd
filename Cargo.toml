@@ -17,7 +17,7 @@ usbpd-traits = { version = "2.0.0", path = "./usbpd-traits" }
 proc-bitfield = "0.5.3"
 byteorder = { version = "1.5.0", default-features = false }
 heapless = "0.9.2"
-uom = { version = "0.36.0", default-features = false }
+uom = { package = "uom-ng", version = "0.39.0", default-features = false }
 embassy-futures = "0.1.1"
 
 
