@@ -1,6 +1,6 @@
 name: DRP hardware test
 
-description: Execute the role-swap test on hardwre.
+description: Execute the role-swap test on hardware.
 
 inputs:
   ci-run-id:
@@ -23,10 +23,6 @@ runs:
         name: drp-acceptor-firmware
         run-id: ${{ inputs.ci-run-id }}
         github-token: ${{ github.token }}
-
-    - name: Verify probes connected
-      run: probe-rs list
-      shell: bash
 
     - name: Role-swap test
       run: bash .github/ci/hardware_test.sh
