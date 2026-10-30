@@ -2,6 +2,7 @@ on:
   pull_request:
   push:
     branches: [main]
+    tags: [usbpd/*, usbpd-traits/*]
   workflow_dispatch:
 
 name: CI
