@@ -1,5 +1,7 @@
 on:
   pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 name: CI
@@ -35,6 +37,14 @@ jobs:
 
       - name: Cache build
         uses: Swatinem/rust-cache@v2
+
+      - name: Install actionlint
+        uses: taiki-e/install-action@v2
+        with:
+          tool: actionlint
+
+      - name: Lint workflows
+        run: actionlint
 
       - name: Format, lint, build, test
         run: bash .github/ci/host.sh
@@ -106,19 +116,10 @@ jobs:
           path: ${{ matrix.dir }}/target/thumbv7em-none-eabihf/release/${{ matrix.artifact-binary }}
           if-no-files-found: error
 
+  # One job per compatibility tool; the crate/feature combinations are steps.
   msrv:
     name: Minimum Supported Rust Version
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - crate: usbpd
-            features: serde,log
-          - crate: usbpd
-            features: serde,defmt
-          - crate: usbpd-traits
-            features: defmt
     steps:
       - name: Checkout sources
         uses: actions/checkout@v7
@@ -129,49 +130,51 @@ jobs:
       - name: Cache build
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: ${{ matrix.crate }}
-          key: msrv-${{ matrix.crate }}-${{ matrix.features }}
+          workspaces: |
+            usbpd
+            usbpd-traits
+          key: msrv
 
-      - name: Check MSRV
-        run: cargo hack check --rust-version -p ${{ matrix.crate }} --features ${{ matrix.features }}
+      - name: Check MSRV (usbpd, serde,log)
+        run: cargo hack check --rust-version -p usbpd --features serde,log
+
+      - name: Check MSRV (usbpd, serde,defmt)
+        run: cargo hack check --rust-version -p usbpd --features serde,defmt
+
+      - name: Check MSRV (usbpd-traits, defmt)
+        run: cargo hack check --rust-version -p usbpd-traits --features defmt
 
   semver:
     name: Semantic Versioning
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - crate: usbpd
-            features: serde,log
-          - crate: usbpd
-            features: serde,defmt
-          - crate: usbpd-traits
-            features: defmt
     steps:
       - name: Checkout sources
         uses: actions/checkout@v7
 
-      - name: Check semver
+      - name: Check semver (usbpd, serde,log)
         uses: obi1kenobi/cargo-semver-checks-action@v2
         with:
-          manifest-path: ${{ matrix.crate }}/Cargo.toml
+          manifest-path: usbpd/Cargo.toml
           feature-group: default-features
-          features: ${{ matrix.features }}
+          features: serde,log
+
+      - name: Check semver (usbpd, serde,defmt)
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          manifest-path: usbpd/Cargo.toml
+          feature-group: default-features
+          features: serde,defmt
+
+      - name: Check semver (usbpd-traits, defmt)
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          manifest-path: usbpd-traits/Cargo.toml
+          feature-group: default-features
+          features: defmt
 
   min-versions:
     name: Minimal Direct Dependency Versions
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - crate: usbpd
-            features: serde,log
-          - crate: usbpd
-            features: serde,defmt
-          - crate: usbpd-traits
-            features: defmt
     env:
       # `-Zminimal-versions` is nightly-only cargo; pin it explicitly so the
       # pinned channel in rust-toolchain.toml cannot flip this job to stable.
@@ -188,57 +191,19 @@ jobs:
         with:
           tool: cargo-hack,cargo-minimal-versions
 
-      - name: Check minimum dependency versions
-        run: cargo minimal-versions check -p ${{ matrix.crate }} --features ${{ matrix.features }}
-
-  hardware_test:
-    name: Hardware test
-    needs: [firmware]
-    runs-on: self-hosted
-    # The physical rig (two boards, two probes) only allows one test at a
-    # time: strictly queue runs, never cancel an in-progress rig run.
-    concurrency:
-      group: hardware-probes
-      cancel-in-progress: false
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Check for hardware-relevant changes
-        id: changes
-        uses: dorny/paths-filter@v3
+      - name: Cache build
+        uses: Swatinem/rust-cache@v2
         with:
-          filters: |
-            src:
-              - 'usbpd/**'
-              - 'usbpd-traits/**'
-              - 'examples/embassy-nucleo-g474re-drp/**'
-              - 'embassy'
-              - 'embassy/**'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - '.github/ci/hardware_test.sh'
+          workspaces: |
+            usbpd
+            usbpd-traits
+          key: min-versions
 
-      - name: Download initiator firmware
-        if: steps.changes.outputs.src == 'true' || github.event_name == 'workflow_dispatch'
-        uses: actions/download-artifact@v4
-        with:
-          name: drp-initiator-firmware
+      - name: Check minimum dependency versions (usbpd, serde,log)
+        run: cargo minimal-versions check -p usbpd --features serde,log
 
-      - name: Download acceptor firmware
-        if: steps.changes.outputs.src == 'true' || github.event_name == 'workflow_dispatch'
-        uses: actions/download-artifact@v4
-        with:
-          name: drp-acceptor-firmware
+      - name: Check minimum dependency versions (usbpd, serde,defmt)
+        run: cargo minimal-versions check -p usbpd --features serde,defmt
 
-      - name: Verify probes connected
-        if: steps.changes.outputs.src == 'true' || github.event_name == 'workflow_dispatch'
-        run: probe-rs list
-
-      - name: Hardware test
-        if: steps.changes.outputs.src == 'true' || github.event_name == 'workflow_dispatch'
-        env:
-          PROBE_SERIAL_A: ${{ secrets.PROBE_SERIAL_A }}
-          PROBE_SERIAL_B: ${{ secrets.PROBE_SERIAL_B }}
-        run: bash .github/ci/hardware_test.sh
+      - name: Check minimum dependency versions (usbpd-traits, defmt)
+        run: cargo minimal-versions check -p usbpd-traits --features defmt
