@@ -16,21 +16,18 @@ ACCEPTOR_ELF="usbpd-g474re-drp-acceptor"
 # Ensure firmware binaries are executable.
 chmod +x "$INITIATOR_ELF" "$ACCEPTOR_ELF"
 
-# ST-LINK probes are exclusively opened.
-# Attach to both boards first, each capturing RTT output to its own log, and let them run.
 LOG_A=$(mktemp)
 LOG_B=$(mktemp)
 ERR_A=$(mktemp)
 ERR_B=$(mktemp)
 trap 'kill -9 "$PID_A" "$PID_B" 2>/dev/null || true; rm -f "$LOG_A" "$LOG_B" "$ERR_A" "$ERR_B"' EXIT
 
-# Flash & run the initiator on probe A.
-probe-rs attach --chip "$CHIP" --probe "$PROBE_A" "$INITIATOR_ELF" \
+# Program ELF
+probe-rs run --chip "$CHIP" --probe "$PROBE_A" "$INITIATOR_ELF" \
   --connect-under-reset --target-output-file "defmt=$LOG_A" > /dev/null 2>"$ERR_A" &
 PID_A=$!
 
-# Flash & run the acceptor on probe B.
-probe-rs attach --chip "$CHIP" --probe "$PROBE_B" "$ACCEPTOR_ELF" \
+probe-rs run --chip "$CHIP" --probe "$PROBE_B" "$ACCEPTOR_ELF" \
   --connect-under-reset --target-output-file "defmt=$LOG_B" > /dev/null 2>"$ERR_B" &
 PID_B=$!
 
