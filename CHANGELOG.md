@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Source mode (`usbpd/src/source/`), first public release with it.
+- SPR and EPR source mode (`usbpd/src/source/`), first public release with it.
 - Dual-role port (DRP) support (`usbpd/src/dual_role.rs`), with a DRP example.
 - `uom-ng` for compile-time evaluation of unit conversion factors. Quantities from
   the original `uom` crate are distinct types. Note: `uom-ng` is a fork used for an
@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Wait` message handling is incomplete.
 - Message-type coverage is incomplete.
-- The source-mode policy engine is new in this release and is covered by
+- The SPR/EPR source-mode policy engine is new in this release and is covered by
   host tests only.
 
 ## `usbpd-traits`

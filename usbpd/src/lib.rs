@@ -12,9 +12,12 @@
 //!
 //! ## Currently supported modes
 //!
-//! - SPR Sink with helpers for requesting
-//! - A fixed supply
-//! - A Programmable Power Supply (PPS)
+//! - SPR and EPR sink mode, with helpers for requesting
+//!   - a fixed supply (highest or specific voltage and/or current),
+//!   - a Programmable Power Supply (PPS), and
+//!   - an Adjustable Voltage Supply (AVS),
+//! - SPR and EPR source mode, and
+//! - dual-role port (DRP) support.
 //!
 
 #![cfg_attr(not(test), no_std)]

@@ -18,6 +18,14 @@ USB PD PHYs.
   - the highest fixed voltage,
   - a specific fixed voltage and/or current, and
   - augmented PDOs (PPS or AVS).
+- SPR and EPR source mode
+- Dual-role port (DRP) support
+
+## Known limitations
+
+- `Wait` message handling is incomplete.
+- Message-type coverage is incomplete.
+- The SPR/EPR source-mode policy engine is covered by host tests only.
 
 ## Usage
 
