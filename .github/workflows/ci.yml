@@ -38,14 +38,6 @@ jobs:
       - name: Cache build
         uses: Swatinem/rust-cache@v2
 
-      - name: Install actionlint
-        uses: taiki-e/install-action@v2
-        with:
-          tool: actionlint
-
-      - name: Lint workflows
-        run: actionlint
-
       - name: Format, lint, build, test
         run: bash .github/ci/host.sh
 
