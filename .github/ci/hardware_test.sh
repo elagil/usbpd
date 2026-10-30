@@ -17,7 +17,7 @@ ACCEPTOR_ELF="usbpd-g474re-drp-acceptor"
 chmod +x "$INITIATOR_ELF" "$ACCEPTOR_ELF"
 
 # ST-LINK probes are exclusively opened.
-# Attach to both boards first, each # capturing RTT output to its own log, and let them run.
+# Attach to both boards first, each capturing RTT output to its own log, and let them run.
 LOG_A=$(mktemp)
 LOG_B=$(mktemp)
 ERR_A=$(mktemp)
