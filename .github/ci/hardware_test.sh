@@ -4,8 +4,9 @@ set -euo pipefail
 CHIP="STM32G474RETx"
 TIMEOUT_SECS="${TIMEOUT_SECS:-30}"
 
-# Rig probe serials, hard-coded: the two ST-LINKs share a VID:PID, so only the
-# serial distinguishes them. A = initiator board, B = acceptor board.
+# Probe serial numbers:
+#   A = initiator board
+#   B = acceptor board
 PROBE_A="0483:374e:002100223235511937333439"
 PROBE_B="0483:374e:004A002C3235511837333439"
 
@@ -15,8 +16,8 @@ ACCEPTOR_ELF="usbpd-g474re-drp-acceptor"
 # Ensure firmware binaries are executable.
 chmod +x "$INITIATOR_ELF" "$ACCEPTOR_ELF"
 
-# ST-LINK probes are exclusively opened. Attach to both boards first, each
-# capturing RTT output to its own log, and let them run.
+# ST-LINK probes are exclusively opened.
+# Attach to both boards first, each # capturing RTT output to its own log, and let them run.
 LOG_A=$(mktemp)
 LOG_B=$(mktemp)
 ERR_A=$(mktemp)
@@ -34,7 +35,7 @@ probe-rs attach --chip "$CHIP" --probe "$PROBE_B" "$ACCEPTOR_ELF" \
 PID_B=$!
 
 # Block until the CI:SWAP marker is written to the log: returns within
-# milliseconds of the marker appearing; returns 1 when the probe-rs process
+# milliseconds of the marker appearing. Returns 1 when the probe-rs process
 # dies first (tail --pid then ends the stream) or the deadline expires.
 wait_marker() {
   grep -q "CI:SWAP" <(timeout "$TIMEOUT_SECS" tail -n +1 -f --pid="$2" "$1")
@@ -57,8 +58,8 @@ check_dead_process() {
 check_dead_process "initiator" "$PID_A" "$ERR_A" "$OK_A"
 check_dead_process "acceptor" "$PID_B" "$ERR_B" "$OK_B"
 
-# Release the probes: SIGTERM triggers probe-rs' graceful shutdown; SIGKILL
-# as fallback so a hung process cannot block subsequent invocations.
+# Release the probes: SIGTERM triggers probe-rs' graceful shutdown.
+# SIGKILL as fallback so a hung process cannot block subsequent invocations.
 kill "$PID_A" "$PID_B" 2>/dev/null || true
 for _ in $(seq 1 50); do
   kill -0 "$PID_A" 2>/dev/null || kill -0 "$PID_B" 2>/dev/null || break
