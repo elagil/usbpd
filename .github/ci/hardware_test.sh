@@ -2,10 +2,12 @@
 set -euo pipefail
 
 CHIP="STM32G474RETx"
-PROBE_A="${PROBE_SERIAL_A:?Set PROBE_SERIAL_A secret}"
-PROBE_B="${PROBE_SERIAL_B:?Set PROBE_SERIAL_B secret}"
-PROBE_VID_PID="${PROBE_VID_PID:-0483:374e}"
 TIMEOUT_SECS="${TIMEOUT_SECS:-30}"
+
+# Rig probe serials, hard-coded: the two ST-LINKs share a VID:PID, so only the
+# serial distinguishes them. A = initiator board, B = acceptor board.
+PROBE_A="0483:374e:002100223235511937333439"
+PROBE_B="0483:374e:004A002C3235511837333439"
 
 INITIATOR_ELF="usbpd-g474re-drp-initiator"
 ACCEPTOR_ELF="usbpd-g474re-drp-acceptor"
@@ -13,54 +15,50 @@ ACCEPTOR_ELF="usbpd-g474re-drp-acceptor"
 # Ensure firmware binaries are executable.
 chmod +x "$INITIATOR_ELF" "$ACCEPTOR_ELF"
 
-# ST-LINK probes are exclusively opened. `probe-rs attach` flashes the given
-# firmware and starts it, capturing RTT output from boot. Therefore attach to
-# both boards first, each capturing to its own log file, and let them run.
-# Probe stderr goes to separate files: flashing/probe failures would otherwise
-# surface only as unspecific missing-marker failures below.
+# ST-LINK probes are exclusively opened. Attach to both boards first, each
+# capturing RTT output to its own log, and let them run.
 LOG_A=$(mktemp)
 LOG_B=$(mktemp)
 ERR_A=$(mktemp)
 ERR_B=$(mktemp)
 trap 'kill -9 "$PID_A" "$PID_B" 2>/dev/null || true; rm -f "$LOG_A" "$LOG_B" "$ERR_A" "$ERR_B"' EXIT
 
-# Flash & run the initiator on board A.
-probe-rs attach --chip "$CHIP" --probe "$PROBE_VID_PID:$PROBE_A" "$INITIATOR_ELF" \
+# Flash & run the initiator on probe A.
+probe-rs attach --chip "$CHIP" --probe "$PROBE_A" "$INITIATOR_ELF" \
   --connect-under-reset --target-output-file "defmt=$LOG_A" > /dev/null 2>"$ERR_A" &
 PID_A=$!
 
-# Flash & run the acceptor on board B.
-probe-rs attach --chip "$CHIP" --probe "$PROBE_VID_PID:$PROBE_B" "$ACCEPTOR_ELF" \
+# Flash & run the acceptor on probe B.
+probe-rs attach --chip "$CHIP" --probe "$PROBE_B" "$ACCEPTOR_ELF" \
   --connect-under-reset --target-output-file "defmt=$LOG_B" > /dev/null 2>"$ERR_B" &
 PID_B=$!
 
-# A probe-rs process that vanished before the kill below failed to flash or
-# attach. Do not mistake its empty log for a firmware failure.
-fail_dead_process() {
-  local name="$1" pid="$2" errfile="$3"
-  if ! kill -0 "$pid" 2>/dev/null; then
-    echo "probe-rs for $name exited before the end of the test:"
-    cat "$errfile"
+# Block until the CI:SWAP marker is written to the log: returns within
+# milliseconds of the marker appearing; returns 1 when the probe-rs process
+# dies first (tail --pid then ends the stream) or the deadline expires.
+wait_marker() {
+  grep -q "CI:SWAP" <(timeout "$TIMEOUT_SECS" tail -n +1 -f --pid="$2" "$1")
+}
+wait_marker "$LOG_A" "$PID_A" & W_A=$!
+wait_marker "$LOG_B" "$PID_B" & W_B=$!
+OK_A=true OK_B=true
+wait "$W_A" || OK_A=false
+wait "$W_B" || OK_B=false
+
+# A probe-rs process that vanished before its markers appeared failed to flash
+# or attach. Do not mistake its empty log for a firmware failure.
+check_dead_process() {
+  if [ "$4" = false ] && ! kill -0 "$2" 2>/dev/null; then
+    echo "probe-rs for $1 exited before the end of the test:"
+    cat "$3"
     exit 1
   fi
 }
+check_dead_process "initiator" "$PID_A" "$ERR_A" "$OK_A"
+check_dead_process "acceptor" "$PID_B" "$ERR_B" "$OK_B"
 
-# Poll until both logs show the completed swap flow, or the deadline expires.
-# A timeout falls through to the marker checks below, which then fail with
-# their specific reasons.
-deadline=$((SECONDS + TIMEOUT_SECS))
-while [ "$SECONDS" -lt "$deadline" ]; do
-  fail_dead_process "initiator" "$PID_A" "$ERR_A"
-  fail_dead_process "acceptor" "$PID_B" "$ERR_B"
-  if grep -q "CI:SWAP" "$LOG_A" && grep -q "CI:SWAP" "$LOG_B"; then
-    break
-  fi
-  sleep 1
-done
-
-# Release the probes: SIGTERM triggers probe-rs' graceful shutdown (the CLI
-# detaches and releases the USB probe since v0.30). Fall back to SIGKILL so a
-# hung process cannot block subsequent invocations.
+# Release the probes: SIGTERM triggers probe-rs' graceful shutdown; SIGKILL
+# as fallback so a hung process cannot block subsequent invocations.
 kill "$PID_A" "$PID_B" 2>/dev/null || true
 for _ in $(seq 1 50); do
   kill -0 "$PID_A" 2>/dev/null || kill -0 "$PID_B" 2>/dev/null || break
@@ -68,8 +66,7 @@ for _ in $(seq 1 50); do
 done
 kill -9 "$PID_A" "$PID_B" 2>/dev/null || true
 
-# Verify board identities, so swapped probes/devices can not fake a pass, then
-# verify success markers.
+# Verify board identities and success markers.
 PASS=true
 fail() {
   echo "$1"
@@ -79,23 +76,15 @@ fail() {
 grep -q "initiator: true" "$LOG_A" || fail "Initiator board did not boot the initiator firmware"
 grep -q "initiator: false" "$LOG_B" || fail "Acceptor board did not boot the acceptor firmware"
 
-grep -q "CI:PASS" "$LOG_A" || fail "Initiator log missing CI:PASS"
-grep -q "CI:PASS" "$LOG_B" || fail "Acceptor log missing CI:PASS"
-
-# The power role swap must have completed on both sides (contract
-# re-established after the swap: CI:SWAP).
-grep -q "CI:SWAP" "$LOG_A" || fail "Initiator log missing CI:SWAP"
-grep -q "CI:SWAP" "$LOG_B" || fail "Acceptor log missing CI:SWAP"
-
-# A CI:FAIL only voids a board when the board never completed the full flow
-# (CI:PASS + CI:SWAP): the ucpd_task loop restarts after an unrecoverable error
-# and may recover, so a transient FAIL alongside a completed cycle is tolerated.
-complete() {
-  grep -q "CI:PASS" "$1" && grep -q "CI:SWAP" "$1"
+# The full swap flow must have completed on both sides. A transient CI:FAIL
+# alongside a completed cycle is tolerated (the ucpd_task loop may restart and
+# recover after an unrecoverable error), so CI:FAIL is not checked here.
+markers() {
+  grep -q "CI:PASS" "$2" || fail "$1 log missing CI:PASS"
+  grep -q "CI:SWAP" "$2" || fail "$1 log missing CI:SWAP"
 }
-
-grep -q "CI:FAIL" "$LOG_A" && ! complete "$LOG_A" && fail "Initiator reported CI:FAIL without completing the flow"
-grep -q "CI:FAIL" "$LOG_B" && ! complete "$LOG_B" && fail "Acceptor reported CI:FAIL without completing the flow"
+markers "initiator" "$LOG_A"
+markers "acceptor" "$LOG_B"
 
 grep -qi "panic" "$LOG_A" "$LOG_B" && fail "Panic detected in logs"
 
