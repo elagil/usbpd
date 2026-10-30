@@ -108,6 +108,69 @@ jobs:
           path: ${{ matrix.dir }}/target/thumbv7em-none-eabihf/release/${{ matrix.artifact-binary }}
           if-no-files-found: error
 
+  # One rig job at a time: queue, don't cancel. Same-repo runs are ungated.
+  hardware_test:
+    name: Hardware test
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    needs: [firmware]
+    runs-on: self-hosted
+    timeout-minutes: 15
+    concurrency:
+      group: hardware-probes
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download initiator firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: drp-initiator-firmware
+
+      - name: Download acceptor firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: drp-acceptor-firmware
+
+      - name: Role-swap test
+        run: bash .github/ci/hardware_test.sh
+
+  # Fork PR approval-gated via the `hardware-rig` environment.
+  hardware_test_fork:
+    name: Hardware test (fork)
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name != github.repository
+    needs: [firmware]
+    runs-on: self-hosted
+    timeout-minutes: 15
+    environment: hardware-rig
+    concurrency:
+      group: hardware-probes
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download initiator firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: drp-initiator-firmware
+
+      - name: Download acceptor firmware
+        uses: actions/download-artifact@v4
+        with:
+          name: drp-acceptor-firmware
+
+      - name: Role-swap test
+        run: bash .github/ci/hardware_test.sh
+
   # One job per compatibility tool; the crate/feature combinations are steps.
   msrv:
     name: Minimum Supported Rust Version
