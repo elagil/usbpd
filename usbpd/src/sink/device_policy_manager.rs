@@ -9,7 +9,6 @@ use crate::protocol_layer::message::data::{request, sink_capabilities, source_ca
 pub use crate::sink::epr_device_policy_manager::EprDevicePolicyManager;
 #[cfg(feature = "epr")]
 use crate::units::Power;
-
 use crate::{DataRole, SwapType};
 
 /// Events that the device policy manager can send to the policy engine.

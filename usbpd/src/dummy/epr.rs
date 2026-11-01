@@ -4,6 +4,7 @@
 
 use uom::si::power::watt;
 
+use super::{DummyDualRoleDevice, DummySinkDevice};
 use crate::protocol_layer::message::data::request::{EprRequestDataObject, PowerSource};
 use crate::protocol_layer::message::data::source_capabilities::{PowerDataObject, SourceCapabilities};
 use crate::sink::device_policy_manager::{
@@ -12,8 +13,6 @@ use crate::sink::device_policy_manager::{
 };
 use crate::source::device_policy_manager::EprDevicePolicyManager as SourceEprDPM;
 use crate::units::Power;
-
-use super::{DummyDualRoleDevice, DummySinkDevice};
 
 /// SPR source capabilities message for testing (includes EPR capable flag).
 /// Captured from real hardware: 5 V @ 3 A, 9 V @ 3 A, 12 V @ 3 A, 15 V @ 3 A, 20 V @ 5 A, PPS 5–21 V @ 5 A

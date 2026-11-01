@@ -4,17 +4,17 @@
 //! Implemented as `impl` blocks on the protocol layer types to keep the shared
 //! files free of EPR logic.
 
-use super::message::data::Data;
-use super::message::data::epr_mode;
+use usbpd_traits::Driver;
+
 use super::message::data::sink_capabilities::SinkCapabilities;
 use super::message::data::source_capabilities::SourceCapabilities;
+use super::message::data::{Data, epr_mode};
 use super::message::extended::extended_control::ExtendedControlMessageType;
 use super::message::header::{DataMessageType, ExtendedMessageType, Header};
 use super::message::{Message, Payload, extended};
 use super::{ProtocolError, ProtocolLayer, SinkProtocolLayer, SourceProtocolLayer, TxError};
 use crate::PowerRole;
 use crate::timers::Timer;
-use usbpd_traits::Driver;
 
 impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     /// Request EPR source capabilities (EPR_Get_SourceCap extended control message).

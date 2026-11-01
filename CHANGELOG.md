@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `epr` feature gate. The EPR protocol paths compile out when the feature is disabled, saving flash and RAM. Enabled by default.
-  EPR timer types are available through `usbpd::timers::TimerType::Epr`.
+  The EPR timer variants of `usbpd::timers::TimerType` require the feature.
 
 ## [3.0.0] — `usbpd`
 

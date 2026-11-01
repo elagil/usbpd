@@ -2,13 +2,13 @@
 
 #[cfg(feature = "epr")]
 pub mod epr;
+use std::future::pending;
+use std::vec::Vec;
+
 #[cfg(feature = "epr")]
 pub use epr::{
     DUMMY_EPR_SOURCE_CAPS_CHUNK_0, DUMMY_EPR_SOURCE_CAPS_CHUNK_1, DUMMY_SPR_CAPS_EPR_CAPABLE, DummySinkEprDevice,
 };
-use std::future::pending;
-use std::vec::Vec;
-
 use usbpd_traits::Driver;
 
 use crate::SwapType;
