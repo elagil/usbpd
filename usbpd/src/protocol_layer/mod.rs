@@ -335,7 +335,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                     }
                 }
                 #[cfg(feature = "epr")]
-                PowerSource::EprRequest(epr) => epr::validate_epr_request(epr.rdo)?,
+                PowerSource::EprRequest(epr) => epr::validate_epr_request(epr)?,
                 _ => {}
             }
         }

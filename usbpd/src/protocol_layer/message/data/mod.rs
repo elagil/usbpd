@@ -107,7 +107,6 @@ impl Data {
                 }
             }
             #[cfg(feature = "epr")]
-            #[cfg(feature = "epr")]
             DataMessageType::EprRequest => {
                 let num_objects = message.header.num_objects();
                 trace!("EprRequest: num_objects={}, len={}", num_objects, len);
