@@ -1270,8 +1270,17 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
             },
 
             MessageType::Control(ControlMessageType::DrSwap) => {
+                // In EPR Mode, data role swaps are not permitted. Without the `epr` feature, the port can never be
+                // in EPR mode, so the check always yields `false` and compiles out.
+                #[cfg(feature = "epr")]
+                let epr_violation = self.mode == Mode::Epr;
+                #[cfg(not(feature = "epr"))]
+                let epr_violation = false;
+
                 if !self.dual_role {
                     State::SendNotSupported
+                } else if epr_violation {
+                    State::HardReset
                 } else {
                     State::DrpSwap(SwapState::Data(DataRoleSwap::Evaluate))
                 }

@@ -6,8 +6,9 @@
 
 use usbpd_traits::Driver;
 
+use super::message::data::request::EprRequestDataObject;
 use super::message::data::sink_capabilities::SinkCapabilities;
-use super::message::data::source_capabilities::SourceCapabilities;
+use super::message::data::source_capabilities::{Augmented, PowerDataObject, SourceCapabilities};
 use super::message::data::{Data, epr_mode};
 use super::message::extended::extended_control::ExtendedControlMessageType;
 use super::message::header::{DataMessageType, ExtendedMessageType, Header};
@@ -130,16 +131,21 @@ impl<DRIVER: Driver, TIMER: Timer> SourceProtocolLayer<DRIVER, TIMER> {
 ///
 /// Checks the raw RDO for spec compliance:
 /// - unchunked extended messages bit must not be set,
-/// - AVS RDOs (per PD 3.2 Tab. 6.26) require the voltage LSB two bits to be zero.
-pub(super) fn validate_epr_request(rdo_bits: u32) -> Result<(), TxError> {
+/// - for an AVS RDO (requested PDO is an EPR AVS APDO, per PD 3.2 Tab. 6.26), the voltage
+///   LSB two bits must be zero.
+pub(super) fn validate_epr_request(epr: &EprRequestDataObject) -> Result<(), TxError> {
+    let rdo_bits = epr.rdo;
     let unchunked = (rdo_bits >> 23) & 1 == 1;
     if unchunked {
         return Err(TxError::UnchunkedExtendedMessagesNotSupported);
     }
 
-    let voltage = (rdo_bits >> 9) & 0xFFF;
-    if (voltage as u16) & 0x3 != 0 {
-        return Err(TxError::AvsVoltageAlignmentInvalid);
+    // The requested PDO identifies the RDO format. Only an AVS RDO carries an output voltage at bits 9..20.
+    if matches!(epr.pdo, PowerDataObject::Augmented(Augmented::Epr(_))) {
+        let voltage = (rdo_bits >> 9) & 0xFFF;
+        if (voltage as u16) & 0x3 != 0 {
+            return Err(TxError::AvsVoltageAlignmentInvalid);
+        }
     }
 
     Ok(())
