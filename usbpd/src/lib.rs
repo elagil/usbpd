@@ -178,9 +178,9 @@ enum Contract {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 /// For defining Device Policy Managers' swap behavior
 pub enum SwapType {
-    /// **DRP** Data Role Swap (UFP <---> DFP)
+    /// DRP Data Role Swap (UFP <---> DFP)
     Data,
-    /// **DRP** Power Role Swap (Source <---> Sink)
+    /// DRP Power Role Swap (Source <---> Sink)
     Power,
 }
 
@@ -196,9 +196,9 @@ enum PolicyEngineResult {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 /// Action to execute upon successfully exiting a port's policy engine handler
 pub enum RunResult {
-    /// **DRP** Sink -> Source
+    /// DRP Sink -> Source
     SwapToSource,
-    /// **DRP** Source -> Sink
+    /// DRP Source -> Sink
     SwapToSink,
 }
 

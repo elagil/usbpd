@@ -39,11 +39,11 @@ bind_interrupts!(struct Irqs {
 // ============================================================================
 #[cfg(not(feature = "avs"))]
 mod config {
-    /// Target voltage for EPR Fixed request (28V in 50 mV units)
+    /// Target voltage for EPR Fixed request (28 V in 50 mV units)
     pub const TARGET_EPR_VOLTAGE_RAW: u16 = 28 * 20;
-    /// Target current for EPR Fixed request (4A in 10 mA units)
+    /// Target current for EPR Fixed request (4 A in 10 mA units)
     pub const TARGET_EPR_CURRENT_RAW: u16 = 4 * 100;
-    /// Operational PDP for EPR mode entry (28V × 4A = 112W)
+    /// Operational PDP for EPR mode entry (28 V × 4 A = 112 W)
     pub const OPERATIONAL_PDP_WATTS: u32 = 112;
 }
 
@@ -54,9 +54,9 @@ mod config {
 mod config {
     /// Target voltage for AVS request in volts
     pub const TARGET_AVS_VOLTAGE_V: u32 = 24;
-    /// Target current for AVS request (5A in 50 mA units)
+    /// Target current for AVS request (5 A in 50 mA units)
     pub const TARGET_AVS_CURRENT_RAW: u16 = 5 * 20; // 5A = 100 in 50 mA units
-    /// Operational PDP for EPR mode entry with AVS (24V × 5A = 120W)
+    /// Operational PDP for EPR mode entry with AVS (24 V × 5 A = 120 W)
     pub const OPERATIONAL_PDP_WATTS: u32 = 120;
 }
 

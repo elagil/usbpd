@@ -11,6 +11,12 @@ use crate::_50milliamperes_mod::_50milliamperes;
 use crate::_250milliwatts_mod::_250milliwatts;
 use crate::units::{ElectricCurrent, ElectricPotential};
 
+#[cfg(feature = "epr")]
+pub mod epr;
+
+#[cfg(feature = "epr")]
+pub use epr::{EprRequestDataObject, new_epr_avs};
+
 bitfield! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -183,31 +189,6 @@ impl Avs {
     }
 }
 
-/// EPR Request containing RDO + copy of requested PDO for source verification.
-///
-/// Per PD 3.2 Sec. 6.4.9, EPR_Request always has 2 data objects:
-/// - The Request Data Object (format depends on PDO type being requested)
-/// - Copy of the PDO being requested (for source verification)
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg(feature = "epr")]
-pub struct EprRequestDataObject {
-    /// The raw Request Data Object (format depends on PDO type being requested).
-    /// This could be a FixedVariableSupply RDO, Avs RDO, or other EPR RDO type.
-    pub rdo: u32,
-    /// Copy of the PDO being requested (for source verification)
-    pub pdo: source_capabilities::PowerDataObject,
-}
-
-#[cfg(feature = "epr")]
-impl EprRequestDataObject {
-    /// Get the object position from the RDO
-    pub fn object_position(&self) -> u8 {
-        RawDataObject(self.rdo).object_position()
-    }
-}
-
 /// Power requests towards the source.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -220,7 +201,7 @@ pub enum PowerSource {
     Avs(Avs),
     /// EPR Request: RDO + copy of requested PDO for source verification.
     #[cfg(feature = "epr")]
-    EprRequest(EprRequestDataObject),
+    EprRequest(epr::EprRequestDataObject),
     Unknown(RawDataObject),
 }
 
@@ -492,52 +473,6 @@ impl PowerSource {
         voltage: ElectricPotential,
         source_capabilities: &source_capabilities::SourceCapabilities,
     ) -> Result<Self, Error> {
-        let selected = Self::find_augmented_pdo(source_capabilities, voltage);
-
-        if selected.is_none() {
-            return Err(Error::VoltageMismatch);
-        }
-
-        let IndexedAugmented(pdo, index) = selected.unwrap();
-        let max_current = match pdo {
-            source_capabilities::Augmented::Epr(avs) => avs.pd_power() / voltage,
-            _ => return Err(Error::VoltageMismatch),
-        };
-
-        let (current, mismatch) = match current_request {
-            CurrentRequest::Highest => (max_current, false),
-            CurrentRequest::Specific(x) => (x, x > max_current),
-        };
-
-        let mut raw_current = current.get::<_50milliamperes>() as u16;
-
-        if raw_current > 0x7f {
-            error!("Clamping invalid AVS current: {} mA", 50 * raw_current);
-            raw_current = 0x7f;
-        }
-
-        // AVS voltage is in 25 mV units with LSB 2 bits = 0 (effective 100 mV steps)
-        // Per PD 3.2 Tab. 6.26: "Output voltage in 25 mV units,
-        // the least two significant bits Shall be set to zero"
-        let raw_voltage = (voltage.get::<_25millivolts>() as u16) & !0x3;
-
-        let object_position = index + 1;
-        assert!(object_position > 0b0000 && object_position <= 0b1110);
-
-        // Build AVS RDO (per PD 3.2 Tab. 6.26)
-        let rdo = Avs(0)
-            .with_raw_output_voltage(raw_voltage)
-            .with_raw_operating_current(raw_current)
-            .with_object_position(object_position as u8)
-            .with_capability_mismatch(mismatch)
-            .with_no_usb_suspend(true)
-            .with_usb_communications_capable(true)
-            .with_epr_mode_capable(true)
-            .0;
-
-        // Copy of the PDO being requested
-        let pdo_copy = source_capabilities::PowerDataObject::Augmented(*pdo);
-
-        Ok(Self::EprRequest(EprRequestDataObject { rdo, pdo: pdo_copy }))
+        epr::new_epr_avs(current_request, voltage, source_capabilities)
     }
 }

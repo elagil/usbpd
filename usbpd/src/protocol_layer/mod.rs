@@ -9,26 +9,26 @@
 //! - error handling,
 //! - state behaviour.
 
+#[cfg(feature = "epr")]
+pub mod epr;
 pub mod message;
 
 use core::future::Future;
 use core::marker::PhantomData;
 
-use byteorder::{ByteOrder, LittleEndian};
 use embassy_futures::select::{Either, select};
 use heapless::{Deque, Vec};
 use message::Message;
 use message::data::{Data, request};
+#[cfg(any(feature = "epr", test))]
 use message::extended::extended_control::ExtendedControlMessageType;
 use message::header::{ControlMessageType, DataMessageType, ExtendedMessageType, Header, MessageType};
 use usbpd_traits::{Driver, DriverRxError, DriverTxError};
 
 use crate::PowerRole;
 use crate::counters::{Counter, CounterType, Error as CounterError};
-#[cfg(feature = "epr")]
-use crate::protocol_layer::message::data::epr_mode::EprModeDataObject;
-use crate::protocol_layer::message::data::source_capabilities;
 use crate::protocol_layer::message::data::source_capabilities::SourceCapabilities;
+#[cfg(any(feature = "epr", test))]
 use crate::protocol_layer::message::extended::Extended;
 use crate::protocol_layer::message::{ParseError, Payload};
 use crate::timers::{Timer, TimerType};
@@ -327,32 +327,15 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                         return Err(TxError::UnchunkedExtendedMessagesNotSupported);
                     }
                 }
-                PowerSource::Pps(rdo) => {
+                PowerSource::Pps(rdo) =>
+                {
+                    #[allow(clippy::collapsible_match)]
                     if rdo.unchunked_extended_messages_supported() {
                         return Err(TxError::UnchunkedExtendedMessagesNotSupported);
                     }
                 }
                 #[cfg(feature = "epr")]
-                PowerSource::EprRequest(epr) => {
-                    // Check the raw RDO for validation
-                    let rdo_bits = epr.rdo;
-                    let unchunked = (rdo_bits >> 23) & 1 == 1;
-                    if unchunked {
-                        return Err(TxError::UnchunkedExtendedMessagesNotSupported);
-                    }
-
-                    // The requested PDO identifies the RDO format. An AVS RDO (per PD 3.2 Tab. 6.26) requires
-                    // the voltage LSB two bits to be zero.
-                    if matches!(
-                        epr.pdo,
-                        source_capabilities::PowerDataObject::Augmented(source_capabilities::Augmented::Epr(_))
-                    ) {
-                        let voltage = (rdo_bits >> 9) & 0xFFF;
-                        if (voltage as u16) & 0x3 != 0 {
-                            return Err(TxError::AvsVoltageAlignmentInvalid);
-                        }
-                    }
-                }
+                PowerSource::EprRequest(epr) => epr::validate_epr_request(epr.rdo)?,
                 _ => {}
             }
         }
@@ -611,14 +594,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                         #[cfg(feature = "epr")]
                         ExtendedMessageType::EprSourceCapabilities => {
                             Payload::Extended(message::extended::Extended::EprSourceCapabilities(
-                                ext_payload
-                                    .as_chunks::<4>()
-                                    .0
-                                    .iter()
-                                    .map(|buf| {
-                                        message::data::source_capabilities::parse_raw_pdo(LittleEndian::read_u32(buf))
-                                    })
-                                    .collect(),
+                                message::extended::epr::parse_pdos(ext_payload),
                             ))
                         }
                         _ => Payload::Extended(message::extended::Extended::Unknown),
@@ -795,6 +771,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     }
 
     /// Transmit an extended control message of the provided type.
+    #[cfg(any(feature = "epr", test))]
     pub async fn transmit_extended_control_message(
         &mut self,
         message_type: ExtendedControlMessageType,
@@ -813,25 +790,6 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         )));
 
         self.transmit(message).await
-    }
-
-    /// Transmit an EPR mode data message.
-    #[cfg(feature = "epr")]
-    pub async fn transmit_epr_mode(
-        &mut self,
-        action: message::data::epr_mode::Action,
-        data: u8,
-    ) -> Result<(), ProtocolError> {
-        let header = Header::new_data(
-            self.default_header,
-            self.counters.tx_message,
-            DataMessageType::EprMode,
-            1,
-        );
-
-        let mdo = EprModeDataObject::default().with_action(action).with_data(data);
-
-        self.transmit(Message::new_with_data(header, Data::EprMode(mdo))).await
     }
 
     /// Transmit a chunk request message per PD 3.2 Sec. 6.12.2.1.2.4.
@@ -907,32 +865,6 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             .await
     }
 
-    /// Transmit EPR sink capabilities in response to EPR_Get_Sink_Cap.
-    ///
-    /// Per PD 3.2 Sec. 8.3.3.3.10, sinks respond to EPR_Get_Sink_Cap
-    /// messages with an EPR_Sink_Capabilities message.
-    #[cfg(feature = "epr")]
-    pub async fn transmit_epr_sink_capabilities(
-        &mut self,
-        capabilities: message::data::sink_capabilities::SinkCapabilities,
-    ) -> Result<(), ProtocolError> {
-        // Convert SinkCapabilities PDOs to the extended message format
-        let pdos: heapless::Vec<_, 7> = capabilities.0.iter().cloned().collect();
-        let extended_payload = message::extended::Extended::EprSinkCapabilities(pdos);
-
-        let header = Header::new_extended(
-            self.default_header,
-            self.counters.tx_message,
-            ExtendedMessageType::EprSinkCapabilities,
-            0, // num_objects is Reserved (0) for unchunked extended messages per spec 6.2.1.1.2
-        );
-
-        let mut message = Message::new(header);
-        message.payload = Some(Payload::Extended(extended_payload));
-
-        self.transmit(message).await
-    }
-
     /// Transmit the device's Source Capabilities
     ///
     /// Could be sent from a Source or Dual Role Device
@@ -942,6 +874,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     ) -> Result<(), ProtocolError> {
         // Only sources can send capabilities
         debug_assert!(matches!(self.default_header.port_power_role(), PowerRole::Source));
+        // Per PD 3.2 Sec. 8.3.3.3.8: reject SPR capabilities containing EPR PDOs
         #[cfg(feature = "epr")]
         if source_capabilities.has_epr_pdo_in_spr_positions() {
             return Err(ProtocolError::TxError(TxError::HardReset));
@@ -958,38 +891,12 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
 
         self.transmit(message).await
     }
-
-    /// Transmit the device's EPR Source Capabilities
-    ///
-    /// Could be sent from a Source or Dual Role Device
-    #[cfg(feature = "epr")]
-    pub async fn transmit_epr_source_capabilities(
-        &mut self,
-        source_capabilities: &SourceCapabilities,
-    ) -> Result<(), ProtocolError> {
-        debug_assert!(matches!(self.default_header.port_power_role(), PowerRole::Source));
-
-        let pdos: heapless::Vec<_, 16> = source_capabilities.0.iter().cloned().collect();
-        let extended_payload = message::extended::Extended::EprSourceCapabilities(pdos);
-
-        let header = Header::new_extended(
-            self.default_header,
-            self.counters.tx_message,
-            ExtendedMessageType::EprSourceCapabilities,
-            0, // num_objects is 0 for extended messages
-        );
-
-        let mut message = Message::new(header);
-        message.payload = Some(Payload::Extended(extended_payload));
-
-        self.transmit(message).await
-    }
 }
 
 #[repr(transparent)]
 #[derive(Debug)]
 /// The USB PD Protocol Layer for a `Sink`
-pub(crate) struct SinkProtocolLayer<DRIVER: Driver, TIMER: Timer>(ProtocolLayer<DRIVER, TIMER>);
+pub(crate) struct SinkProtocolLayer<DRIVER: Driver, TIMER: Timer>(pub(crate) ProtocolLayer<DRIVER, TIMER>);
 
 impl<DRIVER: Driver, TIMER: Timer> core::ops::Deref for SinkProtocolLayer<DRIVER, TIMER> {
     type Target = ProtocolLayer<DRIVER, TIMER>;
@@ -1047,7 +954,7 @@ impl<DRIVER: Driver, TIMER: Timer> SinkProtocolLayer<DRIVER, TIMER> {
 #[repr(transparent)]
 #[derive(Debug)]
 /// The USB PD Protocol Layer for a `Source`
-pub(crate) struct SourceProtocolLayer<DRIVER: Driver, TIMER: Timer>(ProtocolLayer<DRIVER, TIMER>);
+pub(crate) struct SourceProtocolLayer<DRIVER: Driver, TIMER: Timer>(pub(crate) ProtocolLayer<DRIVER, TIMER>);
 
 impl<DRIVER: Driver, TIMER: Timer> core::ops::Deref for SourceProtocolLayer<DRIVER, TIMER> {
     type Target = ProtocolLayer<DRIVER, TIMER>;
@@ -1079,19 +986,6 @@ impl<DRIVER: Driver, TIMER: Timer> SourceProtocolLayer<DRIVER, TIMER> {
 
         self.receive_message_type(
             &[MessageType::Data(message::header::DataMessageType::Request)],
-            TimerType::SenderResponse,
-        )
-        .await
-    }
-
-    /// Wait for the sink to request a capability with an EPR_Request Message
-    #[cfg(feature = "epr")]
-    pub async fn wait_for_epr_request(&mut self) -> Result<Message, ProtocolError> {
-        // Only sources await a sink power request
-        debug_assert!(matches!(self.default_header.port_power_role(), PowerRole::Source));
-
-        self.receive_message_type(
-            &[MessageType::Data(message::header::DataMessageType::EprRequest)],
             TimerType::SenderResponse,
         )
         .await
@@ -1149,7 +1043,7 @@ mod tests {
         [(header & 0xFF) as u8, (header >> 8) as u8]
     }
 
-    /// Build a `Source_Capabilities` frame with the fixed 5V/3A PDO.
+    /// Build a `Source_Capabilities` frame with the fixed 5 V / 3 A PDO.
     fn source_caps_bytes(message_id: u8) -> [u8; 6] {
         // Header: Data `Source_Capabilities` (raw type 1), num_objects = 1,
         // spec rev 3.x, power role sink (0), data role UFP (0), followed by one

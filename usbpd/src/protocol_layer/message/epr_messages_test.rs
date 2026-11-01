@@ -16,19 +16,19 @@ use crate::protocol_layer::message::{Message, Payload};
 // Test Fixtures - Real EPR Messages
 // ============================================================================
 
-/// EPR Mode: Enter (Sink → Source)
+/// EPR Mode: Enter (Sink -> Source)
 const EPR_MODE_ENTER: &[u8] = &[0x8A, 0x14, 0x00, 0x00, 0x00, 0x01];
 
-/// EPR Mode: EnterAcknowledged (Source → Sink)
+/// EPR Mode: EnterAcknowledged (Source -> Sink)
 const EPR_MODE_ENTER_ACK: &[u8] = &[0xAA, 0x19, 0x00, 0x00, 0x00, 0x02];
 
-/// EPR Mode: EnterSucceeded (Source → Sink)
+/// EPR Mode: EnterSucceeded (Source -> Sink)
 const EPR_MODE_ENTER_SUCCEEDED: &[u8] = &[0xAA, 0x1B, 0x00, 0x00, 0x00, 0x03];
 
-/// EPR Request for 28V @ 5A (140W) - PDO#8
+/// EPR Request for 28 V @ 5 A (140 W) - PDO#8
 const EPR_REQUEST_28V: &[u8] = &[0x89, 0x28, 0xF4, 0xD1, 0xC7, 0x80, 0xF4, 0xC1, 0x18, 0x00];
 
-/// EPR Keep-Alive (Sink → Source)
+/// EPR Keep-Alive (Sink -> Source)
 const EPR_KEEP_ALIVE: &[u8] = &[0x90, 0x9A, 0x02, 0x80, 0x03, 0x00];
 
 // ============================================================================

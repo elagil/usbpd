@@ -3,13 +3,15 @@
 //! Per PD 3.2 Sec. 6.5.
 
 pub mod chunked;
+#[cfg(feature = "epr")]
+pub mod epr;
 pub mod extended_control;
 use byteorder::{ByteOrder, LittleEndian};
+#[cfg(feature = "epr")]
 use heapless::Vec;
 use proc_bitfield::bitfield;
 
-use crate::protocol_layer::message::data::sink_capabilities::SinkPowerDataObject;
-use crate::protocol_layer::message::data::source_capabilities::PowerDataObject;
+use crate::protocol_layer::message::data;
 
 /// Extended message payload types, per PD 3.2 Sec. 6.5.
 #[derive(Debug, Clone)]
@@ -25,10 +27,10 @@ pub enum Extended {
     ExtendedControl(extended_control::ExtendedControl),
     /// EPR source capabilities list.
     #[cfg(feature = "epr")]
-    EprSourceCapabilities(Vec<PowerDataObject, 16>),
+    EprSourceCapabilities(Vec<data::source_capabilities::PowerDataObject, 16>),
     /// EPR sink capabilities list.
     #[cfg(feature = "epr")]
-    EprSinkCapabilities(Vec<SinkPowerDataObject, 7>),
+    EprSinkCapabilities(Vec<data::sink_capabilities::SinkPowerDataObject, 7>),
     /// Unknown data type.
     Unknown,
 }
@@ -54,35 +56,9 @@ impl Extended {
             Self::SourceCapabilitiesExtended => unimplemented!(),
             Self::ExtendedControl(control) => control.to_bytes(payload),
             #[cfg(feature = "epr")]
-            Self::EprSourceCapabilities(pdos) => {
-                let mut written = 0;
-                for pdo in pdos {
-                    let raw = match pdo {
-                        PowerDataObject::FixedSupply(p) => p.0,
-                        PowerDataObject::Battery(p) => p.0,
-                        PowerDataObject::VariableSupply(p) => p.0,
-                        PowerDataObject::Augmented(a) => match a {
-                            crate::protocol_layer::message::data::source_capabilities::Augmented::Spr(p) => p.0,
-                            #[cfg(feature = "epr")]
-                            crate::protocol_layer::message::data::source_capabilities::Augmented::Epr(p) => p.0,
-                            crate::protocol_layer::message::data::source_capabilities::Augmented::Unknown(p) => *p,
-                        },
-                        PowerDataObject::Unknown(p) => p.0,
-                    };
-                    LittleEndian::write_u32(&mut payload[written..written + 4], raw);
-                    written += 4;
-                }
-                written
-            }
+            Self::EprSourceCapabilities(pdos) => epr::serialize_pdos(pdos, payload),
             #[cfg(feature = "epr")]
-            Self::EprSinkCapabilities(pdos) => {
-                let mut written = 0;
-                for pdo in pdos {
-                    LittleEndian::write_u32(&mut payload[written..written + 4], pdo.to_raw());
-                    written += 4;
-                }
-                written
-            }
+            Self::EprSinkCapabilities(pdos) => epr::serialize_pdos(pdos, payload),
         }
     }
 }

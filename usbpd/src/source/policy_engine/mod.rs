@@ -6,19 +6,27 @@ use usbpd_traits::Driver;
 
 use super::device_policy_manager::{CapabilityResponse, Event, Info, SourceDpm};
 use crate::counters::Counter;
+#[cfg(feature = "epr")]
+pub(crate) mod epr;
+#[cfg(feature = "epr")]
+use self::epr::EprState;
+#[cfg(feature = "epr")]
+use crate::protocol_layer::message::data::epr_mode;
 use crate::protocol_layer::message::data::request::PowerSource;
+#[cfg(feature = "epr")]
 use crate::protocol_layer::message::data::sink_capabilities::SinkCapabilities;
 use crate::protocol_layer::message::data::source_capabilities::{Kind, SourceCapabilities};
 use crate::protocol_layer::message::data::{Data, PdoKind, request};
-#[cfg(feature = "epr")]
-use crate::protocol_layer::message::data::epr_mode;
 use crate::protocol_layer::message::extended::Extended;
+#[cfg(any(feature = "epr", test))]
 use crate::protocol_layer::message::extended::extended_control::ExtendedControlMessageType;
 use crate::protocol_layer::message::header::{
     ControlMessageType, DataMessageType, ExtendedMessageType, Header, MessageType, SpecificationRevision,
 };
 use crate::protocol_layer::message::{Message, Payload};
 use crate::protocol_layer::{ProtocolError, RxError, SourceProtocolLayer, TxError};
+#[cfg(feature = "epr")]
+use crate::timers::EprTimerType;
 use crate::timers::{Timer, TimerType};
 use crate::{Contract, DataRole, PolicyEngineResult, PowerRole, RunResult, SwapType};
 
@@ -29,18 +37,28 @@ mod tests;
 /// Source capability
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-enum Mode {
+#[cfg(not(feature = "epr"))]
+pub(crate) enum Mode {
     /// The classic mode of PD operation where explicit contracts are negotiaged using SPR (A)PDOs.
     #[default]
     Spr,
-    /// A Power Delivery mode of operation where maximum allowable voltage is 48V.
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg(feature = "epr")]
+pub(crate) enum Mode {
+    /// The classic mode of PD operation where explicit contracts are negotiaged using SPR (A)PDOs.
+    #[default]
+    Spr,
+    /// A Power Delivery mode of operation where maximum allowable voltage is 48 V.
     Epr,
 }
 
 /// Source states.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-enum State {
+pub(crate) enum State {
     // States of the policy engine as given by specification.
     // PD 3.2 Sec. 8.3.3.2 Policy Engine Source Port State Diagram
     /// Default state at startup.
@@ -62,6 +80,7 @@ enum State {
     /// PD 3.2 Sec. 8.3.3.3.11 source EPR keep-alive. Only used in EPR mode.
     #[cfg(feature = "epr")]
     EprKeepAlive,
+    #[cfg(feature = "epr")]
     GiveSourceCap,
     /// 8.3.3.4 Source Port Soft Reset
     SendSoftReset,
@@ -89,7 +108,7 @@ enum State {
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 /// Dual Role Port Swap States
-enum SwapState {
+pub(crate) enum SwapState {
     Data(DataRoleSwap),
     Power(PowerRoleSwap),
     FastPower(FastPowerRoleSwap),
@@ -98,7 +117,7 @@ enum SwapState {
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 /// State during a Data Role Swap execution (for both directions)
-enum DataRoleSwap {
+pub(crate) enum DataRoleSwap {
     Evaluate,
     Accept,
     Change,
@@ -109,7 +128,7 @@ enum DataRoleSwap {
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 /// State during a Power Role Swap execution
-enum PowerRoleSwap {
+pub(crate) enum PowerRoleSwap {
     Evaluate,
     Accept,
     TransitionToOff,
@@ -122,7 +141,7 @@ enum PowerRoleSwap {
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 /// State during a Fast Power Role Swap execution
-enum FastPowerRoleSwap {
+pub(crate) enum FastPowerRoleSwap {
     Evaluate,
     Accept,
     TransitionToOff,
@@ -132,7 +151,7 @@ enum FastPowerRoleSwap {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-enum VcsSwapSource {
+pub(crate) enum VcsSwapSource {
     Message,
     #[cfg(feature = "epr")]
     Epr,
@@ -140,7 +159,7 @@ enum VcsSwapSource {
 
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-enum VcsState {
+pub(crate) enum VcsState {
     SendSwap,
     EvaluateSwap,
     AcceptSwap,
@@ -154,34 +173,20 @@ enum VcsState {
     VcsForceVconn,
 }
 
-#[derive(Debug, Clone, Copy)]
-#[cfg(feature = "epr")]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-enum EprState {
-    Entry,
-    EntryAck,
-    DiscoverCable,
-    EvaluateCable,
-    EntrySucceeded,
-    EntryFailed(u8),
-    SendExit,
-    ExitReceived,
-}
-
 /// Implementation of the source policy engine.
 /// Per PD 3.2 Sec. 8.3.3.2.
 #[derive(Debug)]
 pub struct Source<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> {
-    device_policy_manager: DPM,
-    protocol_layer: SourceProtocolLayer<DRIVER, TIMER>,
-    hard_reset_counter: Counter,
-    caps_counter: Counter,
-    state: State,
+    pub(crate) device_policy_manager: DPM,
+    pub(crate) protocol_layer: SourceProtocolLayer<DRIVER, TIMER>,
+    pub(crate) hard_reset_counter: Counter,
+    pub(crate) caps_counter: Counter,
+    pub(crate) state: State,
 
-    dual_role: bool,
-    vconn_source: bool,
-    mode: Mode,
-    contract: Contract,
+    pub(crate) dual_role: bool,
+    pub(crate) vconn_source: bool,
+    pub(crate) mode: Mode,
+    pub(crate) contract: Contract,
 
     _timer: PhantomData<TIMER>,
 }
@@ -423,12 +428,6 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                             .transmit_epr_source_capabilities(&self.device_policy_manager.epr_source_capabilities())
                             .await?
                     }
-                    #[cfg(not(feature = "epr"))]
-                    Mode::Epr => {
-                        self.protocol_layer
-                            .transmit_source_capabilities(&self.device_policy_manager.source_capabilities())
-                            .await?
-                    }
                 };
 
                 // When Capabilities were sent successfully, reset the hard reset counter
@@ -515,15 +514,17 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                 };
 
                 // Entry: If current Explicit Contract is for EPR Mode, then run the SourceEPRKeepAliveTimer
+                #[cfg(feature = "epr")]
                 let epr_keep_alive_fut = async {
                     match self.mode {
-                        #[cfg(feature = "epr")]
-                        Mode::Epr => TimerType::get_timer::<TIMER>(TimerType::SourceEPRKeepAlive).await,
-                        #[cfg(not(feature = "epr"))]
-                        Mode::Epr => core::future::pending::<()>().await,
+                        Mode::Epr => {
+                            TimerType::get_timer::<TIMER>(TimerType::Epr(EprTimerType::SourceEPRKeepAlive)).await
+                        }
                         Mode::Spr => core::future::pending().await,
                     }
                 };
+                #[cfg(not(feature = "epr"))]
+                let epr_keep_alive_fut = async { core::future::pending::<TimerType>().await };
 
                 let timers_fut = async { select3(discover_identity_fut, pps_periodic_fut, epr_keep_alive_fut).await };
 
@@ -666,12 +667,6 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                             .transmit_extended_control_message(ExtendedControlMessageType::EprGetSinkCap)
                             .await?
                     }
-                    #[cfg(not(feature = "epr"))]
-                    Mode::Epr => {
-                        self.protocol_layer
-                            .transmit_control_message(ControlMessageType::GetSinkCap)
-                            .await?
-                    }
                 }
 
                 // Inform the DPM of the outcome
@@ -689,15 +684,6 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                         self.protocol_layer
                             .receive_message_type(
                                 &[MessageType::Extended(ExtendedMessageType::EprSinkCapabilities)],
-                                TimerType::SenderResponse,
-                            )
-                            .await
-                    }
-                    #[cfg(not(feature = "epr"))]
-                    Mode::Epr => {
-                        self.protocol_layer
-                            .receive_message_type(
-                                &[MessageType::Data(DataMessageType::SinkCapabilities)],
                                 TimerType::SenderResponse,
                             )
                             .await
@@ -720,8 +706,6 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     Mode::Spr => Info::SprSinkCapabilities(response),
                     #[cfg(feature = "epr")]
                     Mode::Epr => Info::EprSinkCapabilities(response),
-                    #[cfg(not(feature = "epr"))]
-                    Mode::Epr => Info::SprSinkCapabilities(response),
                 };
                 self.device_policy_manager.inform(info).await;
 
@@ -768,6 +752,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                 State::Ready
             }
             // PD 3.2 Sec. 8.3.3.2.15 (PE_SRC_Give_Source_Cap):
+            #[cfg(feature = "epr")]
             State::GiveSourceCap => {
                 match self.mode {
                     Mode::Spr => {
@@ -775,16 +760,9 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                             .transmit_source_capabilities(&self.device_policy_manager.source_capabilities())
                             .await?
                     }
-                    #[cfg(feature = "epr")]
                     Mode::Epr => {
                         self.protocol_layer
                             .transmit_epr_source_capabilities(&self.device_policy_manager.epr_source_capabilities())
-                            .await?
-                    }
-                    #[cfg(not(feature = "epr"))]
-                    Mode::Epr => {
-                        self.protocol_layer
-                            .transmit_source_capabilities(&self.device_policy_manager.source_capabilities())
                             .await?
                     }
                 }
@@ -847,8 +825,6 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     Mode::Spr => self.get_source_capabilities().await,
                     #[cfg(feature = "epr")]
                     Mode::Epr => self.get_epr_source_capabilities().await,
-                    #[cfg(not(feature = "epr"))]
-                    Mode::Epr => self.get_source_capabilities().await,
                 };
 
                 let caps = match result {
@@ -875,10 +851,6 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     #[cfg(feature = "epr")]
                     Mode::Epr => {
                         self.protocol_layer.transmit_epr_sink_capabilities(sink_caps).await?;
-                    }
-                    #[cfg(not(feature = "epr"))]
-                    Mode::Epr => {
-                        self.protocol_layer.transmit_sink_capabilities(sink_caps).await?;
                     }
                 }
                 State::Ready
@@ -1244,98 +1216,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
     // PD 3.2 Sec. 8.3.3.26 EPR States
     #[cfg(feature = "epr")]
     async fn execute_epr_state(&mut self, state: EprState) -> Result<State, Error> {
-        match state {
-            // PD 3.2 Sec. 8.3.3.26.1.1 (PE_SRC_Evaluate_EPR_Mode_Entry):
-            EprState::Entry => match self.device_policy_manager.epr_capable() {
-                true => Ok(State::EprMode(EprState::EntryAck)),
-                false => Ok(State::EprMode(EprState::EntryFailed(
-                    epr_mode::DataEnterFailed::SourceUnableToEnterEprMode.into(),
-                ))),
-            },
-            // PD 3.2 Sec. 8.3.3.26.1.2 (PE_SRC_EPR_Mode_Entry_Ack):
-            EprState::EntryAck => {
-                self.protocol_layer
-                    .transmit_epr_mode(epr_mode::Action::EnterAcknowledged, 0)
-                    .await?;
-
-                match (self.device_policy_manager.epr_cable_good(), self.vconn_source) {
-                    (false, true) => Ok(State::VconnSwap {
-                        source: VcsSwapSource::Epr,
-                        state: VcsState::SendSwap,
-                    }),
-                    (false, false) => Ok(State::EprMode(EprState::DiscoverCable)),
-                    (true, _) => Ok(State::EprMode(EprState::EvaluateCable)),
-                }
-            }
-            // PD 3.2 Sec. 8.3.3.26.1.3 (PE_SRC_EPR_Mode_Discover_Cable):
-            EprState::DiscoverCable => {
-                if self.vconn_source {
-                    // FIXME: Discovery is done implicitly through DPM right now,
-                    // switch to using PE_INIT_PORT_VDM_Identity_Request
-                    Ok(State::EprMode(EprState::EvaluateCable))
-                } else {
-                    Ok(State::EprMode(EprState::EntryFailed(
-                        epr_mode::DataEnterFailed::SourceFailedToBecomeVconnSource.into(),
-                    )))
-                }
-            }
-            // PD 3.2 Sec. 8.3.3.26.1.4 (PE_SRC_EPR_Mode_Evaluate_Cable_EPR):
-            EprState::EvaluateCable => {
-                if self.device_policy_manager.epr_cable_good() {
-                    Ok(State::EprMode(EprState::EntrySucceeded))
-                } else {
-                    Ok(State::EprMode(EprState::EntryFailed(
-                        epr_mode::DataEnterFailed::CableNotEprCapable.into(),
-                    )))
-                }
-            }
-            // PD 3.2 Sec. 8.3.3.26.1.5 (PE_SRC_EPR_Mode_Entry_Succeeded):
-            EprState::EntrySucceeded => {
-                self.protocol_layer
-                    .transmit_epr_mode(epr_mode::Action::EnterSucceeded, 0)
-                    .await?;
-                // FIXME: Set EPR headers
-                self.mode = Mode::Epr;
-                Ok(State::SendCapabilities)
-            }
-            // PD 3.2 Sec. 8.3.3.26.1.6 (PE_SRC_EPR_Mode_Entry_Failed):
-            EprState::EntryFailed(data) => {
-                self.protocol_layer
-                    .transmit_epr_mode(epr_mode::Action::EnterFailed, data)
-                    .await?;
-                Ok(State::Ready)
-            }
-            // PD 3.2 Sec. 8.3.3.26.3.1 (PE_SRC_Send_EPR_Mode_Exit):
-            EprState::SendExit => {
-                self.protocol_layer.transmit_epr_mode(epr_mode::Action::Exit, 0).await?;
-                // FIXME: Clear EPR headers
-                self.mode = Mode::Spr;
-                Ok(State::SendCapabilities)
-            }
-            // PD 3.2 Sec. 8.3.3.26.3.2 (PE_SRC_EPR_Mode_Exit_Received):
-            EprState::ExitReceived => {
-                self.mode = Mode::Spr;
-                // FIXME: Clear EPR headers
-                match self.contract {
-                    Contract::Explicit(power_source) => {
-                        let epr_capabilities = self.device_policy_manager.epr_source_capabilities();
-
-                        if epr_capabilities.has_epr_pdo_in_spr_positions() {
-                            Ok(State::HardReset)
-                        } else if epr_capabilities
-                            .spr_pdos()
-                            .any(|(pos, _pdo)| pos == power_source.object_position())
-                        {
-                            Ok(State::SendCapabilities)
-                        } else {
-                            Ok(State::HardReset)
-                        }
-                    }
-                    Contract::Safe5V | Contract::Implicit => Ok(State::Ready),
-                    _ => Ok(State::HardReset),
-                }
-            }
-        }
+        epr::execute_epr_state(self, state).await
     }
 
     async fn match_message_to_state(&mut self, message: Message) -> Result<State, Error> {
@@ -1385,8 +1266,6 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                 Mode::Spr => State::SendCapabilities,
                 #[cfg(feature = "epr")]
                 Mode::Epr => State::GiveSourceCap,
-                #[cfg(not(feature = "epr"))]
-                Mode::Epr => State::SendCapabilities,
             },
 
             MessageType::Control(ControlMessageType::VconnSwap) => State::VconnSwap {
@@ -1397,8 +1276,6 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
             MessageType::Control(ControlMessageType::DrSwap) => {
                 if !self.dual_role {
                     State::SendNotSupported
-                } else if self.mode == Mode::Epr {
-                    State::HardReset
                 } else {
                     State::DrpSwap(SwapState::Data(DataRoleSwap::Evaluate))
                 }
@@ -1485,14 +1362,6 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                 trace!("Sink EPR Request {:?}", message);
                 message
             }
-            #[cfg(not(feature = "epr"))]
-            Mode::Epr => {
-                let message = self.protocol_layer.wait_for_request().await?;
-                debug_assert!(message.header.message_type() == MessageType::Data(DataMessageType::Request));
-
-                trace!("Sink Request {:?}", message);
-                message
-            }
         };
 
         // Extract the power source from the request. Handle malformed payload gracefully (protocol violation).
@@ -1530,23 +1399,6 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
     /// GetSourceCap
     #[cfg(feature = "epr")]
     async fn get_epr_source_capabilities(&mut self) -> Result<SourceCapabilities, Error> {
-        self.protocol_layer
-            .transmit_extended_control_message(ExtendedControlMessageType::EprGetSourceCap)
-            .await?;
-
-        let message = self
-            .protocol_layer
-            .receive_message_type(
-                &[MessageType::Extended(ExtendedMessageType::EprSourceCapabilities)],
-                TimerType::SenderResponse,
-            )
-            .await?;
-
-        match message.payload {
-            Some(Payload::Extended(Extended::EprSourceCapabilities(cap))) => Ok(SourceCapabilities(cap)),
-            // A malformed payload is a protocol violation, not a bug; the caller's
-            // UnexpectedMessage handler (PD 3.2 Sec. 6.6.2) transitions to Soft Reset.
-            _ => Err(Error::Protocol(ProtocolError::UnexpectedMessage)),
-        }
+        epr::get_epr_source_capabilities(&mut self.protocol_layer).await
     }
 }
