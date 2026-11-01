@@ -21,9 +21,9 @@ pub enum FastRoleSwapCurrent {
     NotSupported = 0b00,
     /// Default USB Power
     DefaultUsbPower = 0b01,
-    /// 1.5A @ 5V
+    /// 1.5 A @ 5 V
     Current1_5A = 0b10,
-    /// 3.0A @ 5V
+    /// 3.0 A @ 5 V
     Current3_0A = 0b11,
 }
 
@@ -81,7 +81,7 @@ impl Default for FixedSupply {
 impl FixedSupply {
     /// Create a new FixedSupply PDO for the required vSafe5V entry.
     ///
-    /// All sinks must include at least one PDO at 5V.
+    /// All sinks must include at least one PDO at 5 V.
     pub fn new_vsafe5v(operational_current_10ma: u16) -> Self {
         Self::default()
             .with_kind(0b00)
@@ -261,7 +261,7 @@ pub struct SinkCapabilities(pub Vec<SinkPowerDataObject, MAX_CAPABILITIES_LEN>);
 impl SinkCapabilities {
     /// Create new sink capabilities with a single vSafe5V PDO.
     ///
-    /// This is the minimum required per PD 3.2 Sec. 6.4.1.6 - all sinks must support 5V.
+    /// This is the minimum required per PD 3.2 Sec. 6.4.1.6 - all sinks must support 5 V.
     pub fn new_vsafe5v_only(operational_current_10ma: u16) -> Self {
         let mut pdos = Vec::new();
         pdos.push(SinkPowerDataObject::FixedSupply(FixedSupply::new_vsafe5v(

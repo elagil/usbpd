@@ -5,6 +5,13 @@ All notable changes to the `usbpd` and `usbpd-traits` crates are documented here
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] — `usbpd`
+
+### Added
+
+- `epr` feature gate. The EPR protocol paths compile out when the feature is disabled, saving flash and RAM. Enabled by default.
+  EPR timer types are available through `usbpd::timers::TimerType::Epr`.
+
 ## [3.0.0] — `usbpd`
 
 ### Added

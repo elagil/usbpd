@@ -199,25 +199,7 @@ impl Data {
             Self::Request(request::PowerSource::Pps(data_object)) => data_object.to_bytes(payload),
             Self::Request(request::PowerSource::Avs(data_object)) => data_object.to_bytes(payload),
             #[cfg(feature = "epr")]
-            Self::Request(request::PowerSource::EprRequest(epr)) => {
-                // Write RDO (raw u32)
-                LittleEndian::write_u32(payload, epr.rdo);
-                // Write PDO copy as raw u32
-                let raw_pdo = match &epr.pdo {
-                    source_capabilities::PowerDataObject::FixedSupply(p) => p.0,
-                    source_capabilities::PowerDataObject::Battery(p) => p.0,
-                    source_capabilities::PowerDataObject::VariableSupply(p) => p.0,
-                    source_capabilities::PowerDataObject::Augmented(a) => match a {
-                        source_capabilities::Augmented::Spr(p) => p.0,
-                        #[cfg(feature = "epr")]
-                        source_capabilities::Augmented::Epr(p) => p.0,
-                        source_capabilities::Augmented::Unknown(p) => *p,
-                    },
-                    source_capabilities::PowerDataObject::Unknown(p) => p.0,
-                };
-                LittleEndian::write_u32(&mut payload[PDO_SIZE..], raw_pdo);
-                2 * PDO_SIZE
-            }
+            Self::Request(request::PowerSource::EprRequest(epr)) => request::epr::to_bytes(epr, payload),
             Self::Request(_) => unimplemented!(),
             #[cfg(feature = "epr")]
             Self::EprMode(epr_mode::EprModeDataObject(data_object)) => {

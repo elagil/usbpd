@@ -2,24 +2,30 @@
 use core::marker::PhantomData;
 
 use embassy_futures::select::{Either3, select3};
-use uom::si::power::watt;
 use usbpd_traits::Driver;
 
 use super::device_policy_manager::{Event, Info, SinkDpm};
 use crate::counters::Counter;
 #[cfg(feature = "epr")]
-use crate::protocol_layer::message::data::epr_mode::{self, Action};
+pub(crate) mod epr;
+#[cfg(feature = "epr")]
+use self::epr::EprState;
+use crate::protocol_layer::message::Payload;
 use crate::protocol_layer::message::data::request::PowerSource;
 use crate::protocol_layer::message::data::source_capabilities::SourceCapabilities;
 use crate::protocol_layer::message::data::{Data, request};
+#[cfg(feature = "epr")]
+use crate::protocol_layer::message::extended;
+#[cfg(feature = "epr")]
 use crate::protocol_layer::message::extended::extended_control::ExtendedControlMessageType;
 use crate::protocol_layer::message::header::{
     ControlMessageType, DataMessageType, ExtendedMessageType, Header, MessageType, SpecificationRevision,
 };
-use crate::protocol_layer::message::{Payload, extended};
 use crate::protocol_layer::{ProtocolError, RxError, SinkProtocolLayer, TxError};
+#[cfg(feature = "epr")]
+use crate::timers::EprTimerType;
 use crate::timers::{Timer, TimerType};
-use crate::{Contract, DataRole, PolicyEngineResult, PowerRole, RunResult, SwapType, units};
+use crate::{Contract, DataRole, PolicyEngineResult, PowerRole, RunResult, SwapType};
 
 #[cfg(test)]
 #[cfg(feature = "epr")]
@@ -27,10 +33,19 @@ mod tests;
 
 /// Sink capability
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum Mode {
+#[cfg(not(feature = "epr"))]
+pub(crate) enum Mode {
     /// The classic mode of PD operation where explicit contracts are negotiaged using SPR (A)PDOs.
     Spr,
-    /// A Power Delivery mode of operation where maximum allowable voltage is 48V.
+}
+
+/// Sink capability
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg(feature = "epr")]
+pub(crate) enum Mode {
+    /// The classic mode of PD operation where explicit contracts are negotiaged using SPR (A)PDOs.
+    Spr,
+    /// A Power Delivery mode of operation where maximum allowable voltage is 48 V.
     Epr,
 }
 
@@ -132,17 +147,6 @@ enum VcsState {
     // FIXME: For now, forcing a different state traversla, resulting in this being unused
     #[allow(unused)]
     ForceVconn,
-}
-
-#[derive(Debug, Clone, Copy)]
-#[cfg(feature = "epr")]
-enum EprState {
-    Entry(units::Power),
-    EntryWaitForResponse,
-    WaitForCapabilities,
-    SendExit,
-    ExitReceived,
-    KeepAlive,
 }
 
 /// Implementation of the sink policy engine.
@@ -474,9 +478,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                         &[MessageType::Control(ControlMessageType::PsRdy)],
                         match self.mode {
                             #[cfg(feature = "epr")]
-                            Mode::Epr => TimerType::PSTransitionEpr,
-                            #[cfg(not(feature = "epr"))]
-                            Mode::Epr => TimerType::PSTransitionSpr,
+                            Mode::Epr => TimerType::Epr(EprTimerType::PSTransition),
                             Mode::Spr => TimerType::PSTransitionSpr,
                         },
                     )
@@ -511,15 +513,17 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                         _ => core::future::pending().await,
                     }
                 };
+                #[cfg(feature = "epr")]
                 let epr_keep_alive_fut = async {
                     match self.mode {
-                        #[cfg(feature = "epr")]
-                        Mode::Epr => TimerType::get_timer::<TIMER>(TimerType::SinkEPRKeepAlive).await,
-                        #[cfg(not(feature = "epr"))]
-                        Mode::Epr => core::future::pending::<()>().await,
+                        Mode::Epr => {
+                            TimerType::get_timer::<TIMER>(TimerType::Epr(EprTimerType::SinkEPRKeepAlive)).await
+                        }
                         Mode::Spr => core::future::pending().await,
                     }
                 };
+                #[cfg(not(feature = "epr"))]
+                let epr_keep_alive_fut = async { core::future::pending::<TimerType>().await };
                 // Per PD 3.2 Sec. 8.3.3.3.7: SinkRequestTimer runs concurrently when re-entering
                 // Ready after a Wait response. On timeout, transition to SelectCapability.
                 // Per PD 3.2 Sec. 6.6.4.1: Ensures minimum tSinkRequest (100ms) delay before re-request.
@@ -542,10 +546,14 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                                 // Per PD 3.2 Sec. 8.3.3.3.8:
                                 // In EPR Mode, if a Source_Capabilities Message is received that
                                 // has not been requested using a Get_Source_Cap Message, trigger Hard Reset.
-                                if self.mode == Mode::Epr
-                                    && !self.get_source_cap_pending
-                                    && cfg!(feature = "epr")
-                                {
+                                // Without the `epr` feature, `Mode::Epr` does not exist, so the check
+                                // always yields `None` and the capabilities are evaluated.
+                                #[cfg(feature = "epr")]
+                                let epr_violation = self.mode == Mode::Epr && !self.get_source_cap_pending;
+                                #[cfg(not(feature = "epr"))]
+                                let epr_violation = false;
+
+                                if epr_violation {
                                     State::HardReset
                                 } else {
                                     self.get_source_cap_pending = false;
@@ -591,30 +599,32 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                                 true => State::DrpSwap(SwapState::Data(DataRoleSwap::Evaluate)),
                                 false => State::SendNotSupported,
                             },
-                            // Per PD 3.2 Sec. 8.3.3.3.7: Get_Sink_Cap → GiveSinkCap (send Sink_Capabilities)
+                            // Per PD 3.2 Sec. 8.3.3.3.7: Get_Sink_Cap -> GiveSinkCap (send Sink_Capabilities)
                             MessageType::Control(ControlMessageType::GetSinkCap) => State::GiveSinkCap(Mode::Spr),
                             MessageType::Control(ControlMessageType::VconnSwap) => {
                                 State::VconnSwap(VcsState::EvaluateSwap)
                             }
-                            // Per PD 3.2 Sec. 8.3.3.3.7: EPR_Get_Sink_Cap → GiveSinkCap (send EPR_Sink_Capabilities)
+                            // Per PD 3.2 Sec. 8.3.3.3.7: EPR_Get_Sink_Cap -> GiveSinkCap (send EPR_Sink_Capabilities)
                             MessageType::Extended(ExtendedMessageType::ExtendedControl) => {
-                                if let Some(Payload::Extended(extended::Extended::ExtendedControl(ctrl))) =
-                                    &message.payload
+                                #[cfg(feature = "epr")]
                                 {
-                                    #[cfg(feature = "epr")]
-                                    if matches!(
-                                        ctrl.try_message_type(),
-                                        Ok(ExtendedControlMessageType::EprGetSinkCap)
-                                    ) {
-                                        State::GiveSinkCap(Mode::Epr)
+                                    if let Some(Payload::Extended(extended::Extended::ExtendedControl(ctrl))) =
+                                        &message.payload
+                                    {
+                                        if matches!(
+                                            ctrl.try_message_type(),
+                                            Ok(ExtendedControlMessageType::EprGetSinkCap)
+                                        ) {
+                                            State::GiveSinkCap(Mode::Epr)
+                                        } else {
+                                            State::SendNotSupported
+                                        }
                                     } else {
                                         State::SendNotSupported
                                     }
-                                    #[cfg(not(feature = "epr"))]
-                                    {
-                                        State::SendNotSupported
-                                    }
-                                } else {
+                                }
+                                #[cfg(not(feature = "epr"))]
+                                {
                                     State::SendNotSupported
                                 }
                             }
@@ -769,11 +779,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                     }
                     #[cfg(feature = "epr")]
                     Mode::Epr => {
-                        self.protocol_layer.transmit_epr_sink_capabilities(sink_caps).await?;
-                    }
-                    #[cfg(not(feature = "epr"))]
-                    Mode::Epr => {
-                        self.protocol_layer.transmit_sink_capabilities(sink_caps).await?;
+                        epr::transmit_sink_capabilities(&mut self.protocol_layer, sink_caps).await?;
                     }
                 }
 
@@ -783,8 +789,8 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                 // Per PD 3.2 Sec. 8.3.3.3.12 (PE_SNK_Get_Source_Cap):
                 // - Send Get_Source_Cap (SPR) or EPR_Get_Source_Cap (EPR)
                 // - Start SenderResponseTimer
-                // - On timeout or mode mismatch → Ready
-                // - On matching capabilities received → EvaluateCapabilities
+                // - On timeout or mode mismatch -> Ready
+                // - On matching capabilities received -> EvaluateCapabilities
                 //
                 // Set flag before sending to track that we requested source capabilities.
                 // Per PD 3.2 Sec. 8.3.3.3.8, in EPR mode, receiving an unrequested
@@ -799,17 +805,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                     }
                     #[cfg(feature = "epr")]
                     Mode::Epr => {
-                        self.protocol_layer
-                            .transmit_extended_control_message(
-                                crate::protocol_layer::message::extended::extended_control::ExtendedControlMessageType::EprGetSourceCap,
-                            )
-                            .await?;
-                    }
-                    #[cfg(not(feature = "epr"))]
-                    Mode::Epr => {
-                        self.protocol_layer
-                            .transmit_control_message(ControlMessageType::GetSourceCap)
-                            .await?;
+                        epr::transmit_get_source_cap(&mut self.protocol_layer).await?;
                     }
                 };
 
@@ -845,23 +841,20 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                 };
 
                 // Per PD 3.2 Sec. 8.3.3.3.12:
-                // - In SPR mode + SPR caps requested + Source_Capabilities received → EvaluateCapabilities
-                // - In EPR mode + EPR caps requested + EPR_Source_Capabilities received → EvaluateCapabilities
-                // - Mode mismatch (e.g., EPR mode but SPR caps requested) → Ready
+                // - In SPR mode + SPR caps requested + Source_Capabilities received -> EvaluateCapabilities
+                // - In EPR mode + EPR caps requested + EPR_Source_Capabilities received -> EvaluateCapabilities
+                // - Mode mismatch (e.g., EPR mode but SPR caps requested) -> Ready
                 let received_spr = matches!(
                     message.header.message_type(),
                     MessageType::Data(DataMessageType::SourceCapabilities)
                 );
                 #[cfg(feature = "epr")]
-                let received_epr = matches!(
-                    message.header.message_type(),
-                    MessageType::Extended(ExtendedMessageType::EprSourceCapabilities)
-                );
-                #[cfg(not(feature = "epr"))]
-                let received_epr = false;
-
+                let received_epr = epr::received_is_epr(&message);
+                #[cfg(feature = "epr")]
                 let mode_matches = (*requested_mode == Mode::Spr && self.mode == Mode::Spr && received_spr)
                     || (*requested_mode == Mode::Epr && self.mode == Mode::Epr && received_epr);
+                #[cfg(not(feature = "epr"))]
+                let mode_matches = *requested_mode == Mode::Spr && self.mode == Mode::Spr && received_spr;
 
                 // Extract capabilities from the message
                 let capabilities = match message.payload {
@@ -1009,9 +1002,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                 let timer_type = match self.mode {
                     Mode::Spr => TimerType::PSSourceOffSpr,
                     #[cfg(feature = "epr")]
-                    Mode::Epr => TimerType::PSSourceOffEpr,
-                    #[cfg(not(feature = "epr"))]
-                    Mode::Epr => TimerType::PSSourceOffSpr,
+                    Mode::Epr => TimerType::Epr(EprTimerType::PSSourceOff),
                 };
 
                 self.protocol_layer
@@ -1108,9 +1099,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                 let timer_type = match self.mode {
                     Mode::Spr => TimerType::PSSourceOffSpr,
                     #[cfg(feature = "epr")]
-                    Mode::Epr => TimerType::PSSourceOffEpr,
-                    #[cfg(not(feature = "epr"))]
-                    Mode::Epr => TimerType::PSSourceOffSpr,
+                    Mode::Epr => TimerType::Epr(EprTimerType::PSSourceOff),
                 };
 
                 self.protocol_layer
@@ -1253,189 +1242,6 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
 
     #[cfg(feature = "epr")]
     async fn execute_epr_state(&mut self, state: EprState) -> Result<State, Error> {
-        let new_state = match state {
-            // PD 3.2 Sec. 8.3.3.26.2.1 (PE_SNK_Send_EPR_Mode_Entry):
-            EprState::Entry(operational_pdp) => {
-                // Request entry into EPR mode.
-                // Per PD 3.2 Sec. 8.3.3.26.2.1 (PE_SNK_Send_EPR_Mode_Entry), sink sends EPR_Mode (Enter)
-                // and starts SenderResponseTimer and SinkEPREnterTimer.
-                //
-                // Per PD 3.2 Sec. 6.4.10, the Data field shall be set to the EPR Sink Operational PDP.
-                //
-                // Note: The spec says SinkEPREnterTimer (500ms) should run continuously across
-                // both EprModeEntry and EprEntryWaitForResponse states until stopped or timeout.
-                // Our implementation uses SenderResponseTimer (30ms) here and a fresh
-                // SinkEPREnterTimer (500ms) in EprEntryWaitForResponse. This means the total
-                // timeout could be ~530ms instead of 500ms in edge cases. However, this is
-                // within the spec's allowed range (tEnterEPR max = 550ms per PD 3.2 Tab. 6.71).
-                let pdp_watts: u8 = operational_pdp.get::<watt>() as u8;
-                self.protocol_layer.transmit_epr_mode(Action::Enter, pdp_watts).await?;
-
-                // Wait for EnterAcknowledged with SenderResponseTimer (spec step 9-14)
-                let message = self
-                    .protocol_layer
-                    .receive_message_type(
-                        &[MessageType::Data(DataMessageType::EprMode)],
-                        TimerType::SenderResponse,
-                    )
-                    .await?;
-
-                // A partner-supplied frame may parse as `Data::Unknown` (e.g. wrong payload length).
-                // Per PD 3.2 Sec. 8.3.3.26.2.1 any invalid `EPR_Mode` message leads to Soft Reset.
-                let Some(Payload::Data(Data::EprMode(epr_mode))) = message.payload else {
-                    return Ok(State::SendSoftReset);
-                };
-
-                match epr_mode.action() {
-                    Action::EnterAcknowledged => {
-                        // Source acknowledged, now wait for EnterSucceeded
-                        State::EprMode(EprState::EntryWaitForResponse)
-                    }
-                    Action::EnterSucceeded => {
-                        // Source skipped EnterAcknowledged and went directly to EnterSucceeded
-                        self.mode = Mode::Epr;
-                        State::EprMode(EprState::WaitForCapabilities)
-                    }
-                    Action::Exit => State::EprMode(EprState::ExitReceived),
-                    Action::EnterFailed => {
-                        // Per PD 3.2 Sec. 8.3.3.26.2.1: EnterFailed → Soft Reset
-                        // Notify DPM of the failure reason before soft reset
-                        let reason = epr_mode::DataEnterFailed::from(epr_mode.data());
-                        self.device_policy_manager.epr_mode_entry_failed(reason).await;
-                        State::SendSoftReset
-                    }
-                    // Per PD 3.2 Sec. 8.3.3.26.2.1: any other EPR_Mode message → Soft Reset
-                    _ => State::SendSoftReset,
-                }
-            }
-            // PD 3.2 Sec. 8.3.3.26.2.2 (PE_SNK_EPR_Mode_Wait_For_Response):
-            EprState::EntryWaitForResponse => {
-                // Wait for EnterSucceeded after receiving EnterAcknowledged.
-                // Per PD 3.2 Sec. 8.3.3.26.2.2 (PE_SNK_EPR_Mode_Wait_For_Response), use SinkEPREnterTimer
-                // for the overall timeout while source performs cable discovery.
-                let message = self
-                    .protocol_layer
-                    .receive_message_type(&[MessageType::Data(DataMessageType::EprMode)], TimerType::SinkEPREnter)
-                    .await?;
-
-                // A partner-supplied frame may parse as `Data::Unknown` (e.g. wrong payload length).
-                // Per PD 3.2 Sec. 8.3.3.26.2.2 any invalid EPR_Mode message leads to Soft Reset.
-                let Some(Payload::Data(Data::EprMode(epr_mode))) = message.payload else {
-                    return Ok(State::SendSoftReset);
-                };
-
-                match epr_mode.action() {
-                    Action::EnterSucceeded => {
-                        // EPR mode entry succeeded. Per PD 3.2 Tab. 8.39 step 21-29,
-                        // source will automatically send EPR_Source_Capabilities after this.
-                        self.mode = Mode::Epr;
-                        State::EprMode(EprState::WaitForCapabilities)
-                    }
-                    Action::Exit => State::EprMode(EprState::ExitReceived),
-                    Action::EnterFailed => {
-                        // Per PD 3.2 Sec. 8.3.3.26.2.2: EnterFailed → Soft Reset
-                        // Notify DPM of the failure reason before soft reset
-                        let reason = epr_mode::DataEnterFailed::from(epr_mode.data());
-                        self.device_policy_manager.epr_mode_entry_failed(reason).await;
-                        State::SendSoftReset
-                    }
-                    // Per PD 3.2 Sec. 8.3.3.26.2.2: any other EPR_Mode message → Soft Reset
-                    _ => State::SendSoftReset,
-                }
-            }
-            // EPR Mode PE_SNK_Wait_for_Capabilities
-            EprState::WaitForCapabilities => {
-                // After successful EPR mode entry, source automatically sends EPR_Source_Capabilities.
-                // This may be a chunked extended message that requires assembly.
-                // Wait for the capabilities and evaluate them.
-                let message = self.protocol_layer.wait_for_source_capabilities().await?;
-
-                match message.payload {
-                    Some(Payload::Data(Data::SourceCapabilities(capabilities))) => {
-                        State::EvaluateCapabilities(capabilities)
-                    }
-                    Some(Payload::Extended(extended::Extended::EprSourceCapabilities(pdos))) => {
-                        State::EvaluateCapabilities(SourceCapabilities(pdos))
-                    }
-                    _ => {
-                        error!("Expected source capabilities after EPR mode entry");
-                        State::HardReset
-                    }
-                }
-            }
-            // PD 3.2 Sec. 8.3.3.26.4.1 (PE_SNK_Send_EPR_Mode_Exit):
-            EprState::SendExit => {
-                // Inform partner we are exiting EPR.
-                self.protocol_layer.transmit_epr_mode(Action::Exit, 0).await?;
-                self.mode = Mode::Spr;
-                State::WaitForCapabilities
-            }
-            // PD 3.2 Sec. 8.3.3.26.4.2 (PE_SNK_EPR_Mode_Exit_Received):
-            EprState::ExitReceived => {
-                // Per PD 3.2 Sec. 8.3.3.26.4.2 (PE_SNK_EPR_Mode_Exit_Received):
-                // - If in an Explicit Contract with an SPR (A)PDO → WaitForCapabilities
-                // - If NOT in an Explicit Contract with an SPR (A)PDO → HardReset
-                //
-                // SPR PDOs are in object positions 1-7, EPR PDOs are in positions 8+.
-                // In EPR mode, requests use EprRequest which contains the RDO with object position.
-                self.mode = Mode::Spr;
-
-                let is_epr_pdo_contract = match self.contract {
-                    Contract::Explicit(PowerSource::EprRequest(epr)) => {
-                        // Extract object position from RDO (bits 28-31)
-                        epr.object_position() >= 8
-                    }
-                    _ => false,
-                };
-
-                if is_epr_pdo_contract {
-                    State::HardReset
-                } else {
-                    State::WaitForCapabilities
-                }
-            }
-            // PD 3.2 Sec. 8.3.3.3.11 (PE_SNK_EPR_Keep_Alive):
-            EprState::KeepAlive => {
-                // Per PD 3.2 Sec. 8.3.3.3.11 (PE_SNK_EPR_Keep_Alive):
-                // - Entry: Send EPR_KeepAlive message, start SenderResponseTimer
-                // - On EPR_KeepAlive_Ack: transition to Ready (which restarts SinkEPRKeepAliveTimer)
-                // - On timeout: transition to HardReset
-                self.protocol_layer
-                    .transmit_extended_control_message(
-                        crate::protocol_layer::message::extended::extended_control::ExtendedControlMessageType::EprKeepAlive,
-                    )
-                    .await?;
-                match self
-                    .protocol_layer
-                    .receive_message_type(
-                        &[MessageType::Extended(ExtendedMessageType::ExtendedControl)],
-                        TimerType::SenderResponse,
-                    )
-                    .await
-                {
-                    Ok(message) => {
-                        if let Some(Payload::Extended(extended::Extended::ExtendedControl(control))) = message.payload {
-                            // Per PD 3.2 Tab. 6.67, values not explicitly
-                            // defined are Reserved; answer Not_Supported.
-                            if control.try_message_type()
-                                == Ok(
-                                    crate::protocol_layer::message::extended::extended_control::ExtendedControlMessageType::EprKeepAliveAck
-                                )
-                            {
-                                self.mode = Mode::Epr;
-                                State::Ready(false)
-                            } else {
-                                State::SendNotSupported
-                            }
-                        } else {
-                            State::SendNotSupported
-                        }
-                    }
-                    Err(_) => State::HardReset,
-                }
-            }
-        };
-
-        Ok(new_state)
+        epr::execute_epr_state(self, state).await
     }
 }
