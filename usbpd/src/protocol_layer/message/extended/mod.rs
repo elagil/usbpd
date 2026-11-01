@@ -11,6 +11,7 @@ use byteorder::{ByteOrder, LittleEndian};
 use heapless::Vec;
 use proc_bitfield::bitfield;
 
+#[cfg(feature = "epr")]
 use crate::protocol_layer::message::data;
 
 /// Extended message payload types, per PD 3.2 Sec. 6.5.

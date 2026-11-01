@@ -22,8 +22,6 @@ use crate::protocol_layer::message::header::{
     ControlMessageType, DataMessageType, ExtendedMessageType, Header, MessageType, SpecificationRevision,
 };
 use crate::protocol_layer::{ProtocolError, RxError, SinkProtocolLayer, TxError};
-#[cfg(feature = "epr")]
-use crate::timers::EprTimerType;
 use crate::timers::{Timer, TimerType};
 use crate::{Contract, DataRole, PolicyEngineResult, PowerRole, RunResult, SwapType};
 
@@ -478,7 +476,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                         &[MessageType::Control(ControlMessageType::PsRdy)],
                         match self.mode {
                             #[cfg(feature = "epr")]
-                            Mode::Epr => TimerType::Epr(EprTimerType::PSTransition),
+                            Mode::Epr => TimerType::PSTransitionEpr,
                             Mode::Spr => TimerType::PSTransitionSpr,
                         },
                     )
@@ -516,9 +514,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                 #[cfg(feature = "epr")]
                 let epr_keep_alive_fut = async {
                     match self.mode {
-                        Mode::Epr => {
-                            TimerType::get_timer::<TIMER>(TimerType::Epr(EprTimerType::SinkEPRKeepAlive)).await
-                        }
+                        Mode::Epr => TimerType::get_timer::<TIMER>(TimerType::SinkEPRKeepAlive).await,
                         Mode::Spr => core::future::pending().await,
                     }
                 };
@@ -1002,7 +998,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                 let timer_type = match self.mode {
                     Mode::Spr => TimerType::PSSourceOffSpr,
                     #[cfg(feature = "epr")]
-                    Mode::Epr => TimerType::Epr(EprTimerType::PSSourceOff),
+                    Mode::Epr => TimerType::PSSourceOffEpr,
                 };
 
                 self.protocol_layer
@@ -1099,7 +1095,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                 let timer_type = match self.mode {
                     Mode::Spr => TimerType::PSSourceOffSpr,
                     #[cfg(feature = "epr")]
-                    Mode::Epr => TimerType::Epr(EprTimerType::PSSourceOff),
+                    Mode::Epr => TimerType::PSSourceOffEpr,
                 };
 
                 self.protocol_layer

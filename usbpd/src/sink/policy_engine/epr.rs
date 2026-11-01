@@ -9,7 +9,6 @@ use usbpd_traits::Driver;
 
 use super::super::device_policy_manager::SinkDpm;
 use super::{Error, Mode, Sink, State};
-use crate::Contract;
 use crate::protocol_layer::message::data::Data;
 use crate::protocol_layer::message::data::epr_mode::{self, Action};
 use crate::protocol_layer::message::data::request::PowerSource;
@@ -19,8 +18,8 @@ use crate::protocol_layer::message::extended::extended_control::ExtendedControlM
 use crate::protocol_layer::message::header::{DataMessageType, ExtendedMessageType, MessageType};
 use crate::protocol_layer::message::{Payload, extended};
 use crate::protocol_layer::{ProtocolError, SinkProtocolLayer};
-use crate::timers::{EprTimerType, Timer, TimerType};
-use crate::units;
+use crate::timers::{Timer, TimerType};
+use crate::{Contract, units};
 
 /// EPR policy engine states.
 ///
@@ -108,10 +107,7 @@ pub(super) async fn execute_epr_state<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm
             // for the overall timeout while source performs cable discovery.
             let message = sink
                 .protocol_layer
-                .receive_message_type(
-                    &[MessageType::Data(DataMessageType::EprMode)],
-                    TimerType::Epr(EprTimerType::SinkEPREnter),
-                )
+                .receive_message_type(&[MessageType::Data(DataMessageType::EprMode)], TimerType::SinkEPREnter)
                 .await?;
 
             // A partner-supplied frame may parse as `Data::Unknown` (e.g. wrong payload length).

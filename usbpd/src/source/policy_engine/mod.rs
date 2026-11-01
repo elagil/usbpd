@@ -25,8 +25,6 @@ use crate::protocol_layer::message::header::{
 };
 use crate::protocol_layer::message::{Message, Payload};
 use crate::protocol_layer::{ProtocolError, RxError, SourceProtocolLayer, TxError};
-#[cfg(feature = "epr")]
-use crate::timers::EprTimerType;
 use crate::timers::{Timer, TimerType};
 use crate::{Contract, DataRole, PolicyEngineResult, PowerRole, RunResult, SwapType};
 
@@ -517,9 +515,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                 #[cfg(feature = "epr")]
                 let epr_keep_alive_fut = async {
                     match self.mode {
-                        Mode::Epr => {
-                            TimerType::get_timer::<TIMER>(TimerType::Epr(EprTimerType::SourceEPRKeepAlive)).await
-                        }
+                        Mode::Epr => TimerType::get_timer::<TIMER>(TimerType::SourceEPRKeepAlive).await,
                         Mode::Spr => core::future::pending().await,
                     }
                 };
