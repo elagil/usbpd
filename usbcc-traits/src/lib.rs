@@ -12,7 +12,7 @@
 #![cfg_attr(not(test), no_std)]
 #![warn(missing_docs)]
 
-use core::future::Future;
+use core::future::{self, Future};
 
 /// One of the two CC pins of the receptacle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,6 +109,20 @@ pub trait VbusSense {
     /// Returns immediately if it already is. Implementations can use an ADC analog watchdog, a
     /// comparator or polling.
     fn wait_vbus_outside(&mut self, low_mv: u32, high_mv: u32) -> impl Future<Output = Result<(), Self::Error>>;
+
+    /// Waits until the VBUS voltage is below `mv`.
+    ///
+    /// Returns immediately if it already is.
+    fn wait_vbus_below(&mut self, mv: u32) -> impl Future<Output = Result<(), Self::Error>> {
+        self.wait_vbus_outside(mv, u32::MAX)
+    }
+
+    /// Waits until the VBUS voltage is above `mv`.
+    ///
+    /// Returns immediately if it already is.
+    fn wait_vbus_above(&mut self, mv: u32) -> impl Future<Output = Result<(), Self::Error>> {
+        self.wait_vbus_outside(0, mv)
+    }
 }
 
 /// The VBUS power path of a port.
@@ -124,7 +138,7 @@ pub trait VbusSwitch {
     /// TCPP03-M20). The default implementation does nothing.
     fn set_attached(&mut self, attached: bool) -> impl Future<Output = Result<(), Self::Error>> {
         let _ = attached;
-        async { Ok(()) }
+        future::ready(Ok(()))
     }
 
     /// Connects (`true`) or disconnects (`false`) the sink path, through which the port consumes
@@ -142,6 +156,14 @@ pub trait VbusSwitch {
     /// for hardware without a source path may do nothing for `false` and panic for `true`, which
     /// indicates a misconfiguration.
     fn set_source(&mut self, on: bool) -> impl Future<Output = Result<(), Self::Error>>;
+
+    /// Waits until the supply behind the source path (VBULK) is ready to supply VBUS at vSafe5V.
+    ///
+    /// AttachWait.SRC only transitions to Attached.SRC once VBULK is ready (Section 4.5.2.2.8).
+    /// The default implementation returns immediately, for supplies that are always ready.
+    fn wait_source_ready(&mut self) -> impl Future<Output = Result<(), Self::Error>> {
+        future::ready(Ok(()))
+    }
 
     /// Enables (`true`) or disables (`false`) the VBUS discharge load.
     ///
@@ -161,6 +183,13 @@ pub trait VconnSwitch {
 
     /// Enables (`true`) or disables (`false`) the VCONN discharge (Section 4.5.2.2.6).
     fn set_vconn_discharge(&mut self, on: bool) -> impl Future<Output = Result<(), Self::Error>>;
+
+    /// Waits until VCONN is below vVCONNDischarge.
+    ///
+    /// UnattachedWait.SRC only transitions to Unattached.SRC once it is (Section 4.5.2.2.6).
+    /// Implementations without VCONN measurement may wait for a time that guarantees it, e.g. the
+    /// maximum discharge time of the hardware.
+    fn wait_vconn_discharged(&mut self) -> impl Future<Output = Result<(), Self::Error>>;
 }
 
 /// [`VconnSwitch`] for ports that never source VCONN.
@@ -188,6 +217,10 @@ impl VconnSwitch for NoVconn {
     }
 
     async fn set_vconn_discharge(&mut self, _on: bool) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    async fn wait_vconn_discharged(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
 }
