@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["usbpd", "usbpd-traits"]
+members = ["usbpd", "usbpd-traits", "usbcc-traits"]
 exclude = ["examples"]
 
 [workspace.package]

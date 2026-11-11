@@ -58,7 +58,7 @@ pub const VBUS_5V_OK_MV: u32 = 3900;
 
 #[derive(thiserror::Error, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Error<E: i2c::Error> {
+pub enum Error<E> {
     /// I2c error.
     #[error("i2c error")]
     I2c(#[from] E),
