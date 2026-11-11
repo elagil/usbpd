@@ -11,10 +11,12 @@ embassy-stm32 = { path = "../../embassy/embassy-stm32", default-features = false
     "exti",
     "unstable-pac",
 ] }
-embassy-time = { path = "../../embassy/embassy-time", default-features = false, features = ["defmt"] }
+embassy-time = { path = "../../embassy/embassy-time", default-features = false, features = [
+    "defmt",
+] }
 
 defmt = { version = "1.1.1", optional = true }
-embedded-hal = "1"
+embedded-hal-async = "1"
 thiserror = { version = "2.0.18", default-features = false }
 
 [features]
