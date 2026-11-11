@@ -1,6 +1,6 @@
 [package]
 edition = "2024"
-name = "usbpd-g474re-cc-only"
+name = "usbcc-g474re"
 version = "0.1.0"
 license = "MIT"
 
