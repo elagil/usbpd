@@ -65,7 +65,3 @@ overflow-checks = false  # <-
 default = ["stm32g474re"]
 
 stm32g474re = ["embassy-stm32/stm32g474re", "embassy-stm32/single-bank"]
-
-# One board initiates the PR_Swap, the other only accepts.
-role-initiator = []
-role-acceptor = []

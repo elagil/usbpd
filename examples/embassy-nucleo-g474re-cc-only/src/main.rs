@@ -28,10 +28,7 @@ async fn main(spawner: Spawner) {
 
     let p = embassy_stm32::init(stm32_config);
 
-    info!(
-        "USB CC DRP Example (NUCLEO-G474RE + X-NUCLEO-DRP1M1) initiator: {}",
-        cfg!(feature = "role-initiator")
-    );
+    info!("USB CC DRP Example (NUCLEO-G474RE + X-NUCLEO-DRP1M1)");
 
     {
         // TCPP03-M20 on the X-NUCLEO-DRP1M1: I2C1 (PB8/PB9), EN (PC8),
