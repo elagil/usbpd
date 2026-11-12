@@ -30,9 +30,9 @@
 //! # Example
 //!
 //! The body of a test in `usbcc/tests/`, which runs with `#[tokio::test(start_paused = true)]`.
-//! It doesn't run here yet, as the [`Port`] is still a skeleton.
+//! It panics for now, as the [`Port`] is still a skeleton; remove `should_panic` once it passes.
 //!
-//! ```no_run
+//! ```should_panic
 //! use std::time::Duration;
 //!
 //! use usbcc::{Config, PowerRole, RpLevel, State};
