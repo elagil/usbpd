@@ -4,14 +4,11 @@ use std::pin::pin;
 use std::time::Duration;
 
 use usbcc::{DevicePolicyManager, Event};
-use usbcc_sim::{Sim, SimError, run_for};
+use usbcc_sim::{Sim, SimError, SimFutureExt, run_for};
 use usbcc_traits::{CcPhy, CcState, PowerPath, RpLevel, VbusSense};
 
 const RP: CcState = CcState::Rp(RpLevel::Default);
 const OPEN: CcState = CcState::Open;
-
-/// Longer than anything that isn't waiting takes, so a future still pending after it waits.
-const LONG: Duration = Duration::from_secs(1);
 
 #[tokio::test(start_paused = true)]
 async fn cc_change_is_reported_once_per_read() {
@@ -19,30 +16,24 @@ async fn cc_change_is_reported_once_per_read() {
     let cc = &mut mocks.cc;
 
     // Nothing changed yet.
-    assert_eq!(run_for(LONG, cc.wait_for_cc_change()).await, None);
+    assert_eq!(cc.wait_for_cc_change().settle().await, None);
 
     // An unread change returns immediately, and then counts as read.
     sim.cc.set_cc(RP, OPEN);
-    assert_eq!(
-        run_for(Duration::ZERO, cc.wait_for_cc_change()).await,
-        Some(Ok((RP, OPEN)))
-    );
-    assert_eq!(run_for(LONG, cc.wait_for_cc_change()).await, None);
+    assert_eq!(cc.wait_for_cc_change().poll_once().await, Some(Ok((RP, OPEN))));
+    assert_eq!(cc.wait_for_cc_change().settle().await, None);
 
     // `cc_state` reads too.
     sim.cc.set_cc(OPEN, RP);
     assert_eq!(cc.cc_state().await, Ok((OPEN, RP)));
-    assert_eq!(run_for(LONG, cc.wait_for_cc_change()).await, None);
+    assert_eq!(cc.wait_for_cc_change().settle().await, None);
 
     // A reverted change is still a change; setting the same state is not.
     sim.cc.set_cc(RP, RP);
     sim.cc.set_cc(OPEN, RP);
-    assert_eq!(
-        run_for(Duration::ZERO, cc.wait_for_cc_change()).await,
-        Some(Ok((OPEN, RP)))
-    );
+    assert_eq!(cc.wait_for_cc_change().poll_once().await, Some(Ok((OPEN, RP))));
     sim.cc.set_cc(OPEN, RP);
-    assert_eq!(run_for(LONG, cc.wait_for_cc_change()).await, None);
+    assert_eq!(cc.wait_for_cc_change().settle().await, None);
 }
 
 #[tokio::test(start_paused = true)]
@@ -50,15 +41,15 @@ async fn pending_waits_wake_on_stimulus() {
     let (sim, mut mocks) = Sim::new();
 
     let mut cc = pin!(mocks.cc.wait_for_cc_change());
-    assert_eq!(run_for(LONG, &mut cc).await, None);
+    assert_eq!(cc.as_mut().settle().await, None);
     sim.cc.set_cc(RP, OPEN);
-    assert_eq!(run_for(Duration::ZERO, &mut cc).await, Some(Ok((RP, OPEN))));
+    assert_eq!(cc.as_mut().poll_once().await, Some(Ok((RP, OPEN))));
 
     sim.vbus.set_mv(5000);
     let mut vbus = pin!(mocks.vbus.wait_vbus_below(3500));
-    assert_eq!(run_for(LONG, &mut vbus).await, None);
+    assert_eq!(vbus.as_mut().settle().await, None);
     sim.vbus.set_mv(0);
-    assert_eq!(run_for(Duration::ZERO, &mut vbus).await, Some(Ok(())));
+    assert_eq!(vbus.as_mut().poll_once().await, Some(Ok(())));
 }
 
 #[tokio::test(start_paused = true)]
@@ -67,20 +58,17 @@ async fn vbus_waits_are_level_based_with_strict_bounds() {
     let vbus = &mut mocks.vbus;
 
     sim.vbus.set_mv(800);
-    assert_eq!(run_for(LONG, vbus.wait_vbus_outside(800, 5500)).await, None);
+    assert_eq!(vbus.wait_vbus_outside(800, 5500).settle().await, None);
     sim.vbus.set_mv(799);
-    assert_eq!(
-        run_for(Duration::ZERO, vbus.wait_vbus_outside(800, 5500)).await,
-        Some(Ok(()))
-    );
+    assert_eq!(vbus.wait_vbus_outside(800, 5500).poll_once().await, Some(Ok(())));
 
     // An excursion reverted before the wait runs again isn't seen.
     sim.vbus.set_mv(5000);
     let mut wait = pin!(vbus.wait_vbus_above(5500));
-    assert_eq!(run_for(LONG, &mut wait).await, None);
+    assert_eq!(wait.as_mut().settle().await, None);
     sim.vbus.set_mv(6000);
     sim.vbus.set_mv(5000);
-    assert_eq!(run_for(LONG, &mut wait).await, None);
+    assert_eq!(wait.as_mut().settle().await, None);
 }
 
 #[tokio::test(start_paused = true)]
@@ -89,14 +77,14 @@ async fn cancelled_get_event_loses_no_event() {
     let dpm = &mut mocks.dpm;
 
     let mut pending = Box::pin(dpm.get_event());
-    assert_eq!(run_for(Duration::ZERO, &mut pending).await, None);
+    assert_eq!(pending.as_mut().poll_once().await, None);
     sim.dpm.push_event(Event::Disable);
     drop(pending);
 
     sim.dpm.push_event(Event::Enable);
     assert_eq!(dpm.get_event().await, Event::Disable);
     assert_eq!(dpm.get_event().await, Event::Enable);
-    assert_eq!(run_for(LONG, dpm.get_event()).await, None);
+    assert_eq!(dpm.get_event().settle().await, None);
 }
 
 #[tokio::test(start_paused = true)]

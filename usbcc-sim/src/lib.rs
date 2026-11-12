@@ -12,7 +12,9 @@
 //!   information through its [`DpmHandle`].
 //! - Every call is recorded with its virtual timestamp in one ordered [`Log`].
 //! - [`SimTimer`] implements [`Timer`] with [`tokio::time::sleep`].
-//! - [`run_for`] runs a future for a virtual duration, then drops it.
+//! - [`run_for`] runs a future for a virtual duration, then drops it. [`SimFutureExt`] adds the
+//!   common cases as methods: [`poll_once`](SimFutureExt::poll_once) and
+//!   [`settle`](SimFutureExt::settle).
 //!
 //! [`Sim::new`] creates all of them at once.
 //!
@@ -131,6 +133,33 @@ pub type SimPort = Port<MockCcPhy, MockVbusSense, MockPowerPath, SimTimer>;
 pub async fn run_for<F: Future>(duration: Duration, future: F) -> Option<F::Output> {
     tokio::time::timeout(duration, future).await.ok()
 }
+
+/// Virtual time that [`SimFutureExt::settle`] runs a future for: 1 s, longer than any reaction of
+/// the mocks or any timer that a test is waiting out.
+pub const SETTLE_TIME: Duration = Duration::from_secs(1);
+
+/// Shorthands for [`run_for`], for any future.
+///
+/// To keep a future alive across calls, call them on a pinned reference to it, e.g.
+/// `wait.as_mut().poll_once()` after `let mut wait = pin!(...)`.
+pub trait SimFutureExt: Future + Sized {
+    /// Polls the future once, without advancing time, then drops it.
+    ///
+    /// Returns its output if it was ready, and `None` if it would have waited.
+    fn poll_once(self) -> impl Future<Output = Option<Self::Output>> {
+        run_for(Duration::ZERO, self)
+    }
+
+    /// Runs the future for [`SETTLE_TIME`], then drops it.
+    ///
+    /// Returns its output if it completed, and `None` if it was still waiting, i.e. for something
+    /// that the test has yet to do.
+    fn settle(self) -> impl Future<Output = Option<Self::Output>> {
+        run_for(SETTLE_TIME, self)
+    }
+}
+
+impl<F: Future> SimFutureExt for F {}
 
 /// The test side of the mocks of one port: the handles and the log.
 #[derive(Debug, Clone)]
