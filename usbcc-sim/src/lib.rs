@@ -119,15 +119,15 @@ pub const SETTLE_TIME: Duration = Duration::from_secs(5);
 /// it and call them on `as_mut()`: only the pinned reference is dropped.
 ///
 /// ```
-/// # use usbcc::{DevicePolicyManager, Event};
 /// # use usbcc_sim::{Sim, SimFutureExt};
+/// # use usbcc_traits::{CcPhy, CcState, RpLevel};
 /// # #[tokio::main(flavor = "current_thread", start_paused = true)]
 /// # async fn main() {
 /// let (sim, mut mocks) = Sim::new_open();
-/// let mut event = std::pin::pin!(mocks.dpm.get_event());
-/// assert_eq!(event.as_mut().settle().await, None);
-/// sim.dpm.push_event(Event::Enable);
-/// assert_eq!(event.as_mut().poll_once().await, Some(Event::Enable));
+/// let mut wait = std::pin::pin!(mocks.cc.wait_for_cc_change());
+/// assert!(wait.as_mut().settle().await.is_none());
+/// sim.cc.set_cc(CcState::Rp(RpLevel::Default), CcState::Open);
+/// assert!(wait.as_mut().poll_once().await.is_some());
 /// # }
 /// ```
 pub trait SimFutureExt: Future + Sized {

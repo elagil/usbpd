@@ -29,15 +29,14 @@ struct CcInner {
 /// [`CcPhy::wait_for_cc_change`] returns once the state set through the handle differs from the
 /// state at the last read by [`CcPhy::cc_state`] or [`CcPhy::wait_for_cc_change`]. This includes
 /// changes that were reverted before the read (A → B → A), like an edge-triggered interrupt.
-/// Before the first read, nothing counts as read, so the first call returns immediately, whatever
-/// the pins see. It never returns spuriously unless the test asks for it with
-/// [`CcHandle::trigger_spurious_change`].
+/// The initial state, both pins [`CcState::Open`], counts as read. It never returns spuriously
+/// unless the test asks for it with [`CcHandle::trigger_spurious_change`].
 #[derive(Debug)]
 pub struct MockCcPhy {
     shared: Arc<watch::Sender<CcInner>>,
     log: Log,
-    /// `cc_counter` at the last read, `None` before the first.
-    seen: Option<u64>,
+    /// `cc_counter` at the last read.
+    seen: u64,
 }
 
 /// The test side of the CC mock. Cloning yields another handle to the same mock.
@@ -73,7 +72,7 @@ impl MockCcPhy {
         let mock = Self {
             shared: shared.clone(),
             log: log.clone(),
-            seen: None,
+            seen: 0,
         };
         (mock, CcHandle { shared })
     }
@@ -102,7 +101,7 @@ impl CcPhy for MockCcPhy {
     async fn cc_state(&mut self) -> Result<(CcState, CcState), SimError> {
         self.begin(CcCall::CcState)?;
         let inner = self.shared.borrow();
-        self.seen = Some(inner.cc_counter);
+        self.seen = inner.cc_counter;
         Ok(inner.cc)
     }
 
@@ -112,11 +111,11 @@ impl CcPhy for MockCcPhy {
         let (counter, value) = self
             .shared
             .subscribe()
-            .wait_for(|inner| Some(inner.cc_counter) != seen)
+            .wait_for(|inner| inner.cc_counter != seen)
             .await
             .map(|inner| (inner.cc_counter, inner.cc))
             .expect("the mock holds the sender");
-        self.seen = Some(counter);
+        self.seen = counter;
         Ok(value)
     }
 }

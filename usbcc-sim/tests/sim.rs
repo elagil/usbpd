@@ -15,8 +15,7 @@ async fn cc_change_is_reported_once_per_read() {
     let (sim, mut mocks) = Sim::new_open();
     let cc = &mut mocks.cc;
 
-    // Never read: the first wait returns immediately, and then counts as read.
-    assert_eq!(cc.wait_for_cc_change().poll_once().await, Some(Ok((OPEN, OPEN))));
+    // Nothing changed yet.
     assert_eq!(cc.wait_for_cc_change().settle().await, None);
 
     // An unread change returns immediately, and then counts as read.
@@ -49,7 +48,6 @@ async fn initial_terminations() {
 async fn pending_waits_wake_on_stimulus() {
     let (sim, mut mocks) = Sim::new_open();
 
-    mocks.cc.cc_state().await.unwrap();
     let mut cc = pin!(mocks.cc.wait_for_cc_change());
     assert_eq!(cc.as_mut().settle().await, None);
     sim.cc.set_cc(RP, OPEN);
