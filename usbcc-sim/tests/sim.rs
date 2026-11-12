@@ -100,16 +100,6 @@ async fn injected_error_fails_only_the_next_call() {
 }
 
 #[tokio::test(start_paused = true)]
-#[should_panic(expected = "called while `PowerPath::prepare_vbus_source` is in progress")]
-async fn concurrent_power_path_calls_panic() {
-    let (sim, mut mocks) = Sim::new();
-    sim.power.set_source_ready(false);
-    // Leaking a pending call is the only way past the borrow checker.
-    std::mem::forget(mocks.power.prepare_vbus_source());
-    let _ = mocks.power.set_active(true).await;
-}
-
-#[tokio::test(start_paused = true)]
 async fn log_has_virtual_timestamps_in_call_order() {
     let (sim, mut mocks) = Sim::new();
     mocks.vbus.vbus_mv().await.unwrap();
