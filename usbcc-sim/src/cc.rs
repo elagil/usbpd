@@ -13,11 +13,11 @@ struct CcInner {
     /// What the pins see, as set by the test.
     cc: (CcState, CcState),
     /// Incremented on every change of `cc`, and on every requested spurious wakeup.
-    cc_version: u64,
+    cc_counter: u64,
     /// What the port presents, as set through the trait.
     terminations: (Termination, Termination),
     /// Incremented on every call of `set_termination`.
-    termination_version: u64,
+    termination_counter: u64,
     fail_next: Option<SimError>,
 }
 
@@ -36,7 +36,7 @@ pub struct MockCcPhy {
     shared: Arc<watch::Sender<CcInner>>,
     log: Log,
     port: &'static str,
-    /// `cc_version` at the last read.
+    /// `cc_counter` at the last read.
     seen: u64,
 }
 
@@ -53,9 +53,9 @@ impl MockCcPhy {
     pub fn new(log: &Log, port: &'static str) -> (Self, CcHandle) {
         let shared = Arc::new(watch::Sender::new(CcInner {
             cc: (CcState::Open, CcState::Open),
-            cc_version: 0,
+            cc_counter: 0,
             terminations: (Termination::Open, Termination::Open),
-            termination_version: 0,
+            termination_counter: 0,
             fail_next: None,
         }));
         let mock = Self {
@@ -83,7 +83,7 @@ impl CcPhy for MockCcPhy {
         self.begin(CcCall::SetTermination { cc1, cc2 })?;
         self.shared.send_modify(|inner| {
             inner.terminations = (cc1, cc2);
-            inner.termination_version += 1;
+            inner.termination_counter += 1;
         });
         Ok(())
     }
@@ -91,21 +91,21 @@ impl CcPhy for MockCcPhy {
     async fn cc_state(&mut self) -> Result<(CcState, CcState), SimError> {
         self.begin(CcCall::CcState)?;
         let inner = self.shared.borrow();
-        self.seen = inner.cc_version;
+        self.seen = inner.cc_counter;
         Ok(inner.cc)
     }
 
     async fn wait_for_cc_change(&mut self) -> Result<(CcState, CcState), SimError> {
         self.begin(CcCall::WaitForCcChange)?;
         let seen = self.seen;
-        let (version, value) = self
+        let (counter, value) = self
             .shared
             .subscribe()
-            .wait_for(|inner| inner.cc_version != seen)
+            .wait_for(|inner| inner.cc_counter != seen)
             .await
-            .map(|inner| (inner.cc_version, inner.cc))
+            .map(|inner| (inner.cc_counter, inner.cc))
             .expect("the mock holds the sender");
-        self.seen = version;
+        self.seen = counter;
         Ok(value)
     }
 }
@@ -116,7 +116,7 @@ impl CcHandle {
         self.shared.send_modify(|inner| {
             if inner.cc != (cc1, cc2) {
                 inner.cc = (cc1, cc2);
-                inner.cc_version += 1;
+                inner.cc_counter += 1;
             }
         });
     }
@@ -143,7 +143,7 @@ impl CcHandle {
     /// Makes a pending or the next [`CcPhy::wait_for_cc_change`] return once, with an unchanged
     /// state, as the trait allows.
     pub fn trigger_spurious_change(&self) {
-        self.shared.send_modify(|inner| inner.cc_version += 1);
+        self.shared.send_modify(|inner| inner.cc_counter += 1);
     }
 
     /// Makes the next call of any [`CcPhy`] method fail with `error`, without any effect.
@@ -161,7 +161,7 @@ impl CcHandle {
     pub fn watch_terminations(&self) -> TerminationWatcher {
         TerminationWatcher {
             shared: self.shared.clone(),
-            seen: self.shared.borrow().termination_version,
+            seen: self.shared.borrow().termination_counter,
         }
     }
 }
@@ -182,14 +182,14 @@ impl TerminationWatcher {
     /// that sets the same terminations again is reported as well. Cancel-safe.
     pub async fn changed(&mut self) -> (Termination, Termination) {
         let seen = self.seen;
-        let (version, value) = self
+        let (counter, value) = self
             .shared
             .subscribe()
-            .wait_for(|inner| inner.termination_version != seen)
+            .wait_for(|inner| inner.termination_counter != seen)
             .await
-            .map(|inner| (inner.termination_version, inner.terminations))
+            .map(|inner| (inner.termination_counter, inner.terminations))
             .expect("the mock holds the sender");
-        self.seen = version;
+        self.seen = counter;
         value
     }
 }
