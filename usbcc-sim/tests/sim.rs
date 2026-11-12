@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use usbcc::{DevicePolicyManager, Event};
 use usbcc_sim::{Sim, SimError, SimFutureExt};
-use usbcc_traits::{CcPhy, CcState, PowerPath, RpLevel, Termination, VbusSense};
+use usbcc_traits::{CcPhy, CcState, PowerPath, RpLevel, Termination, VbusPath, VbusSense};
 
 const RP: CcState = CcState::Rp(RpLevel::Default);
 const OPEN: CcState = CcState::Open;
@@ -101,10 +101,10 @@ async fn injected_error_fails_only_the_next_call() {
     let error = SimError("injected");
 
     sim.power.fail_next(error);
-    assert_eq!(mocks.power.set_vbus_sink(true).await, Err(error));
-    assert!(!sim.power.state().vbus_sink);
-    assert_eq!(mocks.power.set_vbus_sink(true).await, Ok(()));
-    assert!(sim.power.state().vbus_sink);
+    assert_eq!(mocks.power.set_vbus(VbusPath::Sink).await, Err(error));
+    assert_eq!(sim.power.state().vbus, VbusPath::Off);
+    assert_eq!(mocks.power.set_vbus(VbusPath::Sink).await, Ok(()));
+    assert_eq!(sim.power.state().vbus, VbusPath::Sink);
 }
 
 #[tokio::test(start_paused = true)]

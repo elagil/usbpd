@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 use usbcc::{Event, Info};
-use usbcc_traits::{CcPin, Termination};
+use usbcc_traits::{Termination, VbusPath, VconnPath};
 
 /// A call of a [`CcPhy`](usbcc_traits::CcPhy) method, with its arguments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,18 +52,12 @@ pub enum VbusCall {
 pub enum PowerCall {
     /// [`PowerPath::set_active`](usbcc_traits::PowerPath::set_active).
     SetActive(bool),
-    /// [`PowerPath::set_vbus_sink`](usbcc_traits::PowerPath::set_vbus_sink).
-    SetVbusSink(bool),
     /// [`PowerPath::prepare_vbus_source`](usbcc_traits::PowerPath::prepare_vbus_source).
     PrepareVbusSource,
-    /// [`PowerPath::set_vbus_source`](usbcc_traits::PowerPath::set_vbus_source).
-    SetVbusSource(bool),
-    /// [`PowerPath::set_vbus_discharge`](usbcc_traits::PowerPath::set_vbus_discharge).
-    SetVbusDischarge(bool),
+    /// [`PowerPath::set_vbus`](usbcc_traits::PowerPath::set_vbus).
+    SetVbus(VbusPath),
     /// [`PowerPath::set_vconn`](usbcc_traits::PowerPath::set_vconn).
-    SetVconn(Option<CcPin>),
-    /// [`PowerPath::set_vconn_discharge`](usbcc_traits::PowerPath::set_vconn_discharge).
-    SetVconnDischarge(Option<CcPin>),
+    SetVconn(VconnPath),
     /// [`PowerPath::wait_vconn_discharged`](usbcc_traits::PowerPath::wait_vconn_discharged).
     WaitVconnDischarged,
 }

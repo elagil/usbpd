@@ -32,7 +32,7 @@
 //!
 //! use usbcc::{Config, PowerRole, RpLevel, State};
 //! use usbcc_sim::{PowerCall, Sim, SimFutureExt};
-//! use usbcc_traits::CcState;
+//! use usbcc_traits::{CcState, VbusPath};
 //!
 //! # #[tokio::main(flavor = "current_thread", start_paused = true)]
 //! # async fn main() {
@@ -54,8 +54,8 @@
 //!     .expect("attached")
 //!     .unwrap();
 //! assert_eq!(attachment.power_role, PowerRole::Sink);
-//! assert!(sim.power.state().vbus_sink);
-//! assert!(sim.log.calls().contains(&PowerCall::SetVbusSink(true).into()));
+//! assert_eq!(sim.power.state().vbus, VbusPath::Sink);
+//! assert!(sim.log.calls().contains(&PowerCall::SetVbus(VbusPath::Sink).into()));
 //! # }
 //! ```
 #![warn(missing_docs)]

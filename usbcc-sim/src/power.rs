@@ -1,7 +1,7 @@
 //! Mock of the power path.
 
 use tokio::sync::watch;
-use usbcc_traits::{CcPin, PowerPath};
+use usbcc_traits::{PowerPath, VbusPath, VconnPath};
 
 use crate::log::{Log, PowerCall};
 use crate::{FailNext, SimError};
@@ -11,16 +11,10 @@ use crate::{FailNext, SimError};
 pub struct PowerPathState {
     /// Set by [`PowerPath::set_active`].
     pub active: bool,
-    /// Set by [`PowerPath::set_vbus_sink`].
-    pub vbus_sink: bool,
-    /// Set by [`PowerPath::set_vbus_source`].
-    pub vbus_source: bool,
-    /// Set by [`PowerPath::set_vbus_discharge`].
-    pub vbus_discharge: bool,
+    /// Set by [`PowerPath::set_vbus`].
+    pub vbus: VbusPath,
     /// Set by [`PowerPath::set_vconn`].
-    pub vconn: Option<CcPin>,
-    /// Set by [`PowerPath::set_vconn_discharge`].
-    pub vconn_discharge: Option<CcPin>,
+    pub vconn: VconnPath,
 }
 
 /// The [`PowerPath`] side of the power path mock, handed to the port.
@@ -100,30 +94,16 @@ impl PowerPath for MockPowerPath {
         self.set(PowerCall::SetActive(active), |s| s.active = active).await
     }
 
-    async fn set_vbus_sink(&mut self, on: bool) -> Result<(), SimError> {
-        self.set(PowerCall::SetVbusSink(on), |s| s.vbus_sink = on).await
-    }
-
     async fn prepare_vbus_source(&mut self) -> Result<(), SimError> {
         self.wait(PowerCall::PrepareVbusSource, &self.source_ready).await
     }
 
-    async fn set_vbus_source(&mut self, on: bool) -> Result<(), SimError> {
-        self.set(PowerCall::SetVbusSource(on), |s| s.vbus_source = on).await
+    async fn set_vbus(&mut self, path: VbusPath) -> Result<(), SimError> {
+        self.set(PowerCall::SetVbus(path), |s| s.vbus = path).await
     }
 
-    async fn set_vbus_discharge(&mut self, on: bool) -> Result<(), SimError> {
-        self.set(PowerCall::SetVbusDischarge(on), |s| s.vbus_discharge = on)
-            .await
-    }
-
-    async fn set_vconn(&mut self, pin: Option<CcPin>) -> Result<(), SimError> {
-        self.set(PowerCall::SetVconn(pin), |s| s.vconn = pin).await
-    }
-
-    async fn set_vconn_discharge(&mut self, pin: Option<CcPin>) -> Result<(), SimError> {
-        self.set(PowerCall::SetVconnDischarge(pin), |s| s.vconn_discharge = pin)
-            .await
+    async fn set_vconn(&mut self, path: VconnPath) -> Result<(), SimError> {
+        self.set(PowerCall::SetVconn(path), |s| s.vconn = path).await
     }
 
     async fn wait_vconn_discharged(&mut self) -> Result<(), SimError> {
