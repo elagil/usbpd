@@ -24,7 +24,6 @@ struct VbusInner {
 pub struct MockVbusSense {
     shared: Arc<watch::Sender<VbusInner>>,
     log: Log,
-    port: &'static str,
 }
 
 /// The test side of the VBUS mock. Cloning yields another handle to the same mock.
@@ -34,14 +33,13 @@ pub struct VbusHandle {
 }
 
 impl MockVbusSense {
-    /// Creates a VBUS mock that records its calls in `log`, labelled with `port`. VBUS starts at
+    /// Creates a VBUS mock that records its calls in `log`. VBUS starts at
     /// 0 mV.
-    pub fn new(log: &Log, port: &'static str) -> (Self, VbusHandle) {
+    pub fn new(log: &Log) -> (Self, VbusHandle) {
         let shared = Arc::new(watch::Sender::new(VbusInner { mv: 0, fail_next: None }));
         let mock = Self {
             shared: shared.clone(),
             log: log.clone(),
-            port,
         };
         (mock, VbusHandle { shared })
     }
@@ -58,7 +56,7 @@ impl MockVbusSense {
 
     /// Records the call and consumes an injected error.
     fn begin(&self, call: VbusCall) -> Result<(), SimError> {
-        self.log.record(self.port, call);
+        self.log.record(call);
         let mut error = None;
         self.shared.send_modify(|inner| error = inner.fail_next.take());
         error.map_or(Ok(()), Err)

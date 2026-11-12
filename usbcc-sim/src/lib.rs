@@ -24,8 +24,7 @@
 //!
 //! The stimulus is scripted: the test decides what the CC pins see and what VBUS is. Nothing
 //! connects the terminations a port presents to what another port sees; a model of a cable can be
-//! built on [`CcHandle::watch_terminations`] and [`CcHandle::set_cc`], with mocks of several
-//! ports sharing one [`Log`] through [`Sim::with_log`].
+//! built on [`CcHandle::watch_terminations`] and [`CcHandle::set_cc`].
 //!
 //! # Example
 //!
@@ -189,35 +188,26 @@ pub struct Mocks {
 }
 
 impl Sim {
-    /// The port label that [`Sim::new_open`] and [`Sim::new_dead_battery`] use in the log.
-    pub const DEFAULT_PORT: &'static str = "port";
-
     /// Creates the mocks of one port, with a new [`Log`] and a CC mock from
     /// [`MockCcPhy::new_open`].
     pub fn new_open() -> (Self, Mocks) {
-        Self::with_log(&Log::new(), Self::DEFAULT_PORT, MockCcPhy::new_open)
+        Self::new(MockCcPhy::new_open)
     }
 
     /// Creates the mocks of one port, with a new [`Log`] and a CC mock from
     /// [`MockCcPhy::new_dead_battery`].
     pub fn new_dead_battery() -> (Self, Mocks) {
-        Self::with_log(&Log::new(), Self::DEFAULT_PORT, MockCcPhy::new_dead_battery)
+        Self::new(MockCcPhy::new_dead_battery)
     }
 
-    /// Creates the mocks of one port that record into an existing `log`, with their entries
-    /// labelled `port`, and the CC mock from `new_cc`, e.g. [`MockCcPhy::new_open`]. Use this for
-    /// several ports in one log.
-    pub fn with_log(
-        log: &Log,
-        port: &'static str,
-        new_cc: fn(&Log, &'static str) -> (MockCcPhy, CcHandle),
-    ) -> (Self, Mocks) {
-        let (cc, cc_handle) = new_cc(log, port);
-        let (vbus, vbus_handle) = MockVbusSense::new(log, port);
-        let (power, power_handle) = MockPowerPath::new(log, port);
-        let (dpm, dpm_handle) = MockDpm::new(log, port);
+    fn new(new_cc: fn(&Log) -> (MockCcPhy, CcHandle)) -> (Self, Mocks) {
+        let log = Log::new();
+        let (cc, cc_handle) = new_cc(&log);
+        let (vbus, vbus_handle) = MockVbusSense::new(&log);
+        let (power, power_handle) = MockPowerPath::new(&log);
+        let (dpm, dpm_handle) = MockDpm::new(&log);
         let sim = Self {
-            log: log.clone(),
+            log,
             cc: cc_handle,
             vbus: vbus_handle,
             power: power_handle,

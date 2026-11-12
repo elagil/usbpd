@@ -36,7 +36,6 @@ struct CcInner {
 pub struct MockCcPhy {
     shared: Arc<watch::Sender<CcInner>>,
     log: Log,
-    port: &'static str,
     /// `cc_counter` at the last read, `None` before the first.
     seen: Option<u64>,
 }
@@ -50,20 +49,20 @@ pub struct CcHandle {
 impl MockCcPhy {
     /// Creates a CC mock of hardware that powers up presenting [`Termination::Open`] on both pins.
     ///
-    /// Records its calls in `log`, labelled with `port`. Both pins see [`CcState::Open`].
-    pub fn new_open(log: &Log, port: &'static str) -> (Self, CcHandle) {
-        Self::new(log, port, Termination::Open)
+    /// Records its calls in `log`. Both pins see [`CcState::Open`].
+    pub fn new_open(log: &Log) -> (Self, CcHandle) {
+        Self::new(log, Termination::Open)
     }
 
     /// Creates a CC mock of hardware with dead-battery support, which powers up presenting
     /// [`Termination::Rd`] on both pins.
     ///
-    /// Records its calls in `log`, labelled with `port`. Both pins see [`CcState::Open`].
-    pub fn new_dead_battery(log: &Log, port: &'static str) -> (Self, CcHandle) {
-        Self::new(log, port, Termination::Rd)
+    /// Records its calls in `log`. Both pins see [`CcState::Open`].
+    pub fn new_dead_battery(log: &Log) -> (Self, CcHandle) {
+        Self::new(log, Termination::Rd)
     }
 
-    fn new(log: &Log, port: &'static str, termination: Termination) -> (Self, CcHandle) {
+    fn new(log: &Log, termination: Termination) -> (Self, CcHandle) {
         let shared = Arc::new(watch::Sender::new(CcInner {
             cc: (CcState::Open, CcState::Open),
             cc_counter: 0,
@@ -74,7 +73,6 @@ impl MockCcPhy {
         let mock = Self {
             shared: shared.clone(),
             log: log.clone(),
-            port,
             seen: None,
         };
         (mock, CcHandle { shared })
@@ -82,7 +80,7 @@ impl MockCcPhy {
 
     /// Records the call and consumes an injected error.
     fn begin(&self, call: CcCall) -> Result<(), SimError> {
-        self.log.record(self.port, call);
+        self.log.record(call);
         let mut error = None;
         self.shared.send_modify(|inner| error = inner.fail_next.take());
         error.map_or(Ok(()), Err)

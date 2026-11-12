@@ -24,7 +24,6 @@ struct DpmInner {
 pub struct MockDpm {
     shared: Arc<watch::Sender<DpmInner>>,
     log: Log,
-    port: &'static str,
 }
 
 /// The test side of the DPM mock. Cloning yields another handle to the same mock.
@@ -34,13 +33,12 @@ pub struct DpmHandle {
 }
 
 impl MockDpm {
-    /// Creates a DPM mock that records its calls in `log`, labelled with `port`.
-    pub fn new(log: &Log, port: &'static str) -> (Self, DpmHandle) {
+    /// Creates a DPM mock that records its calls in `log`.
+    pub fn new(log: &Log) -> (Self, DpmHandle) {
         let shared = Arc::new(watch::Sender::new(DpmInner::default()));
         let mock = Self {
             shared: shared.clone(),
             log: log.clone(),
-            port,
         };
         (mock, DpmHandle { shared })
     }
@@ -48,7 +46,7 @@ impl MockDpm {
 
 impl DevicePolicyManager for MockDpm {
     async fn inform(&mut self, info: Info) {
-        self.log.record(self.port, DpmCall::Inform(info));
+        self.log.record(DpmCall::Inform(info));
         let at = self.log.now();
         self.shared.send_modify(|inner| inner.informs.push((at, info)));
     }
@@ -63,7 +61,7 @@ impl DevicePolicyManager for MockDpm {
         let mut event = None;
         self.shared.send_modify(|inner| event = inner.events.pop_front());
         let event = event.expect("checked above");
-        self.log.record(self.port, DpmCall::EventReturned(event));
+        self.log.record(DpmCall::EventReturned(event));
         event
     }
 }

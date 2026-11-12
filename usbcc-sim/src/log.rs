@@ -120,8 +120,6 @@ impl From<DpmCall> for Call {
 pub struct Entry {
     /// Virtual time of the call, relative to the creation of the [`Log`].
     pub at: Duration,
-    /// Label of the port whose mock recorded the call, see [`Sim::with_log`](crate::Sim::with_log).
-    pub port: &'static str,
     /// The call and its arguments.
     pub call: Call,
 }
@@ -162,14 +160,10 @@ impl Log {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    pub(crate) fn record(&self, port: &'static str, call: impl Into<Call>) {
+    pub(crate) fn record(&self, call: impl Into<Call>) {
         let mut inner = self.lock();
         let at = inner.epoch.elapsed();
-        inner.entries.push(Entry {
-            at,
-            port,
-            call: call.into(),
-        });
+        inner.entries.push(Entry { at, call: call.into() });
     }
 
     /// The instant that timestamps count from.

@@ -44,7 +44,6 @@ struct PowerInner {
 pub struct MockPowerPath {
     shared: Arc<watch::Sender<PowerInner>>,
     log: Log,
-    port: &'static str,
 }
 
 /// The test side of the power path mock. Cloning yields another handle to the same mock.
@@ -54,10 +53,10 @@ pub struct PowerPathHandle {
 }
 
 impl MockPowerPath {
-    /// Creates a power path mock that records its calls in `log`, labelled with `port`.
+    /// Creates a power path mock that records its calls in `log`.
     ///
     /// Starts inactive with everything off.
-    pub fn new(log: &Log, port: &'static str) -> (Self, PowerPathHandle) {
+    pub fn new(log: &Log) -> (Self, PowerPathHandle) {
         let shared = Arc::new(watch::Sender::new(PowerInner {
             state: PowerPathState::default(),
             source_ready: true,
@@ -67,7 +66,6 @@ impl MockPowerPath {
         let mock = Self {
             shared: shared.clone(),
             log: log.clone(),
-            port,
         };
         (mock, PowerPathHandle { shared })
     }
@@ -92,7 +90,7 @@ impl MockPowerPath {
 
     /// Records the call and consumes an injected error.
     fn begin(&self, call: PowerCall) -> Result<(), SimError> {
-        self.log.record(self.port, call);
+        self.log.record(call);
         let mut error = None;
         self.shared.send_modify(|inner| error = inner.fail_next.take());
         error.map_or(Ok(()), Err)
