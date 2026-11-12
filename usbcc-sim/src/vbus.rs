@@ -47,19 +47,11 @@ impl MockVbusSense {
         (mock, VbusHandle { shared })
     }
 
-    fn begin(&self, call: VbusCall) -> Result<(), SimError> {
-        self.log.record(self.port, call);
-        match self.shared.lock().fail_next.take() {
-            Some(error) => Err(error),
-            None => Ok(()),
-        }
-    }
-
     fn wait(&self, call: VbusCall, low_mv: u32, high_mv: u32) -> impl Future<Output = Result<(), SimError>> + use<> {
-        let result = self.begin(call);
+        self.log.record(self.port, call);
         let shared = self.shared.clone();
         async move {
-            result?;
+            take_error(&shared)?;
             shared
                 .wait_for(|inner| (inner.mv < low_mv || inner.mv > high_mv).then_some(()))
                 .await;
@@ -68,12 +60,20 @@ impl MockVbusSense {
     }
 }
 
+/// Consumes an injected error.
+fn take_error(shared: &Shared<VbusInner>) -> Result<(), SimError> {
+    shared.lock().fail_next.take().map_or(Ok(()), Err)
+}
+
 impl VbusSense for MockVbusSense {
     type Error = SimError;
 
     fn vbus_mv(&mut self) -> impl Future<Output = Result<u32, Self::Error>> {
-        let result = self.begin(VbusCall::VbusMv).map(|()| self.shared.lock().mv);
-        async move { result }
+        self.log.record(self.port, VbusCall::VbusMv);
+        async move {
+            take_error(&self.shared)?;
+            Ok(self.shared.lock().mv)
+        }
     }
 
     fn wait_vbus_outside(&mut self, low_mv: u32, high_mv: u32) -> impl Future<Output = Result<(), Self::Error>> {
@@ -102,6 +102,9 @@ impl VbusHandle {
     }
 
     /// Makes the next call of any [`VbusSense`] method fail with `error`, without any effect.
+    ///
+    /// The error is taken by the first call whose future is polled, which then returns it
+    /// immediately.
     pub fn fail_next(&self, error: SimError) {
         self.shared.lock().fail_next = Some(error);
     }

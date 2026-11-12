@@ -38,7 +38,7 @@ struct PowerInner {
 /// The [`PowerPath`] side of the power path mock, handed to the port.
 ///
 /// Every method is overridden, so every call is recorded, including those with a default
-/// implementation in the trait. The `set_*` methods complete immediately.
+/// implementation in the trait. The `set_*` methods take effect and complete on their first poll.
 /// [`PowerPath::prepare_vbus_source`] and [`PowerPath::wait_vconn_discharged`] wait for flags set
 /// through the [`PowerPathHandle`]; both are set initially, so they complete immediately unless the
 /// test clears them.
@@ -92,9 +92,8 @@ impl MockPowerPath {
         (mock, PowerPathHandle { shared })
     }
 
-    /// Checks for concurrent calls, marks this one as in progress, records it and consumes an
-    /// injected error.
-    fn begin(&self, name: &'static str, call: PowerCall) -> (InProgress, Result<(), SimError>) {
+    /// Records the call, checks for concurrent calls and marks this one as in progress.
+    fn begin(&self, name: &'static str, call: PowerCall) -> InProgress {
         self.log.record(self.port, call);
         let mut inner = self.shared.lock();
         if let Some(other) = inner.in_progress {
@@ -102,27 +101,24 @@ impl MockPowerPath {
             panic!("`PowerPath::{name}` called while `PowerPath::{other}` is in progress");
         }
         inner.in_progress = Some(name);
-        let guard = InProgress {
+        InProgress {
             shared: self.shared.clone(),
-        };
-        (guard, inner.fail_next.take().map_or(Ok(()), Err))
+        }
     }
 
-    /// A call that changes the state and completes immediately.
+    /// A call that changes the state and completes on its first poll.
     fn set(
         &self,
         name: &'static str,
         call: PowerCall,
-        apply: impl FnOnce(&mut PowerPathState),
+        apply: impl FnOnce(&mut PowerPathState) + 'static,
     ) -> impl Future<Output = Result<(), SimError>> {
-        let (guard, result) = self.begin(name, call);
-        let result = result.map(|()| self.shared.update(|inner| apply(&mut inner.state)));
-        Self::finish(guard, result)
-    }
-
-    async fn finish(guard: InProgress, result: Result<(), SimError>) -> Result<(), SimError> {
-        let _guard = guard;
-        result
+        let guard = self.begin(name, call);
+        async move {
+            take_error(&guard.shared)?;
+            guard.shared.update(|inner| apply(&mut inner.state));
+            Ok(())
+        }
     }
 
     /// A call that waits until `ready` is true.
@@ -132,15 +128,18 @@ impl MockPowerPath {
         call: PowerCall,
         ready: fn(&PowerInner) -> bool,
     ) -> impl Future<Output = Result<(), SimError>> + use<> {
-        let (guard, result) = self.begin(name, call);
-        let shared = self.shared.clone();
+        let guard = self.begin(name, call);
         async move {
-            let _guard = guard;
-            result?;
-            shared.wait_for(|inner| ready(inner).then_some(())).await;
+            take_error(&guard.shared)?;
+            guard.shared.wait_for(|inner| ready(inner).then_some(())).await;
             Ok(())
         }
     }
+}
+
+/// Consumes an injected error.
+fn take_error(shared: &Shared<PowerInner>) -> Result<(), SimError> {
+    shared.lock().fail_next.take().map_or(Ok(()), Err)
 }
 
 impl PowerPath for MockPowerPath {
@@ -213,6 +212,9 @@ impl PowerPathHandle {
     }
 
     /// Makes the next call of any [`PowerPath`] method fail with `error`, without any effect.
+    ///
+    /// The error is taken by the first call whose future is polled, which then returns it
+    /// immediately.
     pub fn fail_next(&self, error: SimError) {
         self.shared.lock().fail_next = Some(error);
     }

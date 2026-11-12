@@ -134,8 +134,9 @@ struct LogInner {
 
 /// The call log, shared by all mocks created with it, in the order of the calls.
 ///
-/// A call is recorded when the trait method is called, i.e. when the future is created, not when
-/// it completes. Calls that fail through an injected error are recorded too. Cloning yields
+/// A call is recorded when the trait method is called, i.e. when its future is created, even if
+/// the future is never polled; the mocks only act once it is polled. Calls that fail through an
+/// injected error are recorded too. Cloning yields
 /// another handle to the same log.
 #[derive(Debug, Clone)]
 pub struct Log {

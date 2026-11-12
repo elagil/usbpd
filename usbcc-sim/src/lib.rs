@@ -1,17 +1,17 @@
 //! Test simulator for the `usbcc` USB Type-C state machine.
 //!
 //! Provides scripted mocks of the `usbcc-traits` hardware traits and of the
-//! [`DevicePolicyManager`], for tests that drive a [`Port`] through its public API in tokio's
+//! [`DevicePolicyManager`](usbcc::DevicePolicyManager), for tests that drive a [`Port`] through its public API in tokio's
 //! virtual time:
 //!
 //! - [`MockCcPhy`], [`MockVbusSense`] and [`MockPowerPath`] implement the hardware traits and are
 //!   handed to the [`Port`], by value or by `&mut`. Each comes with a cloneable handle
 //!   ([`CcHandle`], [`VbusHandle`], [`PowerPathHandle`]) through which the test sets the stimulus,
 //!   reads what the port did and injects errors.
-//! - [`MockDpm`] implements [`DevicePolicyManager`]; the test queues events and reads the
+//! - [`MockDpm`] implements [`DevicePolicyManager`](usbcc::DevicePolicyManager); the test queues events and reads the
 //!   information through its [`DpmHandle`].
 //! - Every call is recorded with its virtual timestamp in one ordered [`Log`].
-//! - [`SimTimer`] implements [`Timer`](usbcc::Timer) with [`tokio::time::sleep`].
+//! - [`SimTimer`] implements [`Timer`] with [`tokio::time::sleep`].
 //! - [`run_for`] runs a future for a virtual duration, then drops it.
 //!
 //! [`Sim::new`] creates all of them at once.
@@ -27,6 +27,9 @@
 //!
 //! # Example
 //!
+//! The body of a test in `usbcc/tests/`, which runs with `#[tokio::test(start_paused = true)]`.
+//! It doesn't run here yet, as the [`Port`] is still a skeleton.
+//!
 //! ```no_run
 //! use std::time::Duration;
 //!
@@ -34,28 +37,27 @@
 //! use usbcc_sim::{PowerCall, Sim, run_for};
 //! use usbcc_traits::CcState;
 //!
-//! #[tokio::test(start_paused = true)]
-//! async fn sink_attaches() {
-//!     let (sim, mocks) = Sim::new();
-//!     let (mut port, mut dpm) = mocks.into_port(Config::default());
+//! # #[tokio::main(flavor = "current_thread", start_paused = true)]
+//! # async fn main() {
+//! let (sim, mocks) = Sim::new();
+//! let (mut port, mut dpm) = mocks.into_port(Config::default());
 //!
-//!     // Nothing attached: the port keeps waiting.
-//!     let attached = run_for(Duration::from_millis(500), port.wait_attached(&mut dpm)).await;
-//!     assert!(attached.is_none());
-//!     assert_eq!(port.state(), State::UnattachedSnk);
+//! // Nothing attached: the port keeps waiting.
+//! let attached = run_for(Duration::from_millis(500), port.wait_attached(&mut dpm)).await;
+//! assert!(attached.is_none());
+//! assert_eq!(port.state(), State::UnattachedSnk);
 //!
-//!     // A Source attaches on CC1 and supplies VBUS.
-//!     sim.cc.set_cc(CcState::Rp(RpLevel::Default), CcState::Open);
-//!     sim.vbus.set_mv(5000);
-//!     let attachment = run_for(Duration::from_millis(500), port.wait_attached(&mut dpm))
-//!         .await
-//!         .expect("attached")
-//!         .unwrap();
-//!     assert_eq!(attachment.power_role, PowerRole::Sink);
-//!     assert!(sim.power.state().vbus_sink);
-//!     assert!(sim.log.calls().contains(&PowerCall::SetVbusSink(true).into()));
-//! }
-//! # fn main() {}
+//! // A Source attaches on CC1 and supplies VBUS.
+//! sim.cc.set_cc(CcState::Rp(RpLevel::Default), CcState::Open);
+//! sim.vbus.set_mv(5000);
+//! let attachment = run_for(Duration::from_millis(500), port.wait_attached(&mut dpm))
+//!     .await
+//!     .expect("attached")
+//!     .unwrap();
+//! assert_eq!(attachment.power_role, PowerRole::Sink);
+//! assert!(sim.power.state().vbus_sink);
+//! assert!(sim.log.calls().contains(&PowerCall::SetVbusSink(true).into()));
+//! # }
 //! ```
 #![warn(missing_docs)]
 
@@ -108,7 +110,24 @@ pub type SimPort = Port<MockCcPhy, MockVbusSense, MockPowerPath, SimTimer>;
 ///
 /// Returns its output if it completed within `duration`, including exactly at the end of it, and
 /// `None` otherwise. Virtual time has advanced by `duration` in the latter case, and by the time
-/// the future took in the former.
+/// the future took in the former. With a zero `duration`, the future is polled once.
+///
+/// To keep a future alive across several runs, e.g. to change the stimulus while a wait is
+/// pending, pin it and pass `&mut` to it: only the reference is dropped.
+///
+/// ```
+/// # use std::time::Duration;
+/// # use usbcc_sim::{Sim, run_for};
+/// # use usbcc_traits::{CcPhy, CcState, RpLevel};
+/// # #[tokio::main(flavor = "current_thread", start_paused = true)]
+/// # async fn main() {
+/// let (sim, mut mocks) = Sim::new();
+/// let mut wait = std::pin::pin!(mocks.cc.wait_for_cc_change());
+/// assert!(run_for(Duration::from_millis(100), &mut wait).await.is_none());
+/// sim.cc.set_cc(CcState::Rp(RpLevel::Default), CcState::Open);
+/// assert!(run_for(Duration::ZERO, &mut wait).await.is_some());
+/// # }
+/// ```
 pub async fn run_for<F: Future>(duration: Duration, future: F) -> Option<F::Output> {
     tokio::time::timeout(duration, future).await.ok()
 }

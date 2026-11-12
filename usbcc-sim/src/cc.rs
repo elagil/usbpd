@@ -68,13 +68,9 @@ impl MockCcPhy {
         (mock, CcHandle { shared })
     }
 
-    /// Records the call and consumes an injected error.
-    fn begin(&self, call: CcCall) -> Result<(), SimError> {
-        self.log.record(self.port, call);
-        match self.shared.lock().fail_next.take() {
-            Some(error) => Err(error),
-            None => Ok(()),
-        }
+    /// Consumes an injected error.
+    fn check_error(&self) -> Result<(), SimError> {
+        self.shared.lock().fail_next.take().map_or(Ok(()), Err)
     }
 }
 
@@ -82,28 +78,31 @@ impl CcPhy for MockCcPhy {
     type Error = SimError;
 
     fn set_termination(&mut self, cc1: Termination, cc2: Termination) -> impl Future<Output = Result<(), Self::Error>> {
-        let result = self.begin(CcCall::SetTermination { cc1, cc2 }).map(|()| {
+        self.log.record(self.port, CcCall::SetTermination { cc1, cc2 });
+        async move {
+            self.check_error()?;
             self.shared.update(|inner| {
                 inner.terminations = (cc1, cc2);
                 inner.termination_version += 1;
-            })
-        });
-        async move { result }
+            });
+            Ok(())
+        }
     }
 
     fn cc_state(&mut self) -> impl Future<Output = Result<(CcState, CcState), Self::Error>> {
-        let result = self.begin(CcCall::CcState).map(|()| {
+        self.log.record(self.port, CcCall::CcState);
+        async move {
+            self.check_error()?;
             let inner = self.shared.lock();
             self.seen = inner.cc_version;
-            inner.cc
-        });
-        async move { result }
+            Ok(inner.cc)
+        }
     }
 
     fn wait_for_cc_change(&mut self) -> impl Future<Output = Result<(CcState, CcState), Self::Error>> {
-        let result = self.begin(CcCall::WaitForCcChange);
+        self.log.record(self.port, CcCall::WaitForCcChange);
         async move {
-            result?;
+            self.check_error()?;
             let seen = &mut self.seen;
             let state = self
                 .shared
@@ -156,6 +155,9 @@ impl CcHandle {
     }
 
     /// Makes the next call of any [`CcPhy`] method fail with `error`, without any effect.
+    ///
+    /// The error is taken by the first call whose future is polled, which then returns it
+    /// immediately.
     pub fn fail_next(&self, error: SimError) {
         self.shared.lock().fail_next = Some(error);
     }
