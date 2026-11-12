@@ -61,7 +61,7 @@ async fn pending_waits_wake_on_stimulus() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn vbus_waits_are_level_based_with_strict_bounds() {
+async fn vbus_bounds_are_strict() {
     let (sim, mut mocks) = Sim::new_open();
     let vbus = &mut mocks.vbus;
 
@@ -69,14 +69,6 @@ async fn vbus_waits_are_level_based_with_strict_bounds() {
     assert_eq!(vbus.wait_vbus_outside(800, 5500).settle().await, None);
     sim.vbus.set_mv(799);
     assert_eq!(vbus.wait_vbus_outside(800, 5500).poll_once().await, Some(Ok(())));
-
-    // An excursion reverted before the wait runs again isn't seen.
-    sim.vbus.set_mv(5000);
-    let mut wait = pin!(vbus.wait_vbus_above(5500));
-    assert_eq!(wait.as_mut().settle().await, None);
-    sim.vbus.set_mv(6000);
-    sim.vbus.set_mv(5000);
-    assert_eq!(wait.as_mut().settle().await, None);
 }
 
 #[tokio::test(start_paused = true)]

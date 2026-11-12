@@ -9,9 +9,8 @@ use crate::{FailNext, SimError};
 /// The [`VbusSense`] side of the VBUS mock, handed to the port.
 ///
 /// The waits are level-based: they compare the voltage set through the [`VbusHandle`] whenever it
-/// changes, with strict comparisons ("below `low_mv`" is `mv < low_mv`). An excursion that the test
-/// reverts before the waiting task runs is not seen, as with a polling implementation. They never
-/// return spuriously.
+/// changes, with strict comparisons ("below `low_mv`" is `mv < low_mv`). They never return
+/// spuriously.
 #[derive(Debug)]
 pub struct MockVbusSense {
     mv: watch::Sender<u32>,
