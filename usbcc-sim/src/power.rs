@@ -73,7 +73,8 @@ impl MockPowerPath {
         (mock, PowerPathHandle { shared })
     }
 
-    /// A call that changes the state and completes on its first poll.
+    /// Implements a `set_*` method: logs `call` right away, and applies `apply` to the switches
+    /// when the returned future is awaited, which then finishes without waiting.
     fn set(
         &self,
         call: PowerCall,
@@ -88,7 +89,8 @@ impl MockPowerPath {
         }
     }
 
-    /// A call that waits until `ready` is true.
+    /// Implements a waiting method: logs `call` right away, and when awaited, waits until `ready`
+    /// is true.
     fn wait(
         &self,
         call: PowerCall,
