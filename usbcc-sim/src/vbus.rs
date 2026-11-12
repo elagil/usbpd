@@ -31,7 +31,7 @@ impl MockVbusSense {
     pub fn new(log: &Log) -> (Self, VbusHandle) {
         let handle = VbusHandle {
             mv: watch::Sender::new(0),
-            fail_next: FailNext::new(None),
+            fail_next: FailNext::default(),
         };
         let mock = Self {
             mv: handle.mv.clone(),
@@ -97,6 +97,6 @@ impl VbusHandle {
     /// The error is taken by the first call whose future is polled, which then returns it
     /// immediately.
     pub fn fail_next(&self, error: SimError) {
-        self.fail_next.send_replace(Some(error));
+        *self.fail_next.lock().unwrap() = Some(error);
     }
 }

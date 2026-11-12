@@ -57,7 +57,7 @@ impl MockPowerPath {
             state: watch::Sender::default(),
             source_ready: watch::Sender::new(true),
             vconn_discharged: watch::Sender::new(true),
-            fail_next: FailNext::new(None),
+            fail_next: FailNext::default(),
         };
         let mock = Self {
             state: handle.state.clone(),
@@ -154,6 +154,6 @@ impl PowerPathHandle {
     /// The error is taken by the first call whose future is polled, which then returns it
     /// immediately.
     pub fn fail_next(&self, error: SimError) {
-        self.fail_next.send_replace(Some(error));
+        *self.fail_next.lock().unwrap() = Some(error);
     }
 }

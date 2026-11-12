@@ -55,7 +55,7 @@ impl MockCcPhy {
         let handle = CcHandle {
             cc: watch::Sender::new((CcState::Open, CcState::Open)),
             terminations: watch::Sender::new((termination, termination)),
-            fail_next: FailNext::new(None),
+            fail_next: FailNext::default(),
         };
         let mock = Self {
             cc: handle.cc.subscribe(),
@@ -137,7 +137,7 @@ impl CcHandle {
     /// The error is taken by the first call whose future is polled, which then returns it
     /// immediately.
     pub fn fail_next(&self, error: SimError) {
-        self.fail_next.send_replace(Some(error));
+        *self.fail_next.lock().unwrap() = Some(error);
     }
 
     /// Returns a receiver of the terminations the port presents, which marks every

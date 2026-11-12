@@ -92,11 +92,11 @@ impl fmt::Display for SimError {
 impl std::error::Error for SimError {}
 
 /// Where a mock and its handle keep an error injected with `fail_next`.
-type FailNext = tokio::sync::watch::Sender<Option<SimError>>;
+type FailNext = std::sync::Arc<std::sync::Mutex<Option<SimError>>>;
 
 /// Consumes an injected error.
 fn take_error(fail_next: &FailNext) -> Result<(), SimError> {
-    fail_next.send_replace(None).map_or(Ok(()), Err)
+    fail_next.lock().unwrap().take().map_or(Ok(()), Err)
 }
 
 /// [`Timer`] on tokio's clock, which tests pause.
