@@ -1,0 +1,30 @@
+[package]
+name = "usbcc"
+version = "0.1.0"
+description = "USB-CC library for `[no_std]`."
+documentation = "https://docs.rs/usbpd"
+readme = "README.md"
+keywords = ["no_std", "usb-cc", "embedded"]
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+usbcc-traits.workspace = true
+
+thiserror = { workspace = true }
+defmt = { workspace = true, optional = true }
+log = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"], optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
+
+[features]
+default = []
+
+log = ["dep:log"]
+defmt = ["dep:defmt"]
+serde = ["dep:serde"]
