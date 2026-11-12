@@ -12,9 +12,6 @@
 //!   information through its [`DpmHandle`].
 //! - Every call is recorded with its virtual timestamp in one ordered [`Log`].
 //! - [`SimTimer`] implements [`Timer`] with [`tokio::time::sleep`].
-//! - [`SimFutureExt`] runs any future for a while in virtual time, then drops it:
-//!   [`run_for`](SimFutureExt::run_for) a duration, [`poll_once`](SimFutureExt::poll_once) or
-//!   [`settle`](SimFutureExt::settle).
 //!
 //! [`Sim::new_open`] and [`Sim::new_dead_battery`] create all of them at once.
 //!
