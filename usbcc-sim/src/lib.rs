@@ -16,7 +16,7 @@
 //!   [`run_for`](SimFutureExt::run_for) a duration, [`poll_once`](SimFutureExt::poll_once) or
 //!   [`settle`](SimFutureExt::settle).
 //!
-//! [`Sim::new`] creates all of them at once.
+//! [`Sim::new_open`] and [`Sim::new_dead_battery`] create all of them at once.
 //!
 //! Tests run on tokio's paused clock, with `#[tokio::test(start_paused = true)]`: virtual time
 //! only advances when every task waits, and jumps straight to the next timer. Changes made through
@@ -40,7 +40,7 @@
 //!
 //! # #[tokio::main(flavor = "current_thread", start_paused = true)]
 //! # async fn main() {
-//! let (sim, mocks) = Sim::new();
+//! let (sim, mocks) = Sim::new_dead_battery();
 //! let (mut port, mut dpm) = mocks.into_port(Config::default());
 //!
 //! // Nothing attached: the port keeps waiting.
@@ -125,7 +125,7 @@ pub const SETTLE_TIME: Duration = Duration::from_secs(5);
 /// # use usbcc_traits::{CcPhy, CcState, RpLevel};
 /// # #[tokio::main(flavor = "current_thread", start_paused = true)]
 /// # async fn main() {
-/// let (sim, mut mocks) = Sim::new();
+/// let (sim, mut mocks) = Sim::new_open();
 /// mocks.cc.cc_state().await.unwrap();
 /// let mut wait = std::pin::pin!(mocks.cc.wait_for_cc_change());
 /// assert!(wait.as_mut().settle().await.is_none());
@@ -175,7 +175,7 @@ pub struct Sim {
     pub dpm: DpmHandle,
 }
 
-/// The port side of the mocks of one port, see [`Sim::new`].
+/// The port side of the mocks of one port, see [`Sim::new_open`].
 #[derive(Debug)]
 pub struct Mocks {
     /// The CC mock.
@@ -189,18 +189,30 @@ pub struct Mocks {
 }
 
 impl Sim {
-    /// The port label that [`Sim::new`] uses in the log.
+    /// The port label that [`Sim::new_open`] and [`Sim::new_dead_battery`] use in the log.
     pub const DEFAULT_PORT: &'static str = "port";
 
-    /// Creates the mocks of one port, with a new [`Log`].
-    pub fn new() -> (Self, Mocks) {
-        Self::with_log(&Log::new(), Self::DEFAULT_PORT)
+    /// Creates the mocks of one port, with a new [`Log`] and a CC mock from
+    /// [`MockCcPhy::new_open`].
+    pub fn new_open() -> (Self, Mocks) {
+        Self::with_log(&Log::new(), Self::DEFAULT_PORT, MockCcPhy::new_open)
+    }
+
+    /// Creates the mocks of one port, with a new [`Log`] and a CC mock from
+    /// [`MockCcPhy::new_dead_battery`].
+    pub fn new_dead_battery() -> (Self, Mocks) {
+        Self::with_log(&Log::new(), Self::DEFAULT_PORT, MockCcPhy::new_dead_battery)
     }
 
     /// Creates the mocks of one port that record into an existing `log`, with their entries
-    /// labelled `port`. Use this for several ports in one log.
-    pub fn with_log(log: &Log, port: &'static str) -> (Self, Mocks) {
-        let (cc, cc_handle) = MockCcPhy::new(log, port);
+    /// labelled `port`, and the CC mock from `new_cc`, e.g. [`MockCcPhy::new_open`]. Use this for
+    /// several ports in one log.
+    pub fn with_log(
+        log: &Log,
+        port: &'static str,
+        new_cc: fn(&Log, &'static str) -> (MockCcPhy, CcHandle),
+    ) -> (Self, Mocks) {
+        let (cc, cc_handle) = new_cc(log, port);
         let (vbus, vbus_handle) = MockVbusSense::new(log, port);
         let (power, power_handle) = MockPowerPath::new(log, port);
         let (dpm, dpm_handle) = MockDpm::new(log, port);

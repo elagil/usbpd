@@ -48,14 +48,26 @@ pub struct CcHandle {
 }
 
 impl MockCcPhy {
-    /// Creates a CC mock that records its calls in `log`, labelled with `port`.
+    /// Creates a CC mock of hardware that powers up presenting [`Termination::Open`] on both pins.
     ///
-    /// Both pins start [`CcState::Open`], with [`Termination::Open`] presented.
-    pub fn new(log: &Log, port: &'static str) -> (Self, CcHandle) {
+    /// Records its calls in `log`, labelled with `port`. Both pins see [`CcState::Open`].
+    pub fn new_open(log: &Log, port: &'static str) -> (Self, CcHandle) {
+        Self::new(log, port, Termination::Open)
+    }
+
+    /// Creates a CC mock of hardware with dead-battery support, which powers up presenting
+    /// [`Termination::Rd`] on both pins.
+    ///
+    /// Records its calls in `log`, labelled with `port`. Both pins see [`CcState::Open`].
+    pub fn new_dead_battery(log: &Log, port: &'static str) -> (Self, CcHandle) {
+        Self::new(log, port, Termination::Rd)
+    }
+
+    fn new(log: &Log, port: &'static str, termination: Termination) -> (Self, CcHandle) {
         let shared = Arc::new(watch::Sender::new(CcInner {
             cc: (CcState::Open, CcState::Open),
             cc_counter: 0,
-            terminations: (Termination::Open, Termination::Open),
+            terminations: (termination, termination),
             termination_counter: 0,
             fail_next: None,
         }));
