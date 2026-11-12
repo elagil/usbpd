@@ -1,12 +1,10 @@
 //! Mock of the power path.
 
-use std::sync::Arc;
-
 use tokio::sync::watch;
 use usbcc_traits::{CcPin, PowerPath};
 
-use crate::SimError;
 use crate::log::{Log, PowerCall};
+use crate::{FailNext, SimError, take_error};
 
 /// Snapshot of the switches of a [`MockPowerPath`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -25,14 +23,6 @@ pub struct PowerPathState {
     pub vconn_discharge: Option<CcPin>,
 }
 
-#[derive(Debug)]
-struct PowerInner {
-    state: PowerPathState,
-    source_ready: bool,
-    vconn_discharged: bool,
-    fail_next: Option<SimError>,
-}
-
 /// The [`PowerPath`] side of the power path mock, handed to the port.
 ///
 /// Every method is overridden, so every call is recorded, including those with a default
@@ -42,14 +32,20 @@ struct PowerInner {
 /// test clears them.
 #[derive(Debug)]
 pub struct MockPowerPath {
-    shared: Arc<watch::Sender<PowerInner>>,
+    state: watch::Sender<PowerPathState>,
+    source_ready: watch::Sender<bool>,
+    vconn_discharged: watch::Sender<bool>,
+    fail_next: FailNext,
     log: Log,
 }
 
 /// The test side of the power path mock. Cloning yields another handle to the same mock.
 #[derive(Debug, Clone)]
 pub struct PowerPathHandle {
-    shared: Arc<watch::Sender<PowerInner>>,
+    state: watch::Sender<PowerPathState>,
+    source_ready: watch::Sender<bool>,
+    vconn_discharged: watch::Sender<bool>,
+    fail_next: FailNext,
 }
 
 impl MockPowerPath {
@@ -57,32 +53,34 @@ impl MockPowerPath {
     ///
     /// Starts inactive with everything off.
     pub fn new(log: &Log) -> (Self, PowerPathHandle) {
-        let shared = Arc::new(watch::Sender::new(PowerInner {
-            state: PowerPathState::default(),
-            source_ready: true,
-            vconn_discharged: true,
-            fail_next: None,
-        }));
+        let handle = PowerPathHandle {
+            state: watch::Sender::default(),
+            source_ready: watch::Sender::new(true),
+            vconn_discharged: watch::Sender::new(true),
+            fail_next: FailNext::new(None),
+        };
         let mock = Self {
-            shared: shared.clone(),
+            state: handle.state.clone(),
+            source_ready: handle.source_ready.clone(),
+            vconn_discharged: handle.vconn_discharged.clone(),
+            fail_next: handle.fail_next.clone(),
             log: log.clone(),
         };
-        (mock, PowerPathHandle { shared })
+        (mock, handle)
     }
 
     /// Implements a `set_*` method: applies `apply` to the switches.
     async fn set(&self, call: PowerCall, apply: impl FnOnce(&mut PowerPathState)) -> Result<(), SimError> {
         self.begin(call)?;
-        self.shared.send_modify(|inner| apply(&mut inner.state));
+        self.state.send_modify(apply);
         Ok(())
     }
 
-    /// Implements a waiting method: waits until `ready` is true.
-    async fn wait(&self, call: PowerCall, ready: fn(&PowerInner) -> bool) -> Result<(), SimError> {
+    /// Implements a waiting method: waits until `flag` is set.
+    async fn wait(&self, call: PowerCall, flag: &watch::Sender<bool>) -> Result<(), SimError> {
         self.begin(call)?;
-        self.shared
-            .subscribe()
-            .wait_for(ready)
+        flag.subscribe()
+            .wait_for(|&set| set)
             .await
             .expect("the mock holds the sender");
         Ok(())
@@ -91,9 +89,7 @@ impl MockPowerPath {
     /// Records the call and consumes an injected error.
     fn begin(&self, call: PowerCall) -> Result<(), SimError> {
         self.log.record(call);
-        let mut error = None;
-        self.shared.send_modify(|inner| error = inner.fail_next.take());
-        error.map_or(Ok(()), Err)
+        take_error(&self.fail_next)
     }
 }
 
@@ -109,8 +105,7 @@ impl PowerPath for MockPowerPath {
     }
 
     async fn prepare_vbus_source(&mut self) -> Result<(), SimError> {
-        self.wait(PowerCall::PrepareVbusSource, |inner| inner.source_ready)
-            .await
+        self.wait(PowerCall::PrepareVbusSource, &self.source_ready).await
     }
 
     async fn set_vbus_source(&mut self, on: bool) -> Result<(), SimError> {
@@ -132,27 +127,26 @@ impl PowerPath for MockPowerPath {
     }
 
     async fn wait_vconn_discharged(&mut self) -> Result<(), SimError> {
-        self.wait(PowerCall::WaitVconnDischarged, |inner| inner.vconn_discharged)
-            .await
+        self.wait(PowerCall::WaitVconnDischarged, &self.vconn_discharged).await
     }
 }
 
 impl PowerPathHandle {
     /// The current state of the switches.
     pub fn state(&self) -> PowerPathState {
-        self.shared.borrow().state
+        *self.state.borrow()
     }
 
     /// Sets whether the supply behind the source path is ready, i.e. whether
     /// [`PowerPath::prepare_vbus_source`] completes. Initially `true`.
     pub fn set_source_ready(&self, ready: bool) {
-        self.shared.send_modify(|inner| inner.source_ready = ready);
+        self.source_ready.send_replace(ready);
     }
 
     /// Sets whether VCONN is discharged, i.e. whether [`PowerPath::wait_vconn_discharged`]
     /// completes. Initially `true`.
     pub fn set_vconn_discharged(&self, discharged: bool) {
-        self.shared.send_modify(|inner| inner.vconn_discharged = discharged);
+        self.vconn_discharged.send_replace(discharged);
     }
 
     /// Makes the next call of any [`PowerPath`] method fail with `error`, without any effect.
@@ -160,6 +154,6 @@ impl PowerPathHandle {
     /// The error is taken by the first call whose future is polled, which then returns it
     /// immediately.
     pub fn fail_next(&self, error: SimError) {
-        self.shared.send_modify(|inner| inner.fail_next = Some(error));
+        self.fail_next.send_replace(Some(error));
     }
 }

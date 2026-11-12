@@ -70,7 +70,7 @@ use std::fmt;
 use std::future::Future;
 use std::time::Duration;
 
-pub use cc::{CcHandle, MockCcPhy, TerminationWatcher};
+pub use cc::{CcHandle, MockCcPhy};
 pub use dpm::{DpmHandle, MockDpm};
 pub use log::{Call, CcCall, DpmCall, Entry, Log, PowerCall, VbusCall};
 pub use power::{MockPowerPath, PowerPathHandle, PowerPathState};
@@ -90,6 +90,14 @@ impl fmt::Display for SimError {
 }
 
 impl std::error::Error for SimError {}
+
+/// Where a mock and its handle keep an error injected with `fail_next`.
+type FailNext = tokio::sync::watch::Sender<Option<SimError>>;
+
+/// Consumes an injected error.
+fn take_error(fail_next: &FailNext) -> Result<(), SimError> {
+    fail_next.send_replace(None).map_or(Ok(()), Err)
+}
 
 /// [`Timer`] on tokio's clock, which tests pause.
 #[derive(Debug, Clone, Copy, Default)]
