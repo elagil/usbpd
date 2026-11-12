@@ -130,6 +130,49 @@ pub trait VbusSense {
     }
 }
 
+/// What the VBUS power path of a port is connected to; see [`PowerPath::set_vbus`].
+///
+/// Only combinations that a port may need are representable: the sink and source paths are never
+/// connected at the same time, and the discharge load is never applied while sourcing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum VbusPath {
+    /// Neither path connected, no discharge load.
+    #[default]
+    Off,
+    /// The sink path is connected: the port consumes VBUS.
+    Sink,
+    /// The source path is connected: the port supplies VBUS.
+    Source,
+    /// The VBUS discharge load is applied, with neither path connected.
+    ///
+    /// A Source discharges VBUS to vSafe0V after turning it off, e.g. in AttachWait.SRC
+    /// (Section 4.5.2.2.8).
+    Discharge,
+    /// The sink path is connected and the VBUS discharge load is applied.
+    ///
+    /// For the safe Sink requirement of USB PD (USB PD R3.2, Section 7.2.9.1): after a detach
+    /// from a contract above vSafe5V, a Sink may need a discharge circuit to bring its bulk
+    /// capacitance to vSafe5V in time. `usbcc` itself never uses it.
+    SinkDischarge,
+}
+
+/// What the VCONN supply of a port does; see [`PowerPath::set_vconn`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum VconnPath {
+    /// VCONN neither supplied nor discharged.
+    #[default]
+    Off,
+    /// VCONN is supplied on the given CC pin.
+    Supply(CcPin),
+    /// The VCONN discharge resistance (Rdch, Table 4-5) is applied to the given CC pin.
+    ///
+    /// In UnattachedWait.SRC, the CC pin that supplied VCONN is discharged (Section 4.5.2.2.6).
+    /// `usbcc` presents [`Termination::Open`] on that pin through the [`CcPhy`] meanwhile.
+    Discharge(CcPin),
+}
+
 /// The power path of a port: the VBUS sink and source paths, and the VCONN supply.
 ///
 /// `usbcc` never calls two methods of this trait at the same time.
@@ -153,14 +196,6 @@ pub trait PowerPath {
         future::ready(Ok(()))
     }
 
-    /// Connects (`true`) or disconnects (`false`) the sink path, through which the port consumes
-    /// VBUS.
-    ///
-    /// `usbcc` never connects the sink path of a port configured as Source-only. Implementations
-    /// for hardware without a sink path may do nothing for `false` and panic for `true`, which
-    /// indicates a misconfiguration.
-    fn set_vbus_sink(&mut self, on: bool) -> impl Future<Output = Result<(), Self::Error>>;
-
     /// Prepares the supply behind the source path (VBULK) and returns once it is ready to supply
     /// VBUS at vSafe5V, e.g. once a converter has started up or has come back down to vSafe5V
     /// from a higher voltage. Doesn't connect the source path.
@@ -173,51 +208,39 @@ pub trait PowerPath {
         future::ready(Ok(()))
     }
 
-    /// Connects (`true`) or disconnects (`false`) the source path, through which the port supplies
-    /// VBUS.
+    /// Connects the VBUS power path as given.
     ///
-    /// Called with `true` on entering Attached.SRC, after [`PowerPath::prepare_vbus_source`] has
-    /// returned; VBUS has to be at vSafe5V within tVBUSON (Section 4.5.2.2.9). Called with `false`
-    /// to stop supplying VBUS, and also when an attach is abandoned after
-    /// [`PowerPath::prepare_vbus_source`], in which case the supply can be shut down again.
+    /// Implementations switch break-before-make: the sink and source paths are never connected at
+    /// the same time, not even during the transition.
     ///
-    /// `usbcc` never connects the source path of a port configured as Sink-only. Implementations
-    /// for hardware without a source path may do nothing for `false` and panic for `true`, which
-    /// indicates a misconfiguration.
-    fn set_vbus_source(&mut self, on: bool) -> impl Future<Output = Result<(), Self::Error>>;
+    /// - [`VbusPath::Source`]: set on entering Attached.SRC, after
+    ///   [`PowerPath::prepare_vbus_source`] has returned; VBUS has to be at vSafe5V within
+    ///   tVBUSON (Section 4.5.2.2.9). Leaving it, also when an attach is abandoned after
+    ///   [`PowerPath::prepare_vbus_source`], means the supply can be shut down again.
+    /// - [`VbusPath::Discharge`]: `usbcc` never sets it on a port configured as Sink-only.
+    ///   Implementations for hardware without a discharge load may treat it as [`VbusPath::Off`].
+    ///
+    /// `usbcc` never sets [`VbusPath::Sink`] on a port configured as Source-only, nor
+    /// [`VbusPath::Source`] on a port configured as Sink-only. Implementations for hardware
+    /// without the respective path may panic for them, which indicates a misconfiguration.
+    fn set_vbus(&mut self, path: VbusPath) -> impl Future<Output = Result<(), Self::Error>>;
 
-    /// Enables (`true`) or disables (`false`) the VBUS discharge load.
-    ///
-    /// A Source discharges VBUS to vSafe0V after turning it off, e.g. in AttachWait.SRC
-    /// (Section 4.5.2.2.8). `usbcc` never enables it on a port configured as Sink-only;
-    /// implementations for hardware without a discharge load may do nothing.
-    fn set_vbus_discharge(&mut self, on: bool) -> impl Future<Output = Result<(), Self::Error>>;
-
-    /// Supplies VCONN on the given CC pin, or on none.
+    /// Supplies or discharges VCONN as given.
     ///
     /// VCONN is optional for ports without USB TX/RX signaling that supply at most 3 A
     /// (Table 4-4); whether a port sources VCONN is part of the `usbcc` configuration. The default
-    /// implementation is for hardware that can't source VCONN: it does nothing for `None`.
+    /// implementation is for hardware that can't source VCONN: it does nothing for
+    /// [`VconnPath::Off`] and [`VconnPath::Discharge`].
     ///
     /// # Panics
     ///
-    /// The default implementation panics for `Some`, which means that the port is configured to
-    /// source VCONN but its power path can't.
-    fn set_vconn(&mut self, pin: Option<CcPin>) -> impl Future<Output = Result<(), Self::Error>> {
+    /// The default implementation panics for [`VconnPath::Supply`], which means that the port is
+    /// configured to source VCONN but its power path can't.
+    fn set_vconn(&mut self, path: VconnPath) -> impl Future<Output = Result<(), Self::Error>> {
         assert!(
-            pin.is_none(),
+            !matches!(path, VconnPath::Supply(_)),
             "VCONN requested from a `PowerPath` without VCONN: the port is configured to source VCONN but its power path can't"
         );
-        future::ready(Ok(()))
-    }
-
-    /// Applies the VCONN discharge resistance (Rdch, Table 4-5) to the given CC pin, or to none.
-    ///
-    /// In UnattachedWait.SRC, the CC pin that supplied VCONN is discharged (Section 4.5.2.2.6).
-    /// `usbcc` presents [`Termination::Open`] on that pin through the [`CcPhy`] meanwhile. The
-    /// default implementation does nothing, for hardware that can't source VCONN.
-    fn set_vconn_discharge(&mut self, pin: Option<CcPin>) -> impl Future<Output = Result<(), Self::Error>> {
-        let _ = pin;
         future::ready(Ok(()))
     }
 
@@ -275,28 +298,16 @@ impl<T: PowerPath + ?Sized> PowerPath for &mut T {
         T::set_active(self, active)
     }
 
-    fn set_vbus_sink(&mut self, on: bool) -> impl Future<Output = Result<(), Self::Error>> {
-        T::set_vbus_sink(self, on)
-    }
-
     fn prepare_vbus_source(&mut self) -> impl Future<Output = Result<(), Self::Error>> {
         T::prepare_vbus_source(self)
     }
 
-    fn set_vbus_source(&mut self, on: bool) -> impl Future<Output = Result<(), Self::Error>> {
-        T::set_vbus_source(self, on)
+    fn set_vbus(&mut self, path: VbusPath) -> impl Future<Output = Result<(), Self::Error>> {
+        T::set_vbus(self, path)
     }
 
-    fn set_vbus_discharge(&mut self, on: bool) -> impl Future<Output = Result<(), Self::Error>> {
-        T::set_vbus_discharge(self, on)
-    }
-
-    fn set_vconn(&mut self, pin: Option<CcPin>) -> impl Future<Output = Result<(), Self::Error>> {
-        T::set_vconn(self, pin)
-    }
-
-    fn set_vconn_discharge(&mut self, pin: Option<CcPin>) -> impl Future<Output = Result<(), Self::Error>> {
-        T::set_vconn_discharge(self, pin)
+    fn set_vconn(&mut self, path: VconnPath) -> impl Future<Output = Result<(), Self::Error>> {
+        T::set_vconn(self, path)
     }
 
     fn wait_vconn_discharged(&mut self) -> impl Future<Output = Result<(), Self::Error>> {
