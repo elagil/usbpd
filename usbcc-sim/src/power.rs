@@ -3,11 +3,11 @@
 use std::future::Future;
 use std::sync::Arc;
 
+use tokio::sync::watch;
 use usbcc_traits::{CcPin, PowerPath};
 
 use crate::SimError;
 use crate::log::{Log, PowerCall};
-use crate::shared::Shared;
 
 /// Snapshot of the switches of a [`MockPowerPath`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -50,7 +50,7 @@ struct PowerInner {
 /// from the method call, not from the first poll.
 #[derive(Debug)]
 pub struct MockPowerPath {
-    shared: Arc<Shared<PowerInner>>,
+    shared: Arc<watch::Sender<PowerInner>>,
     log: Log,
     port: &'static str,
 }
@@ -58,17 +58,17 @@ pub struct MockPowerPath {
 /// The test side of the power path mock. Cloning yields another handle to the same mock.
 #[derive(Debug, Clone)]
 pub struct PowerPathHandle {
-    shared: Arc<Shared<PowerInner>>,
+    shared: Arc<watch::Sender<PowerInner>>,
 }
 
 /// Marks a call as in progress until dropped.
 struct InProgress {
-    shared: Arc<Shared<PowerInner>>,
+    shared: Arc<watch::Sender<PowerInner>>,
 }
 
 impl Drop for InProgress {
     fn drop(&mut self) {
-        self.shared.lock().in_progress = None;
+        self.shared.send_modify(|inner| inner.in_progress = None);
     }
 }
 
@@ -77,13 +77,13 @@ impl MockPowerPath {
     ///
     /// Starts inactive with everything off.
     pub fn new(log: &Log, port: &'static str) -> (Self, PowerPathHandle) {
-        let shared = Shared::new(PowerInner {
+        let shared = Arc::new(watch::Sender::new(PowerInner {
             state: PowerPathState::default(),
             source_ready: true,
             vconn_discharged: true,
             in_progress: None,
             fail_next: None,
-        });
+        }));
         let mock = Self {
             shared: shared.clone(),
             log: log.clone(),
@@ -95,12 +95,11 @@ impl MockPowerPath {
     /// Records the call, checks for concurrent calls and marks this one as in progress.
     fn begin(&self, name: &'static str, call: PowerCall) -> InProgress {
         self.log.record(self.port, call);
-        let mut inner = self.shared.lock();
-        if let Some(other) = inner.in_progress {
-            drop(inner);
+        let mut other = None;
+        self.shared.send_modify(|inner| other = inner.in_progress.replace(name));
+        if let Some(other) = other {
             panic!("`PowerPath::{name}` called while `PowerPath::{other}` is in progress");
         }
-        inner.in_progress = Some(name);
         InProgress {
             shared: self.shared.clone(),
         }
@@ -116,7 +115,7 @@ impl MockPowerPath {
         let guard = self.begin(name, call);
         async move {
             take_error(&guard.shared)?;
-            guard.shared.update(|inner| apply(&mut inner.state));
+            guard.shared.send_modify(|inner| apply(&mut inner.state));
             Ok(())
         }
     }
@@ -131,15 +130,22 @@ impl MockPowerPath {
         let guard = self.begin(name, call);
         async move {
             take_error(&guard.shared)?;
-            guard.shared.wait_for(|inner| ready(inner).then_some(())).await;
+            guard
+                .shared
+                .subscribe()
+                .wait_for(ready)
+                .await
+                .expect("the mock holds the sender");
             Ok(())
         }
     }
 }
 
 /// Consumes an injected error.
-fn take_error(shared: &Shared<PowerInner>) -> Result<(), SimError> {
-    shared.lock().fail_next.take().map_or(Ok(()), Err)
+fn take_error(shared: &watch::Sender<PowerInner>) -> Result<(), SimError> {
+    let mut error = None;
+    shared.send_modify(|inner| error = inner.fail_next.take());
+    error.map_or(Ok(()), Err)
 }
 
 impl PowerPath for MockPowerPath {
@@ -191,24 +197,24 @@ impl PowerPath for MockPowerPath {
 impl PowerPathHandle {
     /// The current state of the switches.
     pub fn state(&self) -> PowerPathState {
-        self.shared.lock().state
+        self.shared.borrow().state
     }
 
     /// Sets whether the supply behind the source path is ready, i.e. whether
     /// [`PowerPath::prepare_vbus_source`] completes. Initially `true`.
     pub fn set_source_ready(&self, ready: bool) {
-        self.shared.update(|inner| inner.source_ready = ready);
+        self.shared.send_modify(|inner| inner.source_ready = ready);
     }
 
     /// Sets whether VCONN is discharged, i.e. whether [`PowerPath::wait_vconn_discharged`]
     /// completes. Initially `true`.
     pub fn set_vconn_discharged(&self, discharged: bool) {
-        self.shared.update(|inner| inner.vconn_discharged = discharged);
+        self.shared.send_modify(|inner| inner.vconn_discharged = discharged);
     }
 
     /// The method whose call is in progress, e.g. `"prepare_vbus_source"` while that is pending.
     pub fn in_progress(&self) -> Option<&'static str> {
-        self.shared.lock().in_progress
+        self.shared.borrow().in_progress
     }
 
     /// Makes the next call of any [`PowerPath`] method fail with `error`, without any effect.
@@ -216,6 +222,6 @@ impl PowerPathHandle {
     /// The error is taken by the first call whose future is polled, which then returns it
     /// immediately.
     pub fn fail_next(&self, error: SimError) {
-        self.shared.lock().fail_next = Some(error);
+        self.shared.send_modify(|inner| inner.fail_next = Some(error));
     }
 }

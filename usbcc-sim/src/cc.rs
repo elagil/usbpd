@@ -3,11 +3,11 @@
 use std::future::Future;
 use std::sync::Arc;
 
+use tokio::sync::watch;
 use usbcc_traits::{CcPhy, CcPin, CcState, Termination};
 
 use crate::SimError;
 use crate::log::{CcCall, Log};
-use crate::shared::Shared;
 
 #[derive(Debug)]
 struct CcInner {
@@ -34,7 +34,7 @@ struct CcInner {
 /// the test asks for it with [`CcHandle::trigger_spurious_change`].
 #[derive(Debug)]
 pub struct MockCcPhy {
-    shared: Arc<Shared<CcInner>>,
+    shared: Arc<watch::Sender<CcInner>>,
     log: Log,
     port: &'static str,
     /// `cc_version` at the last read.
@@ -44,7 +44,7 @@ pub struct MockCcPhy {
 /// The test side of the CC mock. Cloning yields another handle to the same mock.
 #[derive(Debug, Clone)]
 pub struct CcHandle {
-    shared: Arc<Shared<CcInner>>,
+    shared: Arc<watch::Sender<CcInner>>,
 }
 
 impl MockCcPhy {
@@ -52,13 +52,13 @@ impl MockCcPhy {
     ///
     /// Both pins start [`CcState::Open`], with [`Termination::Open`] presented.
     pub fn new(log: &Log, port: &'static str) -> (Self, CcHandle) {
-        let shared = Shared::new(CcInner {
+        let shared = Arc::new(watch::Sender::new(CcInner {
             cc: (CcState::Open, CcState::Open),
             cc_version: 0,
             terminations: (Termination::Open, Termination::Open),
             termination_version: 0,
             fail_next: None,
-        });
+        }));
         let mock = Self {
             shared: shared.clone(),
             log: log.clone(),
@@ -70,7 +70,9 @@ impl MockCcPhy {
 
     /// Consumes an injected error.
     fn check_error(&self) -> Result<(), SimError> {
-        self.shared.lock().fail_next.take().map_or(Ok(()), Err)
+        let mut error = None;
+        self.shared.send_modify(|inner| error = inner.fail_next.take());
+        error.map_or(Ok(()), Err)
     }
 }
 
@@ -81,7 +83,7 @@ impl CcPhy for MockCcPhy {
         self.log.record(self.port, CcCall::SetTermination { cc1, cc2 });
         async move {
             self.check_error()?;
-            self.shared.update(|inner| {
+            self.shared.send_modify(|inner| {
                 inner.terminations = (cc1, cc2);
                 inner.termination_version += 1;
             });
@@ -93,7 +95,7 @@ impl CcPhy for MockCcPhy {
         self.log.record(self.port, CcCall::CcState);
         async move {
             self.check_error()?;
-            let inner = self.shared.lock();
+            let inner = self.shared.borrow();
             self.seen = inner.cc_version;
             Ok(inner.cc)
         }
@@ -103,17 +105,16 @@ impl CcPhy for MockCcPhy {
         self.log.record(self.port, CcCall::WaitForCcChange);
         async move {
             self.check_error()?;
-            let seen = &mut self.seen;
-            let state = self
+            let seen = self.seen;
+            let (version, value) = self
                 .shared
-                .wait_for(|inner| {
-                    (inner.cc_version != *seen).then(|| {
-                        *seen = inner.cc_version;
-                        inner.cc
-                    })
-                })
-                .await;
-            Ok(state)
+                .subscribe()
+                .wait_for(|inner| inner.cc_version != seen)
+                .await
+                .map(|inner| (inner.cc_version, inner.cc))
+                .expect("the mock holds the sender");
+            self.seen = version;
+            Ok(value)
         }
     }
 }
@@ -121,7 +122,7 @@ impl CcPhy for MockCcPhy {
 impl CcHandle {
     /// Sets what CC1 and CC2 see, and wakes the port if that is a change.
     pub fn set_cc(&self, cc1: CcState, cc2: CcState) {
-        self.shared.update(|inner| {
+        self.shared.send_modify(|inner| {
             if inner.cc != (cc1, cc2) {
                 inner.cc = (cc1, cc2);
                 inner.cc_version += 1;
@@ -140,18 +141,18 @@ impl CcHandle {
 
     /// What CC1 and CC2 currently see.
     pub fn cc(&self) -> (CcState, CcState) {
-        self.shared.lock().cc
+        self.shared.borrow().cc
     }
 
     /// The terminations that the port currently presents on CC1 and CC2.
     pub fn terminations(&self) -> (Termination, Termination) {
-        self.shared.lock().terminations
+        self.shared.borrow().terminations
     }
 
     /// Makes a pending or the next [`CcPhy::wait_for_cc_change`] return once, with an unchanged
     /// state, as the trait allows.
     pub fn trigger_spurious_change(&self) {
-        self.shared.update(|inner| inner.cc_version += 1);
+        self.shared.send_modify(|inner| inner.cc_version += 1);
     }
 
     /// Makes the next call of any [`CcPhy`] method fail with `error`, without any effect.
@@ -159,7 +160,7 @@ impl CcHandle {
     /// The error is taken by the first call whose future is polled, which then returns it
     /// immediately.
     pub fn fail_next(&self, error: SimError) {
-        self.shared.lock().fail_next = Some(error);
+        self.shared.send_modify(|inner| inner.fail_next = Some(error));
     }
 
     /// Returns a watcher that reports every [`CcPhy::set_termination`] from now on.
@@ -169,7 +170,7 @@ impl CcHandle {
     pub fn watch_terminations(&self) -> TerminationWatcher {
         TerminationWatcher {
             shared: self.shared.clone(),
-            seen: self.shared.lock().termination_version,
+            seen: self.shared.borrow().termination_version,
         }
     }
 }
@@ -178,7 +179,7 @@ impl CcHandle {
 /// [`CcHandle::watch_terminations`].
 #[derive(Debug)]
 pub struct TerminationWatcher {
-    shared: Arc<Shared<CcInner>>,
+    shared: Arc<watch::Sender<CcInner>>,
     seen: u64,
 }
 
@@ -189,14 +190,15 @@ impl TerminationWatcher {
     /// Returns immediately if it already was. Several calls in between are reported once. A call
     /// that sets the same terminations again is reported as well. Cancel-safe.
     pub async fn changed(&mut self) -> (Termination, Termination) {
-        let seen = &mut self.seen;
-        self.shared
-            .wait_for(|inner| {
-                (inner.termination_version != *seen).then(|| {
-                    *seen = inner.termination_version;
-                    inner.terminations
-                })
-            })
+        let seen = self.seen;
+        let (version, value) = self
+            .shared
+            .subscribe()
+            .wait_for(|inner| inner.termination_version != seen)
             .await
+            .map(|inner| (inner.termination_version, inner.terminations))
+            .expect("the mock holds the sender");
+        self.seen = version;
+        value
     }
 }

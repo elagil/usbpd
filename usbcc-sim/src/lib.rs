@@ -69,7 +69,6 @@ mod cc;
 mod dpm;
 mod log;
 mod power;
-mod shared;
 mod vbus;
 
 use std::fmt;

@@ -3,11 +3,11 @@
 use std::future::Future;
 use std::sync::Arc;
 
+use tokio::sync::watch;
 use usbcc_traits::VbusSense;
 
 use crate::SimError;
 use crate::log::{Log, VbusCall};
-use crate::shared::Shared;
 
 #[derive(Debug)]
 struct VbusInner {
@@ -23,7 +23,7 @@ struct VbusInner {
 /// return spuriously.
 #[derive(Debug)]
 pub struct MockVbusSense {
-    shared: Arc<Shared<VbusInner>>,
+    shared: Arc<watch::Sender<VbusInner>>,
     log: Log,
     port: &'static str,
 }
@@ -31,14 +31,14 @@ pub struct MockVbusSense {
 /// The test side of the VBUS mock. Cloning yields another handle to the same mock.
 #[derive(Debug, Clone)]
 pub struct VbusHandle {
-    shared: Arc<Shared<VbusInner>>,
+    shared: Arc<watch::Sender<VbusInner>>,
 }
 
 impl MockVbusSense {
     /// Creates a VBUS mock that records its calls in `log`, labelled with `port`. VBUS starts at
     /// 0 mV.
     pub fn new(log: &Log, port: &'static str) -> (Self, VbusHandle) {
-        let shared = Shared::new(VbusInner { mv: 0, fail_next: None });
+        let shared = Arc::new(watch::Sender::new(VbusInner { mv: 0, fail_next: None }));
         let mock = Self {
             shared: shared.clone(),
             log: log.clone(),
@@ -53,16 +53,20 @@ impl MockVbusSense {
         async move {
             take_error(&shared)?;
             shared
-                .wait_for(|inner| (inner.mv < low_mv || inner.mv > high_mv).then_some(()))
-                .await;
+                .subscribe()
+                .wait_for(|inner| inner.mv < low_mv || inner.mv > high_mv)
+                .await
+                .expect("the mock holds the sender");
             Ok(())
         }
     }
 }
 
 /// Consumes an injected error.
-fn take_error(shared: &Shared<VbusInner>) -> Result<(), SimError> {
-    shared.lock().fail_next.take().map_or(Ok(()), Err)
+fn take_error(shared: &watch::Sender<VbusInner>) -> Result<(), SimError> {
+    let mut error = None;
+    shared.send_modify(|inner| error = inner.fail_next.take());
+    error.map_or(Ok(()), Err)
 }
 
 impl VbusSense for MockVbusSense {
@@ -72,7 +76,7 @@ impl VbusSense for MockVbusSense {
         self.log.record(self.port, VbusCall::VbusMv);
         async move {
             take_error(&self.shared)?;
-            Ok(self.shared.lock().mv)
+            Ok(self.shared.borrow().mv)
         }
     }
 
@@ -93,12 +97,12 @@ impl VbusSense for MockVbusSense {
 impl VbusHandle {
     /// Sets the VBUS voltage in mV, and wakes the port's waits.
     pub fn set_mv(&self, mv: u32) {
-        self.shared.update(|inner| inner.mv = mv);
+        self.shared.send_modify(|inner| inner.mv = mv);
     }
 
     /// The current VBUS voltage in mV.
     pub fn mv(&self) -> u32 {
-        self.shared.lock().mv
+        self.shared.borrow().mv
     }
 
     /// Makes the next call of any [`VbusSense`] method fail with `error`, without any effect.
@@ -106,6 +110,6 @@ impl VbusHandle {
     /// The error is taken by the first call whose future is polled, which then returns it
     /// immediately.
     pub fn fail_next(&self, error: SimError) {
-        self.shared.lock().fail_next = Some(error);
+        self.shared.send_modify(|inner| inner.fail_next = Some(error));
     }
 }
