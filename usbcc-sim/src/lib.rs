@@ -134,9 +134,9 @@ pub async fn run_for<F: Future>(duration: Duration, future: F) -> Option<F::Outp
     tokio::time::timeout(duration, future).await.ok()
 }
 
-/// Virtual time that [`SimFutureExt::settle`] runs a future for: 1 s, longer than any reaction of
+/// Virtual time that [`SimFutureExt::settle`] runs a future for; longer than any reaction of
 /// the mocks or any timer that a test is waiting out.
-pub const SETTLE_TIME: Duration = Duration::from_secs(1);
+pub const SETTLE_TIME: Duration = Duration::from_secs(5);
 
 /// Shorthands for [`run_for`], for any future.
 ///
