@@ -1,6 +1,6 @@
 [package]
 name = "usbcc-traits"
-version = "1.0.0"
+version = "0.1.0"
 description = "USB-CC library traits."
 documentation = "https://docs.rs/usbcc-traits"
 readme = "README.md"
