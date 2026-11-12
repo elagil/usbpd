@@ -1,6 +1,5 @@
 //! Mock of the VBUS measurement.
 
-use std::future::Future;
 use std::sync::Arc;
 
 use tokio::sync::watch;
@@ -47,50 +46,45 @@ impl MockVbusSense {
         (mock, VbusHandle { shared })
     }
 
-    fn wait(&self, call: VbusCall, low_mv: u32, high_mv: u32) -> impl Future<Output = Result<(), SimError>> + use<> {
-        self.log.record(self.port, call);
-        let shared = self.shared.clone();
-        async move {
-            take_error(&shared)?;
-            shared
-                .subscribe()
-                .wait_for(|inner| inner.mv < low_mv || inner.mv > high_mv)
-                .await
-                .expect("the mock holds the sender");
-            Ok(())
-        }
+    async fn wait(&self, call: VbusCall, low_mv: u32, high_mv: u32) -> Result<(), SimError> {
+        self.begin(call)?;
+        self.shared
+            .subscribe()
+            .wait_for(|inner| inner.mv < low_mv || inner.mv > high_mv)
+            .await
+            .expect("the mock holds the sender");
+        Ok(())
     }
-}
 
-/// Consumes an injected error.
-fn take_error(shared: &watch::Sender<VbusInner>) -> Result<(), SimError> {
-    let mut error = None;
-    shared.send_modify(|inner| error = inner.fail_next.take());
-    error.map_or(Ok(()), Err)
+    /// Records the call and consumes an injected error.
+    fn begin(&self, call: VbusCall) -> Result<(), SimError> {
+        self.log.record(self.port, call);
+        let mut error = None;
+        self.shared.send_modify(|inner| error = inner.fail_next.take());
+        error.map_or(Ok(()), Err)
+    }
 }
 
 impl VbusSense for MockVbusSense {
     type Error = SimError;
 
-    fn vbus_mv(&mut self) -> impl Future<Output = Result<u32, Self::Error>> {
-        self.log.record(self.port, VbusCall::VbusMv);
-        async move {
-            take_error(&self.shared)?;
-            Ok(self.shared.borrow().mv)
-        }
+    async fn vbus_mv(&mut self) -> Result<u32, SimError> {
+        self.begin(VbusCall::VbusMv)?;
+        Ok(self.shared.borrow().mv)
     }
 
-    fn wait_vbus_outside(&mut self, low_mv: u32, high_mv: u32) -> impl Future<Output = Result<(), Self::Error>> {
+    async fn wait_vbus_outside(&mut self, low_mv: u32, high_mv: u32) -> Result<(), SimError> {
         self.wait(VbusCall::WaitVbusOutside { low_mv, high_mv }, low_mv, high_mv)
+            .await
     }
 
     // Overridden only to record the method that was called; the semantics are the defaults'.
-    fn wait_vbus_below(&mut self, mv: u32) -> impl Future<Output = Result<(), Self::Error>> {
-        self.wait(VbusCall::WaitVbusBelow { mv }, mv, u32::MAX)
+    async fn wait_vbus_below(&mut self, mv: u32) -> Result<(), SimError> {
+        self.wait(VbusCall::WaitVbusBelow { mv }, mv, u32::MAX).await
     }
 
-    fn wait_vbus_above(&mut self, mv: u32) -> impl Future<Output = Result<(), Self::Error>> {
-        self.wait(VbusCall::WaitVbusAbove { mv }, 0, mv)
+    async fn wait_vbus_above(&mut self, mv: u32) -> Result<(), SimError> {
+        self.wait(VbusCall::WaitVbusAbove { mv }, 0, mv).await
     }
 }
 

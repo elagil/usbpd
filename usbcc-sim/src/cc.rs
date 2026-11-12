@@ -1,6 +1,5 @@
 //! Mock of the CC front end.
 
-use std::future::Future;
 use std::sync::Arc;
 
 use tokio::sync::watch;
@@ -68,8 +67,9 @@ impl MockCcPhy {
         (mock, CcHandle { shared })
     }
 
-    /// Consumes an injected error.
-    fn check_error(&self) -> Result<(), SimError> {
+    /// Records the call and consumes an injected error.
+    fn begin(&self, call: CcCall) -> Result<(), SimError> {
+        self.log.record(self.port, call);
         let mut error = None;
         self.shared.send_modify(|inner| error = inner.fail_next.take());
         error.map_or(Ok(()), Err)
@@ -79,43 +79,34 @@ impl MockCcPhy {
 impl CcPhy for MockCcPhy {
     type Error = SimError;
 
-    fn set_termination(&mut self, cc1: Termination, cc2: Termination) -> impl Future<Output = Result<(), Self::Error>> {
-        self.log.record(self.port, CcCall::SetTermination { cc1, cc2 });
-        async move {
-            self.check_error()?;
-            self.shared.send_modify(|inner| {
-                inner.terminations = (cc1, cc2);
-                inner.termination_version += 1;
-            });
-            Ok(())
-        }
+    async fn set_termination(&mut self, cc1: Termination, cc2: Termination) -> Result<(), SimError> {
+        self.begin(CcCall::SetTermination { cc1, cc2 })?;
+        self.shared.send_modify(|inner| {
+            inner.terminations = (cc1, cc2);
+            inner.termination_version += 1;
+        });
+        Ok(())
     }
 
-    fn cc_state(&mut self) -> impl Future<Output = Result<(CcState, CcState), Self::Error>> {
-        self.log.record(self.port, CcCall::CcState);
-        async move {
-            self.check_error()?;
-            let inner = self.shared.borrow();
-            self.seen = inner.cc_version;
-            Ok(inner.cc)
-        }
+    async fn cc_state(&mut self) -> Result<(CcState, CcState), SimError> {
+        self.begin(CcCall::CcState)?;
+        let inner = self.shared.borrow();
+        self.seen = inner.cc_version;
+        Ok(inner.cc)
     }
 
-    fn wait_for_cc_change(&mut self) -> impl Future<Output = Result<(CcState, CcState), Self::Error>> {
-        self.log.record(self.port, CcCall::WaitForCcChange);
-        async move {
-            self.check_error()?;
-            let seen = self.seen;
-            let (version, value) = self
-                .shared
-                .subscribe()
-                .wait_for(|inner| inner.cc_version != seen)
-                .await
-                .map(|inner| (inner.cc_version, inner.cc))
-                .expect("the mock holds the sender");
-            self.seen = version;
-            Ok(value)
-        }
+    async fn wait_for_cc_change(&mut self) -> Result<(CcState, CcState), SimError> {
+        self.begin(CcCall::WaitForCcChange)?;
+        let seen = self.seen;
+        let (version, value) = self
+            .shared
+            .subscribe()
+            .wait_for(|inner| inner.cc_version != seen)
+            .await
+            .map(|inner| (inner.cc_version, inner.cc))
+            .expect("the mock holds the sender");
+        self.seen = version;
+        Ok(value)
     }
 }
 

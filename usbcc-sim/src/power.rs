@@ -1,6 +1,5 @@
 //! Mock of the power path.
 
-use std::future::Future;
 use std::sync::Arc;
 
 use tokio::sync::watch;
@@ -74,80 +73,69 @@ impl MockPowerPath {
     }
 
     /// Implements a `set_*` method: applies `apply` to the switches.
-    fn set(
-        &self,
-        call: PowerCall,
-        apply: impl FnOnce(&mut PowerPathState) + 'static,
-    ) -> impl Future<Output = Result<(), SimError>> {
-        self.log.record(self.port, call);
-        let shared = self.shared.clone();
-        async move {
-            take_error(&shared)?;
-            shared.send_modify(|inner| apply(&mut inner.state));
-            Ok(())
-        }
+    async fn set(&self, call: PowerCall, apply: impl FnOnce(&mut PowerPathState)) -> Result<(), SimError> {
+        self.begin(call)?;
+        self.shared.send_modify(|inner| apply(&mut inner.state));
+        Ok(())
     }
 
     /// Implements a waiting method: waits until `ready` is true.
-    fn wait(
-        &self,
-        call: PowerCall,
-        ready: fn(&PowerInner) -> bool,
-    ) -> impl Future<Output = Result<(), SimError>> + use<> {
-        self.log.record(self.port, call);
-        let shared = self.shared.clone();
-        async move {
-            take_error(&shared)?;
-            shared
-                .subscribe()
-                .wait_for(ready)
-                .await
-                .expect("the mock holds the sender");
-            Ok(())
-        }
+    async fn wait(&self, call: PowerCall, ready: fn(&PowerInner) -> bool) -> Result<(), SimError> {
+        self.begin(call)?;
+        self.shared
+            .subscribe()
+            .wait_for(ready)
+            .await
+            .expect("the mock holds the sender");
+        Ok(())
     }
-}
 
-/// Consumes an injected error.
-fn take_error(shared: &watch::Sender<PowerInner>) -> Result<(), SimError> {
-    let mut error = None;
-    shared.send_modify(|inner| error = inner.fail_next.take());
-    error.map_or(Ok(()), Err)
+    /// Records the call and consumes an injected error.
+    fn begin(&self, call: PowerCall) -> Result<(), SimError> {
+        self.log.record(self.port, call);
+        let mut error = None;
+        self.shared.send_modify(|inner| error = inner.fail_next.take());
+        error.map_or(Ok(()), Err)
+    }
 }
 
 impl PowerPath for MockPowerPath {
     type Error = SimError;
 
-    fn set_active(&mut self, active: bool) -> impl Future<Output = Result<(), Self::Error>> {
-        self.set(PowerCall::SetActive(active), move |s| s.active = active)
+    async fn set_active(&mut self, active: bool) -> Result<(), SimError> {
+        self.set(PowerCall::SetActive(active), |s| s.active = active).await
     }
 
-    fn set_vbus_sink(&mut self, on: bool) -> impl Future<Output = Result<(), Self::Error>> {
-        self.set(PowerCall::SetVbusSink(on), move |s| s.vbus_sink = on)
+    async fn set_vbus_sink(&mut self, on: bool) -> Result<(), SimError> {
+        self.set(PowerCall::SetVbusSink(on), |s| s.vbus_sink = on).await
     }
 
-    fn prepare_vbus_source(&mut self) -> impl Future<Output = Result<(), Self::Error>> {
+    async fn prepare_vbus_source(&mut self) -> Result<(), SimError> {
         self.wait(PowerCall::PrepareVbusSource, |inner| inner.source_ready)
+            .await
     }
 
-    fn set_vbus_source(&mut self, on: bool) -> impl Future<Output = Result<(), Self::Error>> {
-        self.set(PowerCall::SetVbusSource(on), move |s| s.vbus_source = on)
+    async fn set_vbus_source(&mut self, on: bool) -> Result<(), SimError> {
+        self.set(PowerCall::SetVbusSource(on), |s| s.vbus_source = on).await
     }
 
-    fn set_vbus_discharge(&mut self, on: bool) -> impl Future<Output = Result<(), Self::Error>> {
-        self.set(PowerCall::SetVbusDischarge(on), move |s| s.vbus_discharge = on)
+    async fn set_vbus_discharge(&mut self, on: bool) -> Result<(), SimError> {
+        self.set(PowerCall::SetVbusDischarge(on), |s| s.vbus_discharge = on)
+            .await
     }
 
-    fn set_vconn(&mut self, pin: Option<CcPin>) -> impl Future<Output = Result<(), Self::Error>> {
-        self.set(PowerCall::SetVconn(pin), move |s| s.vconn = pin)
+    async fn set_vconn(&mut self, pin: Option<CcPin>) -> Result<(), SimError> {
+        self.set(PowerCall::SetVconn(pin), |s| s.vconn = pin).await
     }
 
-    fn set_vconn_discharge(&mut self, pin: Option<CcPin>) -> impl Future<Output = Result<(), Self::Error>> {
-        self.set(PowerCall::SetVconnDischarge(pin), move |s| s.vconn_discharge = pin)
+    async fn set_vconn_discharge(&mut self, pin: Option<CcPin>) -> Result<(), SimError> {
+        self.set(PowerCall::SetVconnDischarge(pin), |s| s.vconn_discharge = pin)
+            .await
     }
 
-    fn wait_vconn_discharged(&mut self) -> impl Future<Output = Result<(), Self::Error>> {
+    async fn wait_vconn_discharged(&mut self) -> Result<(), SimError> {
         self.wait(PowerCall::WaitVconnDischarged, |inner| inner.vconn_discharged)
+            .await
     }
 }
 

@@ -1,7 +1,6 @@
 //! Mock of the device policy manager.
 
 use std::collections::VecDeque;
-use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -48,11 +47,10 @@ impl MockDpm {
 }
 
 impl DevicePolicyManager for MockDpm {
-    fn inform(&mut self, info: Info) -> impl Future<Output = ()> {
+    async fn inform(&mut self, info: Info) {
         self.log.record(self.port, DpmCall::Inform(info));
         let at = self.log.now();
         self.shared.send_modify(|inner| inner.informs.push((at, info)));
-        async {}
     }
 
     async fn get_event(&mut self) -> Event {
