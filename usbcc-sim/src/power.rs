@@ -4,7 +4,7 @@ use tokio::sync::watch;
 use usbcc_traits::{CcPin, PowerPath};
 
 use crate::log::{Log, PowerCall};
-use crate::{FailNext, SimError, take_error};
+use crate::{FailNext, SimError};
 
 /// Snapshot of the switches of a [`MockPowerPath`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -89,7 +89,7 @@ impl MockPowerPath {
     /// Records the call and consumes an injected error.
     fn begin(&self, call: PowerCall) -> Result<(), SimError> {
         self.log.record(call);
-        take_error(&self.fail_next)
+        self.fail_next.take()
     }
 }
 
@@ -154,6 +154,6 @@ impl PowerPathHandle {
     /// The error is taken by the first call whose future is polled, which then returns it
     /// immediately.
     pub fn fail_next(&self, error: SimError) {
-        *self.fail_next.lock().unwrap() = Some(error);
+        self.fail_next.set(error);
     }
 }

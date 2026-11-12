@@ -4,7 +4,7 @@ use tokio::sync::watch;
 use usbcc_traits::VbusSense;
 
 use crate::log::{Log, VbusCall};
-use crate::{FailNext, SimError, take_error};
+use crate::{FailNext, SimError};
 
 /// The [`VbusSense`] side of the VBUS mock, handed to the port.
 ///
@@ -54,7 +54,7 @@ impl MockVbusSense {
     /// Records the call and consumes an injected error.
     fn begin(&self, call: VbusCall) -> Result<(), SimError> {
         self.log.record(call);
-        take_error(&self.fail_next)
+        self.fail_next.take()
     }
 }
 
@@ -97,6 +97,6 @@ impl VbusHandle {
     /// The error is taken by the first call whose future is polled, which then returns it
     /// immediately.
     pub fn fail_next(&self, error: SimError) {
-        *self.fail_next.lock().unwrap() = Some(error);
+        self.fail_next.set(error);
     }
 }

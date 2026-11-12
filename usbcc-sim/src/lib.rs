@@ -91,12 +91,20 @@ impl fmt::Display for SimError {
 
 impl std::error::Error for SimError {}
 
-/// Where a mock and its handle keep an error injected with `fail_next`.
-type FailNext = std::sync::Arc<std::sync::Mutex<Option<SimError>>>;
+/// An error injected with `fail_next`, shared by a mock and its handle.
+#[derive(Debug, Clone, Default)]
+struct FailNext(std::sync::Arc<std::sync::Mutex<Option<SimError>>>);
 
-/// Consumes an injected error.
-fn take_error(fail_next: &FailNext) -> Result<(), SimError> {
-    fail_next.lock().unwrap().take().map_or(Ok(()), Err)
+impl FailNext {
+    /// Makes the next [`FailNext::take`] return `error`.
+    fn set(&self, error: SimError) {
+        *self.0.lock().unwrap() = Some(error);
+    }
+
+    /// Consumes the injected error, if any.
+    fn take(&self) -> Result<(), SimError> {
+        self.0.lock().unwrap().take().map_or(Ok(()), Err)
+    }
 }
 
 /// [`Timer`] on tokio's clock, which tests pause.
