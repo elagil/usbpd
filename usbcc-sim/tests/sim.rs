@@ -4,7 +4,7 @@ use std::pin::pin;
 use std::time::Duration;
 
 use usbcc::{DevicePolicyManager, Event};
-use usbcc_sim::{Sim, SimError, SimFutureExt, run_for};
+use usbcc_sim::{Sim, SimError, SimFutureExt};
 use usbcc_traits::{CcPhy, CcState, PowerPath, RpLevel, VbusSense};
 
 const RP: CcState = CcState::Rp(RpLevel::Default);
@@ -127,8 +127,8 @@ async fn run_for_reports_completion_and_advances_time() {
     let start = tokio::time::Instant::now();
     let sleep = |ms| tokio::time::sleep(Duration::from_millis(ms));
 
-    assert_eq!(run_for(Duration::from_millis(100), sleep(100)).await, Some(()));
+    assert_eq!(sleep(100).run_for(Duration::from_millis(100)).await, Some(()));
     assert_eq!(start.elapsed(), Duration::from_millis(100));
-    assert_eq!(run_for(Duration::from_millis(100), sleep(150)).await, None);
+    assert_eq!(sleep(150).run_for(Duration::from_millis(100)).await, None);
     assert_eq!(start.elapsed(), Duration::from_millis(200));
 }

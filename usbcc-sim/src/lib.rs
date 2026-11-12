@@ -12,8 +12,8 @@
 //!   information through its [`DpmHandle`].
 //! - Every call is recorded with its virtual timestamp in one ordered [`Log`].
 //! - [`SimTimer`] implements [`Timer`] with [`tokio::time::sleep`].
-//! - [`run_for`] runs a future for a virtual duration, then drops it. [`SimFutureExt`] adds the
-//!   common cases as methods: [`poll_once`](SimFutureExt::poll_once) and
+//! - [`SimFutureExt`] runs any future for a while in virtual time, then drops it:
+//!   [`run_for`](SimFutureExt::run_for) a duration, [`poll_once`](SimFutureExt::poll_once) or
 //!   [`settle`](SimFutureExt::settle).
 //!
 //! [`Sim::new`] creates all of them at once.
@@ -36,7 +36,7 @@
 //! use std::time::Duration;
 //!
 //! use usbcc::{Config, PowerRole, RpLevel, State};
-//! use usbcc_sim::{PowerCall, Sim, run_for};
+//! use usbcc_sim::{PowerCall, Sim, SimFutureExt};
 //! use usbcc_traits::CcState;
 //!
 //! # #[tokio::main(flavor = "current_thread", start_paused = true)]
@@ -45,14 +45,16 @@
 //! let (mut port, mut dpm) = mocks.into_port(Config::default());
 //!
 //! // Nothing attached: the port keeps waiting.
-//! let attached = run_for(Duration::from_millis(500), port.wait_attached(&mut dpm)).await;
+//! let attached = port.wait_attached(&mut dpm).run_for(Duration::from_millis(500)).await;
 //! assert!(attached.is_none());
 //! assert_eq!(port.state(), State::UnattachedSnk);
 //!
 //! // A Source attaches on CC1 and supplies VBUS.
 //! sim.cc.set_cc(CcState::Rp(RpLevel::Default), CcState::Open);
 //! sim.vbus.set_mv(5000);
-//! let attachment = run_for(Duration::from_millis(500), port.wait_attached(&mut dpm))
+//! let attachment = port
+//!     .wait_attached(&mut dpm)
+//!     .run_for(Duration::from_millis(500))
 //!     .await
 //!     .expect("attached")
 //!     .unwrap();
@@ -108,46 +110,44 @@ impl Timer for SimTimer {
 /// A [`Port`] on the mocks of this crate, as created by [`Mocks::into_port`].
 pub type SimPort = Port<MockCcPhy, MockVbusSense, MockPowerPath, SimTimer>;
 
-/// Runs `future` for at most `duration` of virtual time, then drops it.
+/// Virtual time that [`SimFutureExt::settle`] runs a future for; longer than any reaction of
+/// the mocks or any timer that a test is waiting out.
+pub const SETTLE_TIME: Duration = Duration::from_secs(5);
+
+/// Runs any future for a while in virtual time, then drops it.
 ///
-/// Returns its output if it completed within `duration`, including exactly at the end of it, and
-/// `None` otherwise. Virtual time has advanced by `duration` in the latter case, and by the time
-/// the future took in the former. With a zero `duration`, the future is polled once.
+/// Each method returns the future's output if it completed in time, and `None` otherwise.
 ///
-/// To keep a future alive across several runs, e.g. to change the stimulus while a wait is
-/// pending, pin it and pass `&mut` to it: only the reference is dropped.
+/// To keep a future alive across calls, e.g. to change the stimulus while a wait is pending, pin
+/// it and call them on `as_mut()`: only the pinned reference is dropped.
 ///
 /// ```
 /// # use std::time::Duration;
-/// # use usbcc_sim::{Sim, run_for};
+/// # use usbcc_sim::{Sim, SimFutureExt};
 /// # use usbcc_traits::{CcPhy, CcState, RpLevel};
 /// # #[tokio::main(flavor = "current_thread", start_paused = true)]
 /// # async fn main() {
 /// let (sim, mut mocks) = Sim::new();
 /// let mut wait = std::pin::pin!(mocks.cc.wait_for_cc_change());
-/// assert!(run_for(Duration::from_millis(100), &mut wait).await.is_none());
+/// assert!(wait.as_mut().settle().await.is_none());
 /// sim.cc.set_cc(CcState::Rp(RpLevel::Default), CcState::Open);
-/// assert!(run_for(Duration::ZERO, &mut wait).await.is_some());
+/// assert!(wait.as_mut().poll_once().await.is_some());
 /// # }
 /// ```
-pub async fn run_for<F: Future>(duration: Duration, future: F) -> Option<F::Output> {
-    tokio::time::timeout(duration, future).await.ok()
-}
-
-/// Virtual time that [`SimFutureExt::settle`] runs a future for; longer than any reaction of
-/// the mocks or any timer that a test is waiting out.
-pub const SETTLE_TIME: Duration = Duration::from_secs(5);
-
-/// Shorthands for [`run_for`], for any future.
-///
-/// To keep a future alive across calls, call them on a pinned reference to it, e.g.
-/// `wait.as_mut().poll_once()` after `let mut wait = pin!(...)`.
 pub trait SimFutureExt: Future + Sized {
+    /// Runs the future for at most `duration` of virtual time, then drops it.
+    ///
+    /// Returns its output if it completed within `duration`, including exactly at the end of it.
+    /// Virtual time has then advanced by the time the future took, and by `duration` otherwise.
+    fn run_for(self, duration: Duration) -> impl Future<Output = Option<Self::Output>> {
+        async move { tokio::time::timeout(duration, self).await.ok() }
+    }
+
     /// Polls the future once, without advancing time, then drops it.
     ///
     /// Returns its output if it was ready, and `None` if it would have waited.
     fn poll_once(self) -> impl Future<Output = Option<Self::Output>> {
-        run_for(Duration::ZERO, self)
+        self.run_for(Duration::ZERO)
     }
 
     /// Runs the future for [`SETTLE_TIME`], then drops it.
@@ -155,7 +155,7 @@ pub trait SimFutureExt: Future + Sized {
     /// Returns its output if it completed, and `None` if it was still waiting, i.e. for something
     /// that the test has yet to do.
     fn settle(self) -> impl Future<Output = Option<Self::Output>> {
-        run_for(SETTLE_TIME, self)
+        self.run_for(SETTLE_TIME)
     }
 }
 
