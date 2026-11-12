@@ -126,6 +126,7 @@ pub const SETTLE_TIME: Duration = Duration::from_secs(5);
 /// # #[tokio::main(flavor = "current_thread", start_paused = true)]
 /// # async fn main() {
 /// let (sim, mut mocks) = Sim::new();
+/// mocks.cc.cc_state().await.unwrap();
 /// let mut wait = std::pin::pin!(mocks.cc.wait_for_cc_change());
 /// assert!(wait.as_mut().settle().await.is_none());
 /// sim.cc.set_cc(CcState::Rp(RpLevel::Default), CcState::Open);
