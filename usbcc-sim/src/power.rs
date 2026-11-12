@@ -37,7 +37,7 @@ struct PowerInner {
 /// The [`PowerPath`] side of the power path mock, handed to the port.
 ///
 /// Every method is overridden, so every call is recorded, including those with a default
-/// implementation in the trait. The `set_*` methods take effect and complete on their first poll.
+/// implementation in the trait. The `set_*` methods complete immediately.
 /// [`PowerPath::prepare_vbus_source`] and [`PowerPath::wait_vconn_discharged`] wait for flags set
 /// through the [`PowerPathHandle`]; both are set initially, so they complete immediately unless the
 /// test clears them.
@@ -73,8 +73,7 @@ impl MockPowerPath {
         (mock, PowerPathHandle { shared })
     }
 
-    /// Implements a `set_*` method: logs `call` right away, and applies `apply` to the switches
-    /// when the returned future is awaited, which then finishes without waiting.
+    /// Implements a `set_*` method: applies `apply` to the switches.
     fn set(
         &self,
         call: PowerCall,
@@ -89,8 +88,7 @@ impl MockPowerPath {
         }
     }
 
-    /// Implements a waiting method: logs `call` right away, and when awaited, waits until `ready`
-    /// is true.
+    /// Implements a waiting method: waits until `ready` is true.
     fn wait(
         &self,
         call: PowerCall,
