@@ -6,7 +6,6 @@
 pub(crate) mod fmt;
 
 use core::fmt::Debug;
-
 use core::future::Future;
 use core::marker::PhantomData;
 
