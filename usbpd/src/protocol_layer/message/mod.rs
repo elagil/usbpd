@@ -4,14 +4,16 @@ pub mod data;
 pub mod extended;
 pub mod header;
 
+use byteorder::{ByteOrder, LittleEndian};
+pub use extended::{ExtendedHeader, MAX_EXTENDED_MSG_CHUNK_LEN};
+use header::{Header, MessageType};
+
+/// Size of the PD message header in bytes.
+pub const MSG_HEADER_SIZE: usize = header::Header::SIZE;
+
 #[cfg(test)]
 #[cfg(feature = "epr")]
 mod epr_messages_test;
-
-use byteorder::{ByteOrder, LittleEndian};
-use header::{Header, MessageType};
-
-use crate::protocol_layer::message::extended::ExtendedHeader;
 
 /// Errors that can occur during message/header parsing.
 #[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
@@ -40,7 +42,7 @@ pub enum ParseError {
     #[error("unknown or reserved control message type `{0}`")]
     InvalidControlMessageType(u8),
     /// Received a chunked extended message that requires assembly.
-    /// Use `ChunkedMessageAssembler` to handle these messages.
+    /// The protocol layer handles chunk assembly transparently.
     #[error("chunked extended message (chunk {chunk_number}, total size {data_size})")]
     ChunkedExtendedMessage {
         /// The chunk number (0 = first chunk).
@@ -52,13 +54,6 @@ pub enum ParseError {
         /// The extended message type.
         message_type: header::ExtendedMessageType,
     },
-    /// Received a chunk larger than the maximum allowed size (26 bytes).
-    #[error("chunk size {0} exceeds maximum {1}")]
-    ChunkOverflow(usize, usize),
-    /// Attempt to reuse a ChunkedMessageAssembler that is already processing a message.
-    /// The user must create a new assembler or explicitly call reset() first.
-    #[error("parser already in use, create a new assembler or call reset()")]
-    ParserReuse,
     /// Other parsing error with a message.
     #[error("other parse error: {0}")]
     Other(&'static str),
@@ -107,74 +102,45 @@ impl Message {
         match self.payload.as_ref() {
             Some(Payload::Data(data)) => header_len + data.to_bytes(&mut buffer[header_len..]),
             Some(Payload::Extended(extended)) => {
-                // Per PD 3.2 Sec. 6.2.1.2.1: use chunked mode for compatibility with more PHYs.
-                // Most power supplies don't support unchunked extended messages.
+                // Per PD 3.2 Sec. 6.2.1.2.5.2 (TCH_Construct_Chunked_Message): payloads
+                // larger than 26 bytes must be split into chunks of at most 26 bytes.
+                // Chunked mode is used for all extended messages, per Sec. 6.2.1.2.1.
+                // Only the first chunk is transmitted here; the partner requests the
+                // remaining chunks (`TCH_Request_Chunk`), which the protocol layer
+                // answers from a retained copy of the full payload.
+                let full_len = extended.to_bytes(&mut buffer[header_len + ExtendedHeader::SIZE..]);
+                debug_assert_eq!(usize::from(extended.data_size()), full_len);
+                let first_chunk_len = core::cmp::min(full_len, MAX_EXTENDED_MSG_CHUNK_LEN);
                 let extended_header = ExtendedHeader::new(extended.data_size())
                     .with_chunked(true)
                     .with_chunk_number(0);
-                let ext_header_len = extended_header.to_bytes(&mut buffer[header_len..]);
-                header_len + ext_header_len + extended.to_bytes(&mut buffer[header_len + ext_header_len..])
+                header_len + extended_header.to_bytes(&mut buffer[header_len..]) + first_chunk_len
             }
             None => header_len,
         }
     }
 
-    /// Parse assembled extended message payload into an Extended enum.
+    /// Deserialize an assembled extended message payload into an [Extended] enum.
     ///
-    /// This is used after `ChunkedMessageAssembler` has assembled all chunks.
-    ///
-    /// # Arguments
-    /// * `message_type` - The extended message type
-    /// * `payload` - The complete assembled payload data
+    /// Shared by `from_bytes` (single-chunk frames) and the protocol layer's
+    /// chunk-assembly path.
     pub fn parse_extended_payload(message_type: header::ExtendedMessageType, payload: &[u8]) -> extended::Extended {
         match message_type {
             header::ExtendedMessageType::ExtendedControl => {
-                if payload.len() >= 2 {
+                if let Ok(buf) = <&[u8; 2]>::try_from(payload) {
                     extended::Extended::ExtendedControl(extended::extended_control::ExtendedControl(
-                        LittleEndian::read_u16(payload),
+                        LittleEndian::read_u16(buf),
                     ))
                 } else {
                     extended::Extended::Unknown
                 }
             }
             #[cfg(feature = "epr")]
-            header::ExtendedMessageType::EprSourceCapabilities => extended::Extended::EprSourceCapabilities(
-                payload
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .map(|buf| {
-                        crate::protocol_layer::message::data::source_capabilities::parse_raw_pdo(
-                            LittleEndian::read_u32(buf),
-                        )
-                    })
-                    .collect(),
-            ),
+            header::ExtendedMessageType::EprSourceCapabilities => {
+                extended::Extended::EprSourceCapabilities(extended::epr::parse_pdos::<16>(payload))
+            }
             _ => extended::Extended::Unknown,
         }
-    }
-
-    /// Parse an extended message chunk, returning the header info and chunk data.
-    ///
-    /// This is used for handling chunked extended messages when `from_bytes`
-    /// returns `ParseError::ChunkedExtendedMessage`.
-    ///
-    /// Returns (Header, ExtendedHeader, chunk_payload_data).
-    pub fn parse_extended_chunk(data: &[u8]) -> Result<(Header, ExtendedHeader, &[u8]), ParseError> {
-        if data.len() < 4 {
-            return Err(ParseError::InvalidLength {
-                expected: 4,
-                found: data.len(),
-            });
-        }
-
-        let header = Header::from_bytes(&data[..2])?;
-        let ext_header = ExtendedHeader::from_bytes(&data[2..]);
-
-        // Chunk payload starts after headers (2 + 2 = 4 bytes)
-        let chunk_payload = &data[4..];
-
-        Ok((header, ext_header, chunk_payload))
     }
 
     /// Parse a message from a slice of bytes.
@@ -221,27 +187,10 @@ impl Message {
 
                 let payload_bytes = &payload[2..2 + data_size];
                 Ok(Self {
-                    payload: Some(Payload::Extended(match message_type {
-                        header::ExtendedMessageType::ExtendedControl => extended::Extended::ExtendedControl(
-                            extended::extended_control::ExtendedControl(LittleEndian::read_u16(payload_bytes)),
-                        ),
-                        #[cfg(feature = "epr")]
-                        header::ExtendedMessageType::EprSourceCapabilities => {
-                            extended::Extended::EprSourceCapabilities(
-                                payload_bytes
-                                    .as_chunks::<4>()
-                                    .0
-                                    .iter()
-                                    .map(|buf| {
-                                        crate::protocol_layer::message::data::source_capabilities::parse_raw_pdo(
-                                            LittleEndian::read_u32(buf),
-                                        )
-                                    })
-                                    .collect(),
-                            )
-                        }
-                        _ => extended::Extended::Unknown,
-                    })),
+                    payload: Some(Payload::Extended(Self::parse_extended_payload(
+                        message_type,
+                        payload_bytes,
+                    ))),
                     ..message
                 })
             }

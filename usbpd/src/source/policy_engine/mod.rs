@@ -25,12 +25,55 @@ use crate::protocol_layer::message::header::{
 };
 use crate::protocol_layer::message::{Message, Payload};
 use crate::protocol_layer::{ProtocolError, RxError, SourceProtocolLayer, TxError};
+pub use crate::swap::Error;
+use crate::swap::{DataRoleSwap, VcsState};
 use crate::timers::{Timer, TimerType};
 use crate::{Contract, DataRole, PolicyEngineResult, PowerRole, RunResult, SwapType};
 
 #[cfg(test)]
 #[cfg(feature = "epr")]
 mod tests;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub(crate) enum VcsSwapSource {
+    Message,
+    #[cfg(feature = "epr")]
+    Epr,
+}
+
+/// Dual Role Port Swap States
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub(crate) enum SwapState {
+    Data(DataRoleSwap),
+    Power(PowerRoleSwap),
+    FastPower(FastPowerRoleSwap),
+}
+
+/// State during a Power Role Swap execution (source: PE_PRS_SRC_SNK, PD 3.2 Sec. 8.3.3.19.3)
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub(crate) enum PowerRoleSwap {
+    Evaluate,
+    Accept,
+    TransitionToOff,
+    AssertRd,
+    WaitSourceOn,
+    Send,
+    Reject,
+}
+
+/// State during a Fast Power Role Swap execution (source: PE_FRS_SRC_SNK, PD 3.2 Sec. 8.3.3.19.5)
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub(crate) enum FastPowerRoleSwap {
+    Evaluate,
+    Accept,
+    TransitionToOff,
+    AssertRd,
+    WaitSourceOn,
+}
 
 /// Source capability
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -103,74 +146,6 @@ pub(crate) enum State {
     ErrorRecovery,
 }
 
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-/// Dual Role Port Swap States
-pub(crate) enum SwapState {
-    Data(DataRoleSwap),
-    Power(PowerRoleSwap),
-    FastPower(FastPowerRoleSwap),
-}
-
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-/// State during a Data Role Swap execution (for both directions)
-pub(crate) enum DataRoleSwap {
-    Evaluate,
-    Accept,
-    Change,
-    Send,
-    Reject,
-}
-
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-/// State during a Power Role Swap execution
-pub(crate) enum PowerRoleSwap {
-    Evaluate,
-    Accept,
-    TransitionToOff,
-    AssertRd,
-    WaitSourceOn,
-    Send,
-    Reject,
-}
-
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-/// State during a Fast Power Role Swap execution
-pub(crate) enum FastPowerRoleSwap {
-    Evaluate,
-    Accept,
-    TransitionToOff,
-    AssertRd,
-    WaitSourceOn,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub(crate) enum VcsSwapSource {
-    Message,
-    #[cfg(feature = "epr")]
-    Epr,
-}
-
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub(crate) enum VcsState {
-    SendSwap,
-    EvaluateSwap,
-    AcceptSwap,
-    RejectSwap,
-    WaitForVconn,
-    TurnOffVconn,
-    TurnOnVconn,
-    SendPsRdy,
-    // FIXME: For now, forcing a different state traversal, resulting in this being unused
-    #[allow(unused)]
-    VcsForceVconn,
-}
-
 /// Implementation of the source policy engine.
 /// Per PD 3.2 Sec. 8.3.3.2.
 #[derive(Debug)]
@@ -187,24 +162,6 @@ pub struct Source<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> {
     pub(crate) contract: Contract,
 
     _timer: PhantomData<TIMER>,
-}
-
-/// Errors that can occur in the source policy engine state machine.
-#[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Error {
-    /// The port partner is unresponsive.
-    PortPartnerUnresponsive,
-    /// Entered ErrorRecovery mode. This requests a disconnect.
-    ReconnectionRequired,
-    /// A protocol error has occured.
-    Protocol(ProtocolError),
-}
-
-impl From<ProtocolError> for Error {
-    fn from(protocol_error: ProtocolError) -> Self {
-        Error::Protocol(protocol_error)
-    }
 }
 
 impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
@@ -316,7 +273,16 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                         Some(State::HardReset)
                     }
 
-                    // Per PD 3.2 Sec. 8.3.3.2.3: No GoodCRC (NoResponseTimer times out) goes to Discovery or Disabled
+                    // With an explicit contract, the partner was PD connected: run the
+                    // NoResponseTimer and escalate to ErrorRecovery on expiry
+                    // (Sec. 8.3.3.2.3, previously-connected escalation). Disabled state is
+                    // reserved for the not-yet-pd-connected partner.
+                    (_, State::SendCapabilities, ProtocolError::TransmitRetriesExceeded(_))
+                        if matches!(self.contract, Contract::Explicit(_)) =>
+                    {
+                        TimerType::get_timer::<TIMER>(TimerType::NoResponse).await;
+                        Some(State::ErrorRecovery)
+                    }
                     (_, State::SendCapabilities, ProtocolError::TransmitRetriesExceeded(_)) => Some(State::Discovery),
 
                     // PowerSwap:     Per PD 3.2 Sec. 8.3.3.19.3.6, the Policy Engine shall transition to ErrorRecovery on RxTimeout or TxSendFail
@@ -400,8 +366,6 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
             }
             // PD 3.2 Sec. 8.3.3.2.2 (PE_SRC_Discovery):
             State::Discovery => {
-                // NOTE: Incrementing the CapsCounter here is not to spec,
-                // but **should** have the same behavior
                 if self.caps_counter.increment().is_err() {
                     // If the CapsCounter saturates, enter the Disabled state
                     State::Disabled
@@ -428,12 +392,18 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     }
                 };
 
-                // When Capabilities were sent successfully, reset the hard reset counter
-                self.hard_reset_counter.reset();
+                // Per PD 3.2 Sec. 8.3.3.2.3: increment the CapsCounter on the caps send.
+                // A successful send (GoodCRC received) resets both counters.
+                if self.caps_counter.increment().is_err() {
+                    State::Disabled
+                } else {
+                    self.hard_reset_counter.reset();
+                    self.caps_counter.reset();
 
-                let request = self.wait_for_sink_request().await?;
+                    let request = self.wait_for_sink_request().await?;
 
-                State::NegotiateCapability(request)
+                    State::NegotiateCapability(request)
+                }
             }
             // PD 3.2 Sec. 8.3.3.2.4 (PE_SRC_Negotiate_Capability):
             State::NegotiateCapability(power_request) => {
@@ -904,32 +874,19 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     .transmit_control_message(ControlMessageType::DrSwap)
                     .await?;
 
-                let message = self
-                    .protocol_layer
-                    .receive_message_type(
-                        &[
-                            MessageType::Control(ControlMessageType::Accept),
-                            MessageType::Control(ControlMessageType::Reject),
-                            MessageType::Control(ControlMessageType::Wait),
-                        ],
-                        TimerType::SenderResponse,
-                    )
-                    .await?;
-
-                match message.header.message_type() {
-                    MessageType::Control(ControlMessageType::Accept) => {
-                        Ok(State::DrpSwap(SwapState::Data(DataRoleSwap::Change)))
-                    }
-
-                    MessageType::Control(ControlMessageType::Reject)
-                    | MessageType::Control(ControlMessageType::Wait) => Ok(State::Ready),
-
-                    _ => Err(Error::Protocol(ProtocolError::UnexpectedMessage)),
+                match crate::swap_reply::await_swap_reply(
+                    &mut self.protocol_layer,
+                    crate::swap_reply::SwapReply::AcceptRejectWait,
+                )
+                .await?
+                {
+                    ControlMessageType::Accept => Ok(State::DrpSwap(SwapState::Data(DataRoleSwap::Change))),
+                    _ => Ok(State::Ready),
                 }
             }
             // PD 3.2 Sec. 8.3.3.19.1.6 (PE_DRS_DFP_UFP_Reject_Swap, PE_DRS_UFP_DFP_Reject_Swap):
             DataRoleSwap::Reject => {
-                // FIXME: Wait Message logic
+                // Note: A `Wait` response would require a DPM decision (unsupported)
                 self.protocol_layer
                     .transmit_control_message(ControlMessageType::Reject)
                     .await?;
@@ -984,32 +941,19 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     .transmit_control_message(ControlMessageType::PrSwap)
                     .await?;
 
-                let message = self
-                    .protocol_layer
-                    .receive_message_type(
-                        &[
-                            MessageType::Control(ControlMessageType::Accept),
-                            MessageType::Control(ControlMessageType::Reject),
-                            MessageType::Control(ControlMessageType::Wait),
-                        ],
-                        TimerType::SenderResponse,
-                    )
-                    .await?;
-
-                match message.header.message_type() {
-                    MessageType::Control(ControlMessageType::Accept) => {
-                        Ok(State::DrpSwap(SwapState::Power(PowerRoleSwap::TransitionToOff)))
-                    }
-
-                    MessageType::Control(ControlMessageType::Reject)
-                    | MessageType::Control(ControlMessageType::Wait) => Ok(State::Ready),
-
-                    _ => Err(Error::Protocol(ProtocolError::UnexpectedMessage)),
+                match crate::swap_reply::await_swap_reply(
+                    &mut self.protocol_layer,
+                    crate::swap_reply::SwapReply::AcceptRejectWait,
+                )
+                .await?
+                {
+                    ControlMessageType::Accept => Ok(State::DrpSwap(SwapState::Power(PowerRoleSwap::TransitionToOff))),
+                    _ => Ok(State::Ready),
                 }
             }
             // PD 3.2 Sec. 8.3.3.18.3.8 (PE_PRS_SRC_SNK_Reject_Swap):
             PowerRoleSwap::Reject => {
-                // FIXME: Wait Message logic
+                // Note: A `Wait` response would require a DPM decision (unsupported).
                 self.protocol_layer
                     .transmit_control_message(ControlMessageType::Reject)
                     .await?;
@@ -1074,38 +1018,28 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     .transmit_control_message(ControlMessageType::VconnSwap)
                     .await?;
 
-                let message = self
-                    .protocol_layer
-                    .receive_message_type(
-                        &[
-                            MessageType::Control(ControlMessageType::Accept),
-                            MessageType::Control(ControlMessageType::Reject),
-                            MessageType::Control(ControlMessageType::Wait),
-                            MessageType::Control(ControlMessageType::NotSupported),
-                        ],
-                        TimerType::SenderResponse,
-                    )
-                    .await;
+                let reply = crate::swap_reply::await_swap_reply(
+                    &mut self.protocol_layer,
+                    crate::swap_reply::SwapReply::AcceptRejectWaitNotSupported,
+                )
+                .await;
 
-                match message {
-                    Ok(message) => match message.header.message_type() {
-                        MessageType::Control(ControlMessageType::Accept) => match self.vconn_source {
-                            true => Ok(State::VconnSwap {
-                                source,
-                                state: VcsState::WaitForVconn,
-                            }),
-                            false => Ok(State::VconnSwap {
-                                source,
-                                state: VcsState::TurnOnVconn,
-                            }),
-                        },
-                        MessageType::Control(ControlMessageType::Reject)
-                        | MessageType::Control(ControlMessageType::Wait) => Ok(State::Ready),
-                        // May also transition to ForceVconn if NotSupported message and port presently not vconn source
-                        MessageType::Control(ControlMessageType::NotSupported) => Ok(State::NotSupportedReceived),
-                        // `receive_message_type` filtered to the control types above.
-                        _ => Err(Error::Protocol(ProtocolError::UnexpectedMessage)),
+                match reply {
+                    Ok(ControlMessageType::Accept) => match self.vconn_source {
+                        true => Ok(State::VconnSwap {
+                            source,
+                            state: VcsState::WaitForVconn,
+                        }),
+                        false => Ok(State::VconnSwap {
+                            source,
+                            state: VcsState::TurnOnVconn,
+                        }),
                     },
+                    // May also transition to ForceVconn if NotSupported message and port presently not vconn source
+                    Ok(ControlMessageType::NotSupported) => Ok(State::NotSupportedReceived),
+                    // Note: DPM is not informed of a `Wait`; known limitation (see CHANGELOG).
+                    Ok(_) => Ok(State::Ready),
+                    // Timeout on a Vconn_Swap request is treated as a rejection.
                     Err(ProtocolError::RxError(RxError::ReceiveTimeout)) => Ok(State::Ready),
                     Err(err) => Err(Error::Protocol(err)),
                 }
@@ -1139,7 +1073,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
             }
             // PD 3.2 Sec. 8.3.3.20.4 (PE_VCS_Reject_Swap):
             VcsState::RejectSwap => {
-                // FIXME: Wait Message logic
+                // Note: A `Wait` response would require a DPM decision (unsupported).
                 self.protocol_layer
                     .transmit_control_message(ControlMessageType::Reject)
                     .await?;
@@ -1195,7 +1129,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                 }
             }
             // PD 3.2 Sec. 8.3.3.20.9 (PE_VCS_Force_Vconn):
-            VcsState::VcsForceVconn => {
+            VcsState::ForceVconn => {
                 self.device_policy_manager
                     .drive_vconn(true)
                     .await
@@ -1232,6 +1166,26 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
             MessageType::Data(DataMessageType::EprRequest) => {
                 if self.mode != Mode::Epr {
                     return Err(Error::Protocol(ProtocolError::RxError(RxError::HardReset)));
+                }
+
+                // Per PD 3.2 Sec. 6.4.9 / 6.5.15.1: the RDO's object position must point at
+                // an EPR PDO (object positions 8..=14) of the currently advertised
+                // EPR_Source_Capabilities, and the message's PDO copy must match it.
+                let Some(Payload::Data(Data::Request(PowerSource::EprRequest(epr_request)))) = &message.payload else {
+                    return Ok(State::SendNotSupported);
+                };
+
+                let position = epr_request.object_position();
+                let epr_caps = self.device_policy_manager.epr_source_capabilities();
+                let valid = epr_caps
+                    .epr_pdos()
+                    .find(|(pos, _)| *pos == position)
+                    .map(|(_, pdo)| pdo.to_raw() == epr_request.pdo.to_raw())
+                    .unwrap_or(false);
+
+                if !valid {
+                    trace!("EPR_Request validation failed for position {}", position);
+                    return Ok(State::SendNotSupported);
                 }
 
                 match message.payload {
