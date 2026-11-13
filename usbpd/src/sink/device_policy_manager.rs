@@ -144,6 +144,8 @@ pub trait DevicePolicyManager {
     }
 
     /// Evaluate whether a vconn swap can be done by the device or not.
+    ///
+    /// Note: Wait responses are not supported. The PE answers `Accept` (true) or `Reject` (false).
     fn evaluate_vconn_swap_request(&mut self) -> impl Future<Output = bool> {
         async { false }
     }
@@ -176,6 +178,8 @@ pub trait DevicePolicyManager {
 /// Leave blank if the device is not a DRP.
 pub trait DrpDevicePolicyManager {
     /// DRP Evaluate a swap request
+    ///
+    /// Note: Wait responses are not supported. The PE answers `Accept` (true) or `Reject` (false).
     fn evaluate_swap_request(&mut self, _swap_request: SwapType) -> impl Future<Output = bool> {
         async { false }
     }
@@ -185,6 +189,10 @@ pub trait DrpDevicePolicyManager {
     /// A DRP Sink is expected to detect when the CC line indicates a
     /// `Fast Role Swap`. During regular `Power Role` swaps, this will
     /// be called to disable the detection to avoid false positives.
+    ///
+    /// Note: CC detection is out of the crate's scope. This hook is how an
+    /// external Type-C layer arms/disarms its detector. The PE calls it when
+    /// entering a PR_Swap Accept state (Sec. 8.3.3.19.4.3).
     fn set_fr_swap_detect(_enable: bool) -> impl Future<Output = ()> {
         async {}
     }

@@ -12,12 +12,14 @@ use crate::timers::Timer;
 use crate::{PowerRole, RunResult};
 
 /// Errors that can occur in the either the sink or source policy engine state machine.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
     /// Error while operating as a Sink
+    #[error("sink: {0}")]
     Sink(SinkError),
     /// Error while operating as a Source
+    #[error("source: {0}")]
     Source(SourceError),
 }
 
