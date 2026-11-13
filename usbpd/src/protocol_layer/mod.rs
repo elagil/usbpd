@@ -18,11 +18,12 @@ use core::marker::PhantomData;
 
 use embassy_futures::select::{Either, select};
 use heapless::{Deque, Vec};
-use message::Message;
 use message::data::{Data, request};
 #[cfg(any(feature = "epr", test))]
 use message::extended::extended_control::ExtendedControlMessageType;
+use message::extended::{ExtendedHeader, MAX_EXTENDED_MSG_CHUNK_LEN};
 use message::header::{ControlMessageType, DataMessageType, ExtendedMessageType, Header, MessageType};
+use message::{MSG_HEADER_SIZE, Message};
 use usbpd_traits::{Driver, DriverRxError, DriverTxError};
 
 use crate::PowerRole;
@@ -34,18 +35,12 @@ use crate::protocol_layer::message::{ParseError, Payload};
 use crate::timers::{Timer, TimerType};
 
 /// Maximum message size including headers and payload.
-const MAX_MESSAGE_SIZE: usize = 272;
+pub(crate) const MAX_MESSAGE_SIZE: usize = 272;
 
 /// Capacity of the pending received-message queue.
 ///
 /// Overflow indicates a misbehaving peer. Per PD 3.2 Sec. 6.12.2.2. If full drop oldest message per PD 3.2 Sec. 6.11.
 const PENDING_RX_CAPACITY: usize = 2;
-
-/// Size of the message header in bytes.
-const MSG_HEADER_SIZE: usize = 2;
-
-/// Size of the extended message header in bytes.
-const EXT_HEADER_SIZE: usize = 2;
 
 /// Errors that can occur in the protocol layer.
 #[derive(thiserror::Error, Debug)]
@@ -158,6 +153,34 @@ impl<const N: usize> PendingRx<N> {
     }
 }
 
+/// An oversized extended message being assembled from chunks (RX side).
+///
+/// Per PD 3.2 Sec. 6.12.2.1.2.4.
+#[derive(Debug)]
+struct ChunkedRxState {
+    /// Assembled chunk payload bytes.
+    buffer: Vec<u8, MAX_MESSAGE_SIZE>,
+    /// The extended message type being assembled.
+    extended_message_type: ExtendedMessageType,
+    /// The total payload size once all chunks have arrived.
+    data_size: u16,
+    /// The chunk number expected next.
+    next_chunk: u8,
+}
+
+/// An oversized extended message retained after transmission for answering `Chunk Request`s (TX side).
+///
+/// Per PD 3.2 Sec. 6.12.2.1.2.2.
+#[derive(Debug)]
+struct ChunkedTxState {
+    /// The full transmitted payload.
+    buffer: Vec<u8, MAX_MESSAGE_SIZE>,
+    /// The extended message type that was transmitted.
+    extended_message_type: ExtendedMessageType,
+    /// The total payload size.
+    data_size: u16,
+}
+
 /// The USB PD protocol layer.
 ///
 /// Implements message-level state including message IDs, retries,
@@ -167,9 +190,10 @@ pub(crate) struct ProtocolLayer<DRIVER: Driver, TIMER: Timer> {
     driver: DRIVER,
     counters: Counters,
     default_header: Header,
-    extended_rx_buffer: Vec<u8, MAX_MESSAGE_SIZE>,
-    extended_rx_expected: Option<(ExtendedMessageType, u16, u8)>,
+    extended_rx: Option<ChunkedRxState>,
     pending_rx: PendingRx<PENDING_RX_CAPACITY>,
+    /// The most recently transmitted oversized extended payload, for answering Chunk Requests.
+    extended_tx: Option<ChunkedTxState>,
     _timer: PhantomData<TIMER>,
 }
 
@@ -180,9 +204,9 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             driver,
             counters: Default::default(),
             default_header,
-            extended_rx_buffer: Vec::new(),
-            extended_rx_expected: None,
+            extended_rx: None,
             pending_rx: PendingRx::default(),
+            extended_tx: None,
             _timer: PhantomData,
         }
     }
@@ -195,8 +219,9 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     pub fn reset(&mut self) {
         self.counters = Default::default();
         self.pending_rx.clear();
-        // Half-assembled chunked messages must not survive a layer reset.
+        // A stale retained extended payload must not survive a layer reset.
         self.reset_chunked_rx();
+        self.extended_tx = None;
     }
 
     /// Allows tests to access the driver directly.
@@ -372,6 +397,24 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         let mut buffer = Self::get_message_buffer();
         let size = message.to_bytes(&mut buffer);
 
+        // In the oversized case, `to_bytes` serialized the full payload into `buffer` but
+        // truncated the returned size to the first chunk. Retain the full payload so
+        // `Chunk Request` frames can be answered (PD 3.2 Sec. 6.6.18.3 / Tab. 8.4).
+        if let Some(Payload::Extended(extended)) = message.payload.as_ref()
+            && usize::from(extended.data_size()) > MAX_EXTENDED_MSG_CHUNK_LEN
+            && let MessageType::Extended(extended_message_type) = message.header.message_type()
+        {
+            let data_size = extended.data_size();
+            let end = MSG_HEADER_SIZE + ExtendedHeader::SIZE + usize::from(data_size);
+            // `to_bytes` serialized the full payload into `buffer`, but returned a size
+            // truncated to the first chunk. Copy the payload out before the buffer is reused.
+            self.extended_tx = Some(ChunkedTxState {
+                buffer: Vec::from_slice(&buffer[MSG_HEADER_SIZE + ExtendedHeader::SIZE..end]).unwrap_or_default(),
+                extended_message_type,
+                data_size,
+            });
+        }
+
         if DRIVER::HAS_AUTO_RETRY {
             // Hardware handles retries and verifies GoodCRC reception.
             // Call driver.transmit() directly (not transmit_inner()) because
@@ -474,8 +517,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
 
     /// Reset chunked message reception state.
     fn reset_chunked_rx(&mut self) {
-        self.extended_rx_buffer.clear();
-        self.extended_rx_expected = None;
+        self.extended_rx = None;
     }
 
     /// Receive a message, assembling chunked extended messages as needed.
@@ -516,7 +558,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             let message_type = header.message_type();
 
             if matches!(message_type, MessageType::Extended(_)) {
-                let ext_header_end = MSG_HEADER_SIZE + EXT_HEADER_SIZE;
+                let ext_header_end = MSG_HEADER_SIZE + ExtendedHeader::SIZE;
                 let ext_header =
                     message::extended::ExtendedHeader::from_bytes(&buffer[MSG_HEADER_SIZE..ext_header_end]);
                 let payload = &buffer[ext_header_end..length];
@@ -530,6 +572,44 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
 
                 // Update specification revision, based on the received frame.
                 self.default_header = self.default_header.with_spec_revision(header.spec_revision()?);
+
+                // Answer the Chunk Request from the retained payload (PD 3.2 Sec. 6.12.2.1.2.2).
+                if chunked && ext_header.request_chunk() {
+                    // Acknowledge first. A duplicate request (same MessageID) gets a
+                    // re-ack, but the chunk is served anyway: the re-served response is
+                    // the correct retry for a lost response, and it is idempotent.
+                    let tmp_message = Message { header, payload: None };
+                    self.handle_rx_ack(&tmp_message).await?;
+
+                    let (data_size, chunk): (u16, Vec<u8, MAX_MESSAGE_SIZE>) = match self.extended_tx.as_ref() {
+                        Some(tx_state) if tx_state.extended_message_type == msg_type => {
+                            let start = chunk_number as usize * MAX_EXTENDED_MSG_CHUNK_LEN;
+                            // Requested chunk beyond the retained payload: do not answer.
+                            // The partner's chunk timer runs its own error flow. Never
+                            // index: start can exceed the buffer for hostile requests.
+                            if start >= usize::from(tx_state.data_size) {
+                                continue;
+                            }
+                            let end =
+                                core::cmp::min(start + MAX_EXTENDED_MSG_CHUNK_LEN, usize::from(tx_state.data_size));
+                            (
+                                tx_state.data_size,
+                                Vec::from_slice(&tx_state.buffer[start..end]).unwrap_or_default(),
+                            )
+                        }
+                        _ => {
+                            // No matching retained payload: report an error to the PE.
+                            return Err(RxError::UnsupportedMessage);
+                        }
+                    };
+
+                    if !chunk.is_empty() {
+                        self.transmit_chunk_response(msg_type, chunk_number, data_size, &chunk)
+                            .await?;
+                    }
+
+                    continue;
+                }
 
                 if chunked {
                     trace!(
@@ -545,64 +625,49 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
                         continue; // Retransmission
                     }
 
-                    let (expected_total, expected_next) = match self.extended_rx_expected {
-                        Some((ty, total, next)) if ty == msg_type => (total, next),
-                        _ => (total_size, 0),
-                    };
+                    // A fresh assembly starts when no matching assembly is in progress.
+                    if !matches!(self.extended_rx.as_ref(), Some(state) if state.extended_message_type == msg_type) {
+                        self.extended_rx = Some(ChunkedRxState {
+                            buffer: Vec::new(),
+                            extended_message_type: msg_type,
+                            data_size: total_size,
+                            next_chunk: 0,
+                        });
+                    }
+
+                    let state = self.extended_rx.as_mut().unwrap();
 
                     // Ensure chunks arrive in order.
-                    if expected_next != 0 && chunk_number != expected_next {
+                    if state.next_chunk != chunk_number {
                         self.reset_chunked_rx();
                         return Err(RxError::UnsupportedMessage);
                     }
 
-                    if chunk_number == 0 || expected_next == 0 {
-                        self.extended_rx_buffer.clear();
-                        self.extended_rx_expected = Some((msg_type, total_size, 1));
-                    } else {
-                        self.extended_rx_expected = Some((msg_type, expected_total, expected_next + 1));
-                    }
+                    state.next_chunk += 1;
 
-                    if self.extended_rx_buffer.len() + payload.len() > self.extended_rx_buffer.capacity() {
-                        self.reset_chunked_rx();
-                        return Err(RxError::UnsupportedMessage);
-                    }
-                    if self.extended_rx_buffer.extend_from_slice(payload).is_err() {
-                        self.reset_chunked_rx();
+                    if state.buffer.extend_from_slice(payload).is_err() {
+                        self.extended_rx = None;
                         return Err(RxError::UnsupportedMessage);
                     }
 
-                    if self.extended_rx_buffer.len() < total_size as usize {
+                    if state.buffer.len() < usize::from(state.data_size) {
                         // Need more chunks - send chunk request per PD 3.2 Sec. 6.12.2.1.2.4
-                        let next_chunk = self
-                            .extended_rx_expected
-                            .as_ref()
-                            .map(|(_, _, next)| *next)
-                            .unwrap_or(1);
+                        let next_chunk = state.next_chunk;
                         self.transmit_chunk_request(msg_type, next_chunk).await?;
                         continue;
                     }
 
                     // All chunks received, parse payload.
-                    let ext_payload = &self.extended_rx_buffer[..total_size as usize];
-                    let parsed_payload = match msg_type {
-                        ExtendedMessageType::ExtendedControl => {
-                            Payload::Extended(message::extended::Extended::ExtendedControl(
-                                message::extended::extended_control::ExtendedControl::from_bytes(ext_payload),
-                            ))
-                        }
-                        #[cfg(feature = "epr")]
-                        ExtendedMessageType::EprSourceCapabilities => {
-                            Payload::Extended(message::extended::Extended::EprSourceCapabilities(
-                                message::extended::epr::parse_pdos(ext_payload),
-                            ))
-                        }
-                        _ => Payload::Extended(message::extended::Extended::Unknown),
-                    };
+                    let data_size = state.data_size;
+                    let ext_payload: Vec<u8, MAX_MESSAGE_SIZE> =
+                        Vec::from_slice(&state.buffer[..usize::from(data_size)]).unwrap_or_default();
 
-                    self.extended_rx_expected = None;
+                    self.extended_rx = None;
                     let mut message = Message::new(header);
-                    message.payload = Some(parsed_payload);
+                    message.payload = Some(Payload::Extended(Message::parse_extended_payload(
+                        msg_type,
+                        &ext_payload,
+                    )));
 
                     trace!("Received assembled extended message {:?}", message);
                     return Ok(message);
@@ -742,16 +807,26 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         self.counters.retry.reset();
         // Stale chunked-assembly state must not survive a layer reset.
         self.reset_chunked_rx();
+        // Bound the retry loop by tHardResetComplete; a wedged driver must not stall the PE.
+        let timeout_fut = Self::get_timer(TimerType::HardResetComplete);
 
-        loop {
-            match self.driver.transmit_hard_reset().await {
-                Ok(_) | Err(DriverTxError::HardReset) => break,
-                Err(DriverTxError::Discarded) => (),
+        let transmit_fut = async {
+            loop {
+                match self.driver.transmit_hard_reset().await {
+                    Ok(_) | Err(DriverTxError::HardReset) => break Ok::<(), DriverTxError>(()),
+                    // Mid-collision: retry, yielding so the timeout future can progress.
+                    Err(DriverTxError::Discarded) => embassy_futures::yield_now().await,
+                }
+            }
+        };
+
+        match select(timeout_fut, transmit_fut).await {
+            Either::First(_) => Err(ProtocolError::TxError(TxError::HardReset)),
+            Either::Second(result) => {
+                trace!("Performed hard reset");
+                result.map_err(|_| ProtocolError::UnexpectedMessage)
             }
         }
-
-        trace!("Performed hard reset");
-        Ok(())
     }
 
     /// Wait for VBUS to be available.
@@ -790,6 +865,51 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         )));
 
         self.transmit(message).await
+    }
+
+    /// Answer a `Chunk Request` with the requested chunk of the retained extended
+    /// payload (PD 3.2 Sec. 6.12.2.1.2.2).
+    async fn transmit_chunk_response(
+        &mut self,
+        message_type: ExtendedMessageType,
+        chunk_number: u8,
+        data_size: u16,
+        chunk_data: &[u8],
+    ) -> Result<(), RxError> {
+        trace!("Serving chunk request for {:?} chunk {}", message_type, chunk_number);
+
+        let ext_header = message::extended::ExtendedHeader::new(data_size)
+            .with_chunked(true)
+            .with_chunk_number(chunk_number);
+
+        // Per PD 3.2 Sec. 6.2.1.1.2: the object count covers the extended header plus
+        // the chunk data, padded to a 4-byte boundary (see also Fig. 6.9).
+        let num_objects = (message::extended::ExtendedHeader::SIZE + chunk_data.len()).div_ceil(4) as u8;
+        let header = Header::new_extended(self.default_header, self.counters.tx_message, message_type, num_objects);
+
+        let mut buffer = Self::get_message_buffer();
+        let mut offset = header.to_bytes(&mut buffer);
+        offset += ext_header.to_bytes(&mut buffer[offset..]);
+        buffer[offset..offset + chunk_data.len()].copy_from_slice(chunk_data);
+        offset += chunk_data.len();
+
+        if DRIVER::HAS_AUTO_RETRY {
+            match self.driver.transmit(&buffer[..offset]).await {
+                Ok(()) => {
+                    self.counters.retry.reset();
+                    _ = self.counters.tx_message.increment();
+                    Ok(())
+                }
+                Err(DriverTxError::HardReset) => Err(RxError::HardReset),
+                Err(DriverTxError::Discarded) => Err(RxError::ReceiveTimeout),
+            }
+        } else {
+            match self.transmit_inner(&buffer[..offset]).await {
+                Ok(_) => self.wait_for_good_crc().await,
+                Err(TxError::HardReset) => Err(RxError::HardReset),
+                Err(_) => Err(RxError::ReceiveTimeout),
+            }
+        }
     }
 
     /// Transmit a chunk request message per PD 3.2 Sec. 6.12.2.1.2.4.
@@ -997,10 +1117,10 @@ mod tests {
 
     use core::iter::zip;
 
-    use super::ProtocolLayer;
     use super::message::data::Data;
     use super::message::data::source_capabilities::SourceCapabilities;
     use super::message::header::Header;
+    use super::{MAX_EXTENDED_MSG_CHUNK_LEN, ProtocolLayer};
     use crate::dummy::{
         DUMMY_CAPABILITIES, DummyDriver, DummyTimer, MAX_DATA_MESSAGE_SIZE, get_dummy_source_capabilities,
     };
@@ -1014,6 +1134,18 @@ mod tests {
             Header::new_template(
                 crate::DataRole::Ufp,
                 crate::PowerRole::Sink,
+                super::message::header::SpecificationRevision::R3_X,
+            ),
+        )
+    }
+
+    /// Protocol layer with a Source/DFP default header (for source-only transmissions).
+    fn get_protocol_layer_with_source_role() -> ProtocolLayer<DummyDriver<{ super::MAX_MESSAGE_SIZE }>, DummyTimer> {
+        ProtocolLayer::new(
+            DummyDriver::new(),
+            Header::new_template(
+                crate::DataRole::Dfp,
+                crate::PowerRole::Source,
                 super::message::header::SpecificationRevision::R3_X,
             ),
         )
@@ -1258,5 +1390,341 @@ mod tests {
         assert_eq!(Some(2), pending.pop().map(|message| message.header.message_id()));
         assert_eq!(Some(3), pending.pop().map(|message| message.header.message_id()));
         assert!(pending.queue.is_empty());
+    }
+
+    // ==== Chunked extended message transmission (PD 3.2 Sec. 6.2.1.2.5.2) ====
+
+    /// A >26-byte extended payload must be transmitted as a correct partial chunk-0
+    /// frame (26 payload bytes), not the whole payload (the pre-fix bug).
+    #[tokio::test]
+    async fn test_oversized_extended_tx_is_chunked() {
+        let mut protocol_layer = get_protocol_layer_with_source_role();
+
+        #[cfg(feature = "epr")]
+        {
+            use super::message::header::{ExtendedMessageType, MessageType};
+            use crate::protocol_layer::message::data::source_capabilities::{PowerDataObject, parse_raw_pdo};
+
+            let pdos: heapless::Vec<PowerDataObject, 16> = (0..15)
+                .map(|i| {
+                    parse_raw_pdo(
+                        // EPR AVS APDO raw: supply type 01b @ 30..31, max voltage 17..25, min 8..15.
+                        (0b01 << 30) | (1000 + i as u32 * 2) | ((400 + i as u32) << 8) | (1500 << 17),
+                    )
+                })
+                .collect();
+            assert_eq!(pdos.len(), 15);
+
+            let caps = SourceCapabilities(pdos);
+            // Pre-inject the GoodCRC acknowledging chunk 0 (tx id 0).
+            protocol_layer.driver.inject_received_data(&good_crc_bytes(0));
+            protocol_layer.transmit_epr_source_capabilities(&caps).await.unwrap();
+
+            let total_payload_len = caps.0.len() * 4;
+            let mut chunk_numbers = heapless::Vec::<u8, 8>::new();
+            while protocol_layer.driver.has_transmitted_data() {
+                let bytes = protocol_layer.driver.probe_transmitted_data();
+                // Per-chunk frames require assembly, so parse only header + extended header here.
+                assert!(bytes.len() >= super::MSG_HEADER_SIZE + super::message::extended::ExtendedHeader::SIZE);
+                let frame_header = Header::from_bytes(&bytes[..super::MSG_HEADER_SIZE]).unwrap();
+                let ext_header = super::message::extended::ExtendedHeader::from_bytes(
+                    &bytes[super::MSG_HEADER_SIZE
+                        ..super::MSG_HEADER_SIZE + super::message::extended::ExtendedHeader::SIZE],
+                );
+                assert!(matches!(
+                    frame_header.message_type(),
+                    MessageType::Extended(ExtendedMessageType::EprSourceCapabilities)
+                ));
+                assert!(ext_header.chunked());
+                assert_eq!(usize::from(ext_header.chunk_number()), chunk_numbers.len());
+                assert!((ext_header.data_size() as usize) == total_payload_len);
+                // Per PD 3.2 Sec. 6.2.1.1.2 / Fig. 6.9: object count covers the extended
+                // header plus the chunk data, padded to a 4-byte boundary.
+                let expected_num_objects = (super::message::extended::ExtendedHeader::SIZE
+                    + core::cmp::min(total_payload_len, MAX_EXTENDED_MSG_CHUNK_LEN))
+                .div_ceil(4);
+                assert_eq!(frame_header.num_objects(), expected_num_objects);
+                // Chunk 0 carries only one chunk of data; a whole-payload frame would be
+                // `+ total_payload_len` bytes (the pre-fix bug).
+                let expected_frame_len = super::MSG_HEADER_SIZE
+                    + super::message::extended::ExtendedHeader::SIZE
+                    + core::cmp::min(total_payload_len, MAX_EXTENDED_MSG_CHUNK_LEN);
+                assert_eq!(bytes.len(), expected_frame_len);
+                chunk_numbers.push(ext_header.chunk_number()).unwrap();
+            }
+            assert_eq!(chunk_numbers.len(), 1, "chunk 0 sent; remaining chunks on request");
+            assert_eq!(chunk_numbers.into_iter().next(), Some(0));
+        }
+    }
+
+    /// A chunk request frame received after an oversized chunked TX must be answered
+    /// with the requested chunk (26 payload bytes) from the retained payload
+    /// (PD 3.2 Sec. 6.12.2.1.2.2).
+    #[cfg(feature = "epr")]
+    #[tokio::test]
+    async fn test_chunk_request_is_served_from_retained_payload() {
+        use super::message::header::{ControlMessageType, ExtendedMessageType, MessageType};
+
+        let mut protocol_layer = get_protocol_layer_with_source_role();
+
+        use super::message::data::source_capabilities::{PowerDataObject, parse_raw_pdo};
+
+        // 60-byte payload (15 PDOs) -> would be 3 chunks in full.
+        let pdos: heapless::Vec<PowerDataObject, 16> = (0..15)
+            .map(|i| parse_raw_pdo((0b01 << 30) | (1000 + i as u32 * 2) | ((400 + i as u32) << 8) | (1500 << 17)))
+            .collect();
+        let caps = SourceCapabilities(pdos);
+
+        // GoodCRC for the initial chunk 0 transmit (tx id 0); then drop chunk 0 frame.
+        protocol_layer.driver.inject_received_data(&good_crc_bytes(0));
+        protocol_layer.transmit_epr_source_capabilities(&caps).await.unwrap();
+        _ = protocol_layer.driver.probe_transmitted_data();
+
+        // Build a chunk request for chunk 1 of EPR_Source_Capabilities.
+        let request_ext_header = super::message::extended::ExtendedHeader::default()
+            .with_chunked(true)
+            .with_request_chunk(true)
+            .with_chunk_number(1);
+        let request_header = Header::new_extended(
+            *protocol_layer.header(),
+            crate::counters::Counter::new(crate::counters::CounterType::MessageId),
+            ExtendedMessageType::EprSourceCapabilities,
+            1,
+        );
+        let mut request_frame = [0u8; 8];
+        let mut offset = request_header.to_bytes(&mut request_frame);
+        offset += request_ext_header.to_bytes(&mut request_frame[offset..]);
+
+        // Request first, then the GoodCRC for the upcoming served-chunk response (tx id 1).
+        protocol_layer.driver.inject_received_data(&request_frame[..offset]);
+        protocol_layer.driver.inject_received_data(&good_crc_bytes(1));
+
+        // Receiving the request must serve the chunk (side effect). The served frame then
+        // consumes the goodCRC, leaving nothing for `receive_message`, so it times out.
+        // A pre-fix layer errors immediately (assembly failure) - also an Err, but then the
+        // TX probe below finds no served chunk and panics: the discriminator.
+        tokio::time::timeout(core::time::Duration::from_millis(50), protocol_layer.receive_message())
+            .await
+            .expect_err("receive must keep waiting after serving the chunk");
+        // The served flow transmits two frames: the GoodCRC for the request, then the chunk.
+        let ack_bytes = protocol_layer.driver().probe_transmitted_data();
+        let ack_header = Header::from_bytes(&ack_bytes[..super::MSG_HEADER_SIZE]).unwrap();
+        assert!(matches!(
+            ack_header.message_type(),
+            MessageType::Control(ControlMessageType::GoodCRC)
+        ));
+        let response_bytes = protocol_layer.driver().probe_transmitted_data();
+
+        assert_eq!(
+            response_bytes.len(),
+            super::MSG_HEADER_SIZE + super::message::extended::ExtendedHeader::SIZE + MAX_EXTENDED_MSG_CHUNK_LEN
+        );
+        let response_ext = super::message::extended::ExtendedHeader::from_bytes(
+            &response_bytes
+                [super::MSG_HEADER_SIZE..super::MSG_HEADER_SIZE + super::message::extended::ExtendedHeader::SIZE],
+        );
+        assert!(response_ext.chunked());
+        assert!(!response_ext.request_chunk());
+        assert_eq!(response_ext.chunk_number(), 1);
+        assert_eq!(response_ext.data_size(), 60);
+        // The main header must echo the EPR_Source_Capabilities type and carry the
+        // object count per PD 3.2 Sec. 6.2.1.1.2 (ext header + 26 bytes -> 7 objects).
+        let response_header = Header::from_bytes(&response_bytes[..super::MSG_HEADER_SIZE]).unwrap();
+        assert!(matches!(
+            response_header.message_type(),
+            MessageType::Extended(ExtendedMessageType::EprSourceCapabilities)
+        ));
+        assert_eq!(
+            response_header.num_objects(),
+            (super::message::extended::ExtendedHeader::SIZE + MAX_EXTENDED_MSG_CHUNK_LEN).div_ceil(4)
+        );
+        // Payload bytes: chunk 1 begins at payload byte 26, i.e. mid-PDO.
+        // pdo[6] raw = 0x4BB997F4 (LE: F4 97 B9 4B) - its last 2 bytes open the chunk,
+        // followed by the first 2 bytes of pdo[7] (0x4BB997F6 -> F6 97).
+        let first_word = u32::from_le_bytes(
+            response_bytes[super::MSG_HEADER_SIZE + super::message::extended::ExtendedHeader::SIZE
+                ..super::MSG_HEADER_SIZE + super::message::extended::ExtendedHeader::SIZE + 4]
+                .try_into()
+                .unwrap(),
+        );
+        let pdo6 = (0b01u32 << 30) | (1000 + 6 * 2) | ((400 + 6) << 8) | (1500 << 17);
+        let pdo7 = (0b01u32 << 30) | (1000 + 7 * 2) | ((400 + 7) << 8) | (1500 << 17);
+        let expected = (pdo6 >> 16) | ((pdo7 & 0xFFFF) << 16);
+        assert_eq!(first_word, expected);
+    }
+
+    /// A chunk request whose chunk number points beyond the retained payload must be
+    /// silently ignored: no response, no panic. The partner's chunk timer runs its own
+    /// error flow. Pre-fix, the layer panicked slicing `buffer[start..end]`.
+    #[cfg(feature = "epr")]
+    #[tokio::test]
+    async fn test_chunk_request_out_of_range_is_silently_ignored() {
+        use super::message::header::{ControlMessageType, ExtendedMessageType, MessageType};
+
+        let mut protocol_layer = get_protocol_layer_with_source_role();
+
+        use super::message::data::source_capabilities::{PowerDataObject, parse_raw_pdo};
+
+        // 40-byte payload (10 PDOs): only chunks 0 (26 B) and 1 (14 B) exist.
+        let pdos: heapless::Vec<PowerDataObject, 16> = (0..10)
+            .map(|i| parse_raw_pdo((0b01 << 30) | (1000 + i as u32 * 2) | ((400 + i as u32) << 8) | (1500 << 17)))
+            .collect();
+        let caps = SourceCapabilities(pdos);
+
+        protocol_layer.driver.inject_received_data(&good_crc_bytes(0));
+        protocol_layer.transmit_epr_source_capabilities(&caps).await.unwrap();
+        _ = protocol_layer.driver.probe_transmitted_data();
+
+        // Request chunk 7: far beyond the 2-chunk payload.
+        let request_ext_header = super::message::extended::ExtendedHeader::default()
+            .with_chunked(true)
+            .with_request_chunk(true)
+            .with_chunk_number(7);
+        let request_header = Header::new_extended(
+            *protocol_layer.header(),
+            crate::counters::Counter::new(crate::counters::CounterType::MessageId),
+            ExtendedMessageType::EprSourceCapabilities,
+            1,
+        );
+        let mut request_frame = [0u8; 8];
+        let mut offset = request_header.to_bytes(&mut request_frame);
+        offset += request_ext_header.to_bytes(&mut request_frame[offset..]);
+
+        protocol_layer.driver.inject_received_data(&request_frame[..offset]);
+
+        // The request is acked then dropped. `receive_message` must keep waiting
+        // (not panic, not transmit a chunk response).
+
+        tokio::time::timeout(core::time::Duration::from_millis(50), protocol_layer.receive_message())
+            .await
+            .expect_err("receive must keep waiting after an out-of-range request");
+        let ack_bytes = protocol_layer.driver().probe_transmitted_data();
+        let ack_header = Header::from_bytes(&ack_bytes[..super::MSG_HEADER_SIZE]).unwrap();
+        assert!(matches!(
+            ack_header.message_type(),
+            MessageType::Control(ControlMessageType::GoodCRC)
+        ));
+        assert!(
+            !protocol_layer.driver().has_transmitted_data(),
+            "no chunk response may follow an out-of-range request"
+        );
+    }
+
+    /// A duplicate chunk request (same MessageID) must be re-acked and the chunk
+    /// re-served: the re-served response is the correct retry for a lost response
+    /// (idempotent, bytes come from the retained payload).
+    #[cfg(feature = "epr")]
+    #[tokio::test]
+    async fn test_duplicate_chunk_request_is_reacked_and_reserved() {
+        use super::message::header::{ControlMessageType, ExtendedMessageType, MessageType};
+
+        let mut protocol_layer = get_protocol_layer_with_source_role();
+
+        use super::message::data::source_capabilities::{PowerDataObject, parse_raw_pdo};
+
+        let pdos: heapless::Vec<PowerDataObject, 16> = (0..10)
+            .map(|i| parse_raw_pdo((0b01 << 30) | (1000 + i as u32 * 2) | ((400 + i as u32) << 8) | (1500 << 17)))
+            .collect();
+        let caps = SourceCapabilities(pdos);
+
+        protocol_layer.driver.inject_received_data(&good_crc_bytes(0));
+        protocol_layer.transmit_epr_source_capabilities(&caps).await.unwrap();
+        _ = protocol_layer.driver.probe_transmitted_data();
+
+        // Chunk 1 request with MessageID 1, sent twice.
+        let request_ext_header = super::message::extended::ExtendedHeader::default()
+            .with_chunked(true)
+            .with_request_chunk(true)
+            .with_chunk_number(1);
+        let request_header = Header::new_extended(
+            *protocol_layer.header(),
+            crate::counters::Counter::new_from_value(crate::counters::CounterType::MessageId, 1),
+            ExtendedMessageType::EprSourceCapabilities,
+            1,
+        );
+        let mut request_frame = [0u8; 8];
+        let mut offset = request_header.to_bytes(&mut request_frame);
+        offset += request_ext_header.to_bytes(&mut request_frame[offset..]);
+
+        // First request: fresh (acked, then served). The served chunk carries TX MessageID 1,
+        // so its GoodCRC must echo ID 1.
+        protocol_layer.driver.inject_received_data(&request_frame[..offset]);
+        protocol_layer.driver.inject_received_data(&good_crc_bytes(1));
+        tokio::time::timeout(core::time::Duration::from_millis(50), protocol_layer.receive_message())
+            .await
+            .expect_err("receive must keep waiting after serving chunk 1");
+        let ack1 = protocol_layer.driver().probe_transmitted_data();
+        let served1 = protocol_layer.driver().probe_transmitted_data();
+        assert!(matches!(
+            Header::from_bytes(&ack1[..super::MSG_HEADER_SIZE])
+                .unwrap()
+                .message_type(),
+            MessageType::Control(ControlMessageType::GoodCRC)
+        ));
+        assert_eq!(
+            served1.len(),
+            super::MSG_HEADER_SIZE + super::message::extended::ExtendedHeader::SIZE + (40 - MAX_EXTENDED_MSG_CHUNK_LEN)
+        );
+
+        // Duplicate request: same MessageID -> re-ack; the re-served chunk carries TX
+        // MessageID 2 (the counter advanced when chunk 1 was acknowledged).
+        protocol_layer.driver.inject_received_data(&request_frame[..offset]);
+        protocol_layer.driver.inject_received_data(&good_crc_bytes(2));
+        tokio::time::timeout(core::time::Duration::from_millis(50), protocol_layer.receive_message())
+            .await
+            .expect_err("receive must keep waiting after re-serving chunk 1");
+        let ack2 = protocol_layer.driver().probe_transmitted_data();
+        let served2 = protocol_layer.driver().probe_transmitted_data();
+        assert!(matches!(
+            Header::from_bytes(&ack2[..super::MSG_HEADER_SIZE])
+                .unwrap()
+                .message_type(),
+            MessageType::Control(ControlMessageType::GoodCRC)
+        ));
+        // The re-served response is a new frame: its MessageID advances per Sec. 6.7.1.2.
+        // The chunk content itself must be identical.
+        assert_eq!(
+            served1[super::MSG_HEADER_SIZE..],
+            served2[super::MSG_HEADER_SIZE..],
+            "re-served chunk content must be identical"
+        );
+    }
+
+    /// A driver that always discards transmissions (wedged state machine) must not
+    /// make `hard_reset()` loop forever: the loop is bounded by `HardResetCompleteTimer`.
+    #[tokio::test]
+    async fn test_hard_reset_bounded_when_driver_discards() {
+        use usbpd_traits::{DriverRxError, DriverTxError};
+
+        struct DiscardingDriver;
+
+        impl usbpd_traits::Driver for DiscardingDriver {
+            async fn receive(&mut self, _buffer: &mut [u8]) -> Result<usize, DriverRxError> {
+                Err(DriverRxError::Discarded)
+            }
+            async fn transmit(&mut self, _data: &[u8]) -> Result<(), DriverTxError> {
+                Err(DriverTxError::Discarded)
+            }
+            async fn transmit_hard_reset(&mut self) -> Result<(), DriverTxError> {
+                Err(DriverTxError::Discarded)
+            }
+            async fn wait_for_vbus(&mut self) {}
+        }
+
+        let mut protocol_layer = ProtocolLayer::<DiscardingDriver, DummyTimer>::new(
+            DiscardingDriver,
+            crate::protocol_layer::message::header::Header::new_template(
+                crate::DataRole::Ufp,
+                crate::PowerRole::Sink,
+                super::message::header::SpecificationRevision::R3_X,
+            ),
+        );
+
+        // Pre-fix, this looped forever. It must now return an error.
+        let result = protocol_layer.hard_reset().await;
+        assert!(
+            result.is_err(),
+            "hard_reset must fail on a persistently discarding driver"
+        );
     }
 }

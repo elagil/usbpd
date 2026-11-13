@@ -8,6 +8,8 @@ set -euo pipefail
 cargo +nightly fmt --check
 
 cargo clippy --workspace
+# Test-code lints need --all-targets; the plain clippy pass covers lib only.
+RUSTFLAGS="-D warnings" cargo clippy --workspace --all-targets
 # Also compiles everything a separate `cargo build` would.
 cargo test --workspace
 
@@ -15,4 +17,7 @@ cargo test --workspace
 pushd usbpd
 cargo build --features serde,log
 cargo build --features serde,defmt
+# The epr feature is default-on; keep the disabled build green.
+cargo build --no-default-features
+cargo test --no-default-features
 popd

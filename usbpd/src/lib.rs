@@ -19,6 +19,13 @@
 //! - SPR and EPR source mode, and
 //! - dual-role port (DRP) support.
 //!
+//! ## Out of scope
+//!
+//! This crate implements the USB PD protocol and policy engine layers only.
+//! It does not manage the USB Type-C connector hardware:
+//! - CC-line role detection and Rp/Rd assertion,
+//! - VBUS/VCONN power-path control, or
+//! - Fast Role Swap (FRS) signal detection on the CC wire.
 
 #![cfg_attr(not(test), no_std)]
 #![warn(missing_docs)]
@@ -34,11 +41,31 @@ pub mod dual_role;
 pub mod protocol_layer;
 pub mod sink;
 pub mod source;
+pub(crate) mod swap;
+pub(crate) mod swap_reply;
 pub mod timers;
 
 #[cfg(test)]
 #[allow(missing_docs)] // FIXME: Docs for the dummy?
 pub mod dummy;
+
+/// Errors that can occur in a policy engine state machine.
+///
+/// Shared by the sink and source policy engines, which implement the two
+/// sides of the same state machines.
+#[derive(Debug, thiserror::Error)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum Error {
+    /// The port partner is unresponsive.
+    #[error("port partner unresponsive")]
+    PortPartnerUnresponsive,
+    /// Entered ErrorRecovery mode. This requests a disconnect.
+    #[error("reconnection required")]
+    ReconnectionRequired,
+    /// A protocol error has occured.
+    #[error("protocol error: {0}")]
+    Protocol(#[from] crate::protocol_layer::ProtocolError),
+}
 
 /// This module defines the CGS (centimeter-gram-second) unit system
 /// for use in the USB Power Delivery Protocol layer. These units are

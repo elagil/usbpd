@@ -164,7 +164,7 @@ pub(super) async fn get_epr_source_capabilities<DRIVER: Driver, TIMER: Timer>(
 
     match message.payload {
         Some(Payload::Extended(Extended::EprSourceCapabilities(cap))) => Ok(SourceCapabilities(cap)),
-        // A malformed payload is a protocol violation, not a bug; the caller's
+        // A malformed payload is a protocol violation, not a bug. The caller's
         // UnexpectedMessage handler (PD 3.2 Sec. 6.6.2) transitions to Soft Reset.
         _ => Err(Error::Protocol(ProtocolError::UnexpectedMessage)),
     }

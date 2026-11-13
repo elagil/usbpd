@@ -11,23 +11,18 @@ use core::future::Future;
 /// Types of timers that are used for timeouts.
 ///
 /// Timer names, parameters and values per PD 3.2 Tab. 6.69 and Tab. 6.68.
+///
+/// Note: Timers for features not implemented by this crate (BIST, Data Reset,
+/// non-chunking ports, SOP'' cable-plug communication) are intentionally omitted.
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TimerType {
-    /// BISTContModeTimer (tBISTContMode, 30–60 ms).
-    BISTContMode,
-    /// ChunkingNotSupportedTimer (tChunkingNotSupported, 40–50 ms).
-    ChunkingNotSupported,
     /// ChunkSenderRequestTimer (tChunkSenderRequest, 24–30 ms).
     ChunkSenderRequest,
     /// ChunkSenderResponseTimer (tChunkSenderResponse, 24–30 ms).
     ChunkSenderResponse,
     /// CRCReceiveTimer (tReceive, 0.9–1.1 ms).
     CRCReceive,
-    /// DataResetFailTimer (tDataResetFail, 300–400 ms).
-    DataResetFail,
-    /// DataResetFailUFPTimer (tDataResetFailUFP, 450–550 ms).
-    DataResetFailUFP,
     /// DiscoverIdentityTimer (tDiscoverIdentity, 40–50 ms).
     DiscoverIdentity,
     /// HardResetCompleteTimer (tHardResetComplete, 4–5 ms).
@@ -69,8 +64,6 @@ pub enum TimerType {
     SourceEPRKeepAlive,
     /// SourcePPSCommTimer (tPPSTimeout, 12–15 s).
     SourcePPSComm,
-    /// SinkTxTimer (tSinkTx, 16–20 ms).
-    SinkTx,
     /// SwapSourceStartTimer (tSwapSourceStart, min 20 ms).
     SwapSourceStart,
     /// VCONNDischargeTimer (tVCONNSourceDischarge, 160–240 ms).
@@ -91,13 +84,9 @@ impl TimerType {
     /// Per PD 3.2 Tab. 6.68, the timeout is a fixed value within the specified range.
     pub fn get_timer<TIMER: Timer>(timer_type: TimerType) -> impl Future<Output = ()> {
         match timer_type {
-            TimerType::BISTContMode => TIMER::after_millis(45),
-            TimerType::ChunkingNotSupported => TIMER::after_millis(45),
             TimerType::ChunkSenderRequest => TIMER::after_millis(27),
             TimerType::ChunkSenderResponse => TIMER::after_millis(27),
             TimerType::CRCReceive => TIMER::after_millis(1),
-            TimerType::DataResetFail => TIMER::after_millis(350),
-            TimerType::DataResetFailUFP => TIMER::after_millis(500),
             TimerType::DiscoverIdentity => TIMER::after_millis(45),
             TimerType::HardResetComplete => TIMER::after_millis(5),
             TimerType::NoResponse => TIMER::after_millis(5000),
@@ -121,7 +110,6 @@ impl TimerType {
             #[cfg(feature = "epr")]
             TimerType::SourceEPRKeepAlive => TIMER::after_millis(875),
             TimerType::SourcePPSComm => TIMER::after_millis(13500),
-            TimerType::SinkTx => TIMER::after_millis(18),
             TimerType::SwapSourceStart => TIMER::after_millis(20),
             TimerType::VCONNDischarge => TIMER::after_millis(200),
             TimerType::VCONNOn => TIMER::after_millis(150),

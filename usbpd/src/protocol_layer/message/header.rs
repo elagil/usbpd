@@ -40,6 +40,9 @@ bitfield! {
 }
 
 impl Header {
+    /// Size of the PD message header in bytes.
+    pub const SIZE: usize = 2;
+
     /// Create a header template with the given attributes.
     pub fn new_template(
         port_data_role: DataRole,

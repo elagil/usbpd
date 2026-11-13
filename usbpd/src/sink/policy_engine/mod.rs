@@ -83,30 +83,26 @@ enum State {
     ErrorRecovery,
 }
 
+// Data Role Swap and Vconn Swap state types are shared with the source
+// policy engine (see `crate::swap`).
+// Stabilized re-export: the sink policy engine error type lives at the crate root.
+// Kept at the pre-unification path for downstream compatibility.
+pub use crate::Error;
+pub(crate) use crate::swap::{DataRoleSwap, VcsState};
+
+/// Dual Role Port Swap States
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-/// Dual Role Port Swap States
-enum SwapState {
+pub(crate) enum SwapState {
     Data(DataRoleSwap),
     Power(PowerRoleSwap),
     FastPower(FastPowerRoleSwap),
 }
 
-/// State during a Data Role Swap execution (for both directions)
+/// State during a Power Role Swap execution (sink: PE_PRS_SNK_SRC, PD 3.2 Sec. 8.3.3.19.4)
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-enum DataRoleSwap {
-    Evaluate,
-    Accept,
-    Change,
-    Send,
-    Reject,
-}
-
-/// State during a Power Role Swap execution
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-enum PowerRoleSwap {
+pub(crate) enum PowerRoleSwap {
     Evaluate,
     Accept,
     TransitionToOff,
@@ -116,35 +112,15 @@ enum PowerRoleSwap {
     Reject,
 }
 
-/// State during a Fast Power Role Swap execution
+/// State during a Fast Power Role Swap execution (sink: PE_FRS_SNK_SRC, PD 3.2 Sec. 8.3.3.19.6)
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-enum FastPowerRoleSwap {
-    // TODO: Determine how to best poll & enter FrSwaps
-    #[allow(unused)]
-    Start,
+pub(crate) enum FastPowerRoleSwap {
     Send,
     TransitionToOff,
     VbusApplied,
     AssertRp,
     SourceOn,
-}
-
-/// PD 3.2 Sec. 8.3.3.20 Vconn Swap. State during a Vconn Swap execution
-#[derive(Debug, Clone, Copy)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-enum VcsState {
-    SendSwap,
-    EvaluateSwap,
-    AcceptSwap,
-    RejectSwap,
-    WaitForVconn,
-    TurnOffVconn,
-    TurnOnVconn,
-    SendPsRdy,
-    // FIXME: For now, forcing a different state traversla, resulting in this being unused
-    #[allow(unused)]
-    ForceVconn,
 }
 
 /// Implementation of the sink policy engine.
@@ -167,24 +143,6 @@ pub struct Sink<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> {
     vconn_source: bool,
 
     _timer: PhantomData<TIMER>,
-}
-
-/// Errors that can occur in the sink policy engine state machine.
-#[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Error {
-    /// The port partner is unresponsive.
-    PortPartnerUnresponsive,
-    /// Entered ErrorRecovery mode. This requests a disconnect.
-    ReconnectionRequired,
-    /// A protocol error has occured.
-    Protocol(ProtocolError),
-}
-
-impl From<ProtocolError> for Error {
-    fn from(protocol_error: ProtocolError) -> Self {
-        Error::Protocol(protocol_error)
-    }
 }
 
 impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
@@ -298,7 +256,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                     ) => Some(State::ErrorRecovery),
 
                     // Per PD 3.2 Sec. 8.3.3.19.4.6: If PS_RDY is not sent after retries, a
-                    // Soft Reset Shall Not be initiated; transition to ErrorRecovery.
+                    // Soft Reset Shall Not be initiated. Transition to ErrorRecovery.
                     (
                         _,
                         State::DrpSwap(SwapState::Power(PowerRoleSwap::SourceOn)),
@@ -326,8 +284,22 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                         ProtocolError::RxError(RxError::ReceiveTimeout),
                     ) => Some(State::Ready(false)),
 
+                    // Per PD 3.2 Sec. 8.3.3.19.1.5 / 8.3.3.19.2.5: A SenderResponseTimer timeout after sending
+                    // a Data_Role_Swap request transitions to the Ready state instead of re-sending the request.
+                    (
+                        _,
+                        State::DrpSwap(SwapState::Data(DataRoleSwap::Send)),
+                        ProtocolError::RxError(RxError::ReceiveTimeout),
+                    ) => Some(State::Ready(false)),
+
                     (_, State::VconnSwap(VcsState::SendSwap), ProtocolError::RxError(RxError::ReceiveTimeout)) => {
                         Some(State::Ready(false))
+                    }
+
+                    // Per PD 3.2 Sec. 8.3.3.20.5: If the PS_RDY Message is not received
+                    // before the VCONNOnTimer times out, a Hard Reset Shall be initiated.
+                    (_, State::VconnSwap(VcsState::WaitForVconn), ProtocolError::RxError(RxError::ReceiveTimeout)) => {
+                        Some(State::HardReset)
                     }
 
                     // Unexpected messages indicate a protocol error and demand a soft reset.
@@ -639,10 +611,19 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                         Event::RequestPower(power_source) => State::SelectCapability(power_source),
                         Event::RequestVconnSwap => State::VconnSwap(VcsState::SendSwap),
                         Event::FastPowerRoleSwap => {
+                            // FRS signal detected via DPM (Sec. 8.3.3.19.6.1, PE_FRS_SNK_SRC_Start_AMS).
+                            // The AMS notification to the protocol layer is not modeled
+                            // (no protocol hook exists). Disable the FRS receiver while
+                            // the swap is in progress.
                             if self.dual_role {
+                                <DPM as crate::sink::device_policy_manager::DrpDevicePolicyManager>::set_fr_swap_detect(
+                                    false,
+                                )
+                                .await;
                                 State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::Send))
                             } else {
-                                State::ErrorRecovery
+                                // A non-DRP sink cannot fast swap. Ignore the event.
+                                State::Ready(false)
                             }
                         }
                         Event::RequestPowerRoleSwap => State::DrpSwap(SwapState::Power(PowerRoleSwap::Send)),
@@ -936,36 +917,23 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                     .transmit_control_message(ControlMessageType::DrSwap)
                     .await?;
 
-                let message = self
-                    .protocol_layer
-                    .receive_message_type(
-                        &[
-                            MessageType::Control(ControlMessageType::Accept),
-                            MessageType::Control(ControlMessageType::Reject),
-                            MessageType::Control(ControlMessageType::Wait),
-                        ],
-                        TimerType::SenderResponse,
-                    )
-                    .await?;
-
-                match message.header.message_type() {
-                    MessageType::Control(ControlMessageType::Accept) => {
-                        Ok(State::DrpSwap(SwapState::Data(DataRoleSwap::Change)))
-                    }
-
-                    MessageType::Control(ControlMessageType::Reject) => Ok(State::Ready(false)),
-
-                    // Per PD 3.2 Sec. 6.6.4.3: after a DR_Swap Wait, only a new DR_Swap is
-                    // gated (tDRSwapWait); a power Request must not be armed, so no
-                    // SinkRequestTimer. Re-initiating the DR_Swap is left to the DPM.
-                    MessageType::Control(ControlMessageType::Wait) => Ok(State::Ready(false)),
-
-                    _ => Err(Error::Protocol(ProtocolError::UnexpectedMessage)),
+                // Per PD 3.2 Sec. 6.6.4.3: after a DR_Swap Wait, only a new DR_Swap is
+                // gated (tDRSwapWait). A power Request must not be armed, so no
+                // SinkRequestTimer. Re-initiating the DR_Swap is left to the DPM.
+                match crate::swap_reply::await_swap_reply(
+                    &mut self.protocol_layer,
+                    crate::swap_reply::SwapReply::AcceptRejectWait,
+                )
+                .await?
+                {
+                    ControlMessageType::Accept => Ok(State::DrpSwap(SwapState::Data(DataRoleSwap::Change))),
+                    _ => Ok(State::Ready(false)),
                 }
             }
             // PD 3.2 Sec. 8.3.3.19.1.6 (PE_DRS_DFP_UFP_Reject_Swap, PE_DRS_UFP_DFP_Reject_Swap):
             DataRoleSwap::Reject => {
-                // FIXME: Wait Message logic
+                // Note: A `Wait` response would require a DPM tri-state decision. Not
+                // supported yet (see CHANGELOG Known limitations).
                 self.protocol_layer
                     .transmit_control_message(ControlMessageType::Reject)
                     .await?;
@@ -984,8 +952,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                     Ok(State::DrpSwap(SwapState::Power(PowerRoleSwap::Reject)))
                 }
             }
-            // PD 3.2 Sec. 8.3.3.19.4.3 (PE_PRS_SNK_SRC_Accept_Swap):
+            // PD 3.2 Sec. 8.3.3.19.4.3 (PE_PRS_SNK_SRC_Accept_Swap): disables the FRS receiver.
             PowerRoleSwap::Accept => {
+                <DPM as crate::sink::device_policy_manager::DrpDevicePolicyManager>::set_fr_swap_detect(false).await;
+
                 self.protocol_layer
                     .transmit_control_message(ControlMessageType::Accept)
                     .await?;
@@ -1051,7 +1021,8 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
             }
             // PD 3.2 Sec. 8.3.3.19.4.8 (PE_PRS_SNK_SRC_Reject_Swap):
             PowerRoleSwap::Reject => {
-                // FIXME: Wait Message logic
+                // Note: A `Wait` response would require a DPM tri-state decision. Not
+                // supported yet (see CHANGELOG Known limitations).
                 /*
                    There is also the option to exit this state with a Wait message if the DPM decides
                    that the swap request can be met in the future. Adding the ability for the DPM to
@@ -1071,9 +1042,8 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
 
     async fn execute_fast_power_role_swap_state(&mut self, state: FastPowerRoleSwap) -> Result<State, Error> {
         match state {
-            // PD 3.2 Sec. 8.3.3.19.6.1 (PE_FRS_SNK_SRC_Start_AMS):
-            FastPowerRoleSwap::Start => Ok(State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::Send))),
             // PD 3.2 Sec. 8.3.3.19.6.2 (PE_FRS_SNK_SRC_Send_Swap):
+            // (Entered from PE_FRS_SNK_SRC_Start_AMS via the `FastPowerRoleSwap` DPM event.)
             FastPowerRoleSwap::Send => {
                 self.protocol_layer
                     .transmit_control_message(ControlMessageType::FrSwap)
@@ -1106,6 +1076,9 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
             }
             // PD 3.2 Sec. 8.3.3.19.6.4 (PE_FRS_SNK_SRC_Vbus_Applied):
             FastPowerRoleSwap::VbusApplied => {
+                // Per Sec. 8.3.3.19.6.4: wait until the DPM indicates that vSafe5V is applied
+                // to VBUS. The `source_on` DPM hook returns once vSafe5V is present, which
+                // provides this indication (also turning the source on if it was still off).
                 self.device_policy_manager.source_on().await;
                 Ok(State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::AssertRp)))
             }
@@ -1115,9 +1088,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                 Ok(State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::SourceOn)))
             }
             // PD 3.2 Sec. 8.3.3.19.6.6 (PE_FRS_SNK_SRC_Source_on):
+            //
+            // The DPM was asked to turn the source on (and indicate vSafe5V) in the
+            // preceding `VBUS_Applied` state. This state only sends PS_RDY on exit.
             FastPowerRoleSwap::SourceOn => {
-                // FIXME: Determine if using .source_on() for `VbusApplied` is correct.
-                // self.device_policy_manager.source_on().await;
                 self.protocol_layer
                     .transmit_control_message(ControlMessageType::PsRdy)
                     .await?;
@@ -1135,29 +1109,21 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
                     .transmit_control_message(ControlMessageType::VconnSwap)
                     .await?;
 
-                let message = self
-                    .protocol_layer
-                    .receive_message_type(
-                        &[
-                            MessageType::Control(ControlMessageType::Accept),
-                            MessageType::Control(ControlMessageType::Reject),
-                            MessageType::Control(ControlMessageType::Wait),
-                            MessageType::Control(ControlMessageType::NotSupported),
-                        ],
-                        TimerType::SenderResponse,
-                    )
-                    .await?;
-
-                match message.header.message_type() {
-                    MessageType::Control(ControlMessageType::Accept) => match self.vconn_source {
+                // Note: The DPM is not informed of the Wait. Proper Wait handling for the
+                // VCS initiating side is a known limitation (see CHANGELOG).
+                // May also transition to ForceVconn if NotSupported message and port presently not vconn source
+                match crate::swap_reply::await_swap_reply(
+                    &mut self.protocol_layer,
+                    crate::swap_reply::SwapReply::AcceptRejectWaitNotSupported,
+                )
+                .await?
+                {
+                    ControlMessageType::Accept => match self.vconn_source {
                         true => State::VconnSwap(VcsState::WaitForVconn),
                         false => State::VconnSwap(VcsState::TurnOnVconn),
                     },
-                    MessageType::Control(ControlMessageType::Reject) => State::Ready(false),
-                    MessageType::Control(ControlMessageType::Wait) => State::Ready(false), // FIXME: inform DPM and change to `true`
-                    // May also transition to ForceVconn if NotSupported message and port presently not vconn source
-                    MessageType::Control(ControlMessageType::NotSupported) => State::NotSupportedReceived,
-                    _ => Err(Error::Protocol(ProtocolError::UnexpectedMessage))?,
+                    ControlMessageType::NotSupported => State::NotSupportedReceived,
+                    _ => State::Ready(false),
                 }
             }
             // PD 3.2 Sec. 8.3.3.20.2 (PE_VCS_Evaluate_Swap):
@@ -1184,7 +1150,8 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
             }
             // PD 3.2 Sec. 8.3.3.20.4 (PE_VCS_Reject_Swap):
             VcsState::RejectSwap => {
-                // FIXME: Wait Message logic
+                // Note: A `Wait` response would require a DPM tri-state decision. Not
+                // supported yet (see CHANGELOG Known limitations).
                 self.protocol_layer
                     .transmit_control_message(ControlMessageType::Reject)
                     .await?;
