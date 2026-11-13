@@ -33,6 +33,13 @@ impl EprRequestDataObject {
     pub fn object_position(&self) -> u8 {
         RawDataObject(self.rdo).object_position()
     }
+
+    /// Check whether the RDO sets the EPRCapable bit.
+    ///
+    /// Per PD 3.2 Tab. 6.23 (B22).
+    pub fn epr_capable(&self) -> bool {
+        RawDataObject(self.rdo).epr_mode_capable()
+    }
 }
 
 bitfield! {
@@ -42,6 +49,10 @@ bitfield! {
     pub struct RawDataObject(pub u32): Debug, FromStorage, IntoStorage {
         /// Valid range 1..=14
         pub object_position: u8 @ 28..=31,
+        /// The requesting sink is EPR capable (EPRCapable).
+        ///
+        /// Per PD 3.2 Tab. 6.23 (B22).
+        pub epr_mode_capable: bool @ 22,
     }
 }
 

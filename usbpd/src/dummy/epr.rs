@@ -83,6 +83,8 @@ impl SinkDPM for DummySinkEprDevice {
 
             let mut rdo = FixedVariableSupply(0)
                 .with_object_position(position)
+                // Per PD 3.2 Tab. 6.23 (B22): an EPR mode request Shall set EPRCapable.
+                .with_epr_mode_capable(true)
                 .with_usb_communications_capable(true)
                 .with_no_usb_suspend(true);
 

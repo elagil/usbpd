@@ -85,7 +85,10 @@ enum State {
 
 // Data Role Swap and Vconn Swap state types are shared with the source
 // policy engine (see `crate::swap`).
-pub(crate) use crate::swap::{DataRoleSwap, Error, VcsState};
+// Stabilized re-export: the sink policy engine error type lives at the crate root.
+// Kept at the pre-unification path for downstream compatibility.
+pub use crate::Error;
+pub(crate) use crate::swap::{DataRoleSwap, VcsState};
 
 /// Dual Role Port Swap States
 #[derive(Debug, Clone, Copy)]

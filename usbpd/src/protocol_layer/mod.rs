@@ -575,9 +575,21 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
 
                 // Answer the Chunk Request from the retained payload (PD 3.2 Sec. 6.12.2.1.2.2).
                 if chunked && ext_header.request_chunk() {
+                    // Acknowledge first. A duplicate request (same MessageID) gets a
+                    // re-ack, but the chunk is served anyway: the re-served response is
+                    // the correct retry for a lost response, and it is idempotent.
+                    let tmp_message = Message { header, payload: None };
+                    self.handle_rx_ack(&tmp_message).await?;
+
                     let (data_size, chunk): (u16, Vec<u8, MAX_MESSAGE_SIZE>) = match self.extended_tx.as_ref() {
                         Some(tx_state) if tx_state.extended_message_type == msg_type => {
                             let start = chunk_number as usize * MAX_EXTENDED_MSG_CHUNK_LEN;
+                            // Requested chunk beyond the retained payload: do not answer.
+                            // The partner's chunk timer runs its own error flow. Never
+                            // index: start can exceed the buffer for hostile requests.
+                            if start >= usize::from(tx_state.data_size) {
+                                continue;
+                            }
                             let end =
                                 core::cmp::min(start + MAX_EXTENDED_MSG_CHUNK_LEN, usize::from(tx_state.data_size));
                             (
@@ -870,7 +882,10 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             .with_chunked(true)
             .with_chunk_number(chunk_number);
 
-        let header = Header::new_extended(self.default_header, self.counters.tx_message, message_type, 1);
+        // Per PD 3.2 Sec. 6.2.1.1.2: the object count covers the extended header plus
+        // the chunk data, padded to a 4-byte boundary (see also Fig. 6.9).
+        let num_objects = (message::extended::ExtendedHeader::SIZE + chunk_data.len()).div_ceil(4) as u8;
+        let header = Header::new_extended(self.default_header, self.counters.tx_message, message_type, num_objects);
 
         let mut buffer = Self::get_message_buffer();
         let mut offset = header.to_bytes(&mut buffer);
@@ -1423,6 +1438,12 @@ mod tests {
                 assert!(ext_header.chunked());
                 assert_eq!(usize::from(ext_header.chunk_number()), chunk_numbers.len());
                 assert!((ext_header.data_size() as usize) == total_payload_len);
+                // Per PD 3.2 Sec. 6.2.1.1.2 / Fig. 6.9: object count covers the extended
+                // header plus the chunk data, padded to a 4-byte boundary.
+                let expected_num_objects = (super::message::extended::ExtendedHeader::SIZE
+                    + core::cmp::min(total_payload_len, MAX_EXTENDED_MSG_CHUNK_LEN))
+                .div_ceil(4);
+                assert_eq!(frame_header.num_objects(), expected_num_objects);
                 // Chunk 0 carries only one chunk of data; a whole-payload frame would be
                 // `+ total_payload_len` bytes (the pre-fix bug).
                 let expected_frame_len = super::MSG_HEADER_SIZE
@@ -1442,7 +1463,7 @@ mod tests {
     #[cfg(feature = "epr")]
     #[tokio::test]
     async fn test_chunk_request_is_served_from_retained_payload() {
-        use super::message::header::{ExtendedMessageType, MessageType};
+        use super::message::header::{ControlMessageType, ExtendedMessageType, MessageType};
 
         let mut protocol_layer = get_protocol_layer_with_source_role();
 
@@ -1485,6 +1506,13 @@ mod tests {
         tokio::time::timeout(core::time::Duration::from_millis(50), protocol_layer.receive_message())
             .await
             .expect_err("receive must keep waiting after serving the chunk");
+        // The served flow transmits two frames: the GoodCRC for the request, then the chunk.
+        let ack_bytes = protocol_layer.driver().probe_transmitted_data();
+        let ack_header = Header::from_bytes(&ack_bytes[..super::MSG_HEADER_SIZE]).unwrap();
+        assert!(matches!(
+            ack_header.message_type(),
+            MessageType::Control(ControlMessageType::GoodCRC)
+        ));
         let response_bytes = protocol_layer.driver().probe_transmitted_data();
 
         assert_eq!(
@@ -1499,12 +1527,17 @@ mod tests {
         assert!(!response_ext.request_chunk());
         assert_eq!(response_ext.chunk_number(), 1);
         assert_eq!(response_ext.data_size(), 60);
-        // The main header must echo the EPR_Source_Capabilities type.
+        // The main header must echo the EPR_Source_Capabilities type and carry the
+        // object count per PD 3.2 Sec. 6.2.1.1.2 (ext header + 26 bytes -> 7 objects).
         let response_header = Header::from_bytes(&response_bytes[..super::MSG_HEADER_SIZE]).unwrap();
         assert!(matches!(
             response_header.message_type(),
             MessageType::Extended(ExtendedMessageType::EprSourceCapabilities)
         ));
+        assert_eq!(
+            response_header.num_objects(),
+            (super::message::extended::ExtendedHeader::SIZE + MAX_EXTENDED_MSG_CHUNK_LEN).div_ceil(4)
+        );
         // Payload bytes: chunk 1 begins at payload byte 26, i.e. mid-PDO.
         // pdo[6] raw = 0x4BB997F4 (LE: F4 97 B9 4B) - its last 2 bytes open the chunk,
         // followed by the first 2 bytes of pdo[7] (0x4BB997F6 -> F6 97).
@@ -1518,6 +1551,143 @@ mod tests {
         let pdo7 = (0b01u32 << 30) | (1000 + 7 * 2) | ((400 + 7) << 8) | (1500 << 17);
         let expected = (pdo6 >> 16) | ((pdo7 & 0xFFFF) << 16);
         assert_eq!(first_word, expected);
+    }
+
+    /// A chunk request whose chunk number points beyond the retained payload must be
+    /// silently ignored: no response, no panic. The partner's chunk timer runs its own
+    /// error flow. Pre-fix, the layer panicked slicing `buffer[start..end]`.
+    #[cfg(feature = "epr")]
+    #[tokio::test]
+    async fn test_chunk_request_out_of_range_is_silently_ignored() {
+        use super::message::header::{ControlMessageType, ExtendedMessageType, MessageType};
+
+        let mut protocol_layer = get_protocol_layer_with_source_role();
+
+        use super::message::data::source_capabilities::{PowerDataObject, parse_raw_pdo};
+
+        // 40-byte payload (10 PDOs): only chunks 0 (26 B) and 1 (14 B) exist.
+        let pdos: heapless::Vec<PowerDataObject, 16> = (0..10)
+            .map(|i| parse_raw_pdo((0b01 << 30) | (1000 + i as u32 * 2) | ((400 + i as u32) << 8) | (1500 << 17)))
+            .collect();
+        let caps = SourceCapabilities(pdos);
+
+        protocol_layer.driver.inject_received_data(&good_crc_bytes(0));
+        protocol_layer.transmit_epr_source_capabilities(&caps).await.unwrap();
+        _ = protocol_layer.driver.probe_transmitted_data();
+
+        // Request chunk 7: far beyond the 2-chunk payload.
+        let request_ext_header = super::message::extended::ExtendedHeader::default()
+            .with_chunked(true)
+            .with_request_chunk(true)
+            .with_chunk_number(7);
+        let request_header = Header::new_extended(
+            *protocol_layer.header(),
+            crate::counters::Counter::new(crate::counters::CounterType::MessageId),
+            ExtendedMessageType::EprSourceCapabilities,
+            1,
+        );
+        let mut request_frame = [0u8; 8];
+        let mut offset = request_header.to_bytes(&mut request_frame);
+        offset += request_ext_header.to_bytes(&mut request_frame[offset..]);
+
+        protocol_layer.driver.inject_received_data(&request_frame[..offset]);
+
+        // The request is acked then dropped. `receive_message` must keep waiting
+        // (not panic, not transmit a chunk response).
+
+        tokio::time::timeout(core::time::Duration::from_millis(50), protocol_layer.receive_message())
+            .await
+            .expect_err("receive must keep waiting after an out-of-range request");
+        let ack_bytes = protocol_layer.driver().probe_transmitted_data();
+        let ack_header = Header::from_bytes(&ack_bytes[..super::MSG_HEADER_SIZE]).unwrap();
+        assert!(matches!(
+            ack_header.message_type(),
+            MessageType::Control(ControlMessageType::GoodCRC)
+        ));
+        assert!(
+            !protocol_layer.driver().has_transmitted_data(),
+            "no chunk response may follow an out-of-range request"
+        );
+    }
+
+    /// A duplicate chunk request (same MessageID) must be re-acked and the chunk
+    /// re-served: the re-served response is the correct retry for a lost response
+    /// (idempotent, bytes come from the retained payload).
+    #[cfg(feature = "epr")]
+    #[tokio::test]
+    async fn test_duplicate_chunk_request_is_reacked_and_reserved() {
+        use super::message::header::{ControlMessageType, ExtendedMessageType, MessageType};
+
+        let mut protocol_layer = get_protocol_layer_with_source_role();
+
+        use super::message::data::source_capabilities::{PowerDataObject, parse_raw_pdo};
+
+        let pdos: heapless::Vec<PowerDataObject, 16> = (0..10)
+            .map(|i| parse_raw_pdo((0b01 << 30) | (1000 + i as u32 * 2) | ((400 + i as u32) << 8) | (1500 << 17)))
+            .collect();
+        let caps = SourceCapabilities(pdos);
+
+        protocol_layer.driver.inject_received_data(&good_crc_bytes(0));
+        protocol_layer.transmit_epr_source_capabilities(&caps).await.unwrap();
+        _ = protocol_layer.driver.probe_transmitted_data();
+
+        // Chunk 1 request with MessageID 1, sent twice.
+        let request_ext_header = super::message::extended::ExtendedHeader::default()
+            .with_chunked(true)
+            .with_request_chunk(true)
+            .with_chunk_number(1);
+        let request_header = Header::new_extended(
+            *protocol_layer.header(),
+            crate::counters::Counter::new_from_value(crate::counters::CounterType::MessageId, 1),
+            ExtendedMessageType::EprSourceCapabilities,
+            1,
+        );
+        let mut request_frame = [0u8; 8];
+        let mut offset = request_header.to_bytes(&mut request_frame);
+        offset += request_ext_header.to_bytes(&mut request_frame[offset..]);
+
+        // First request: fresh (acked, then served). The served chunk carries TX MessageID 1,
+        // so its GoodCRC must echo ID 1.
+        protocol_layer.driver.inject_received_data(&request_frame[..offset]);
+        protocol_layer.driver.inject_received_data(&good_crc_bytes(1));
+        tokio::time::timeout(core::time::Duration::from_millis(50), protocol_layer.receive_message())
+            .await
+            .expect_err("receive must keep waiting after serving chunk 1");
+        let ack1 = protocol_layer.driver().probe_transmitted_data();
+        let served1 = protocol_layer.driver().probe_transmitted_data();
+        assert!(matches!(
+            Header::from_bytes(&ack1[..super::MSG_HEADER_SIZE])
+                .unwrap()
+                .message_type(),
+            MessageType::Control(ControlMessageType::GoodCRC)
+        ));
+        assert_eq!(
+            served1.len(),
+            super::MSG_HEADER_SIZE + super::message::extended::ExtendedHeader::SIZE + (40 - MAX_EXTENDED_MSG_CHUNK_LEN)
+        );
+
+        // Duplicate request: same MessageID -> re-ack; the re-served chunk carries TX
+        // MessageID 2 (the counter advanced when chunk 1 was acknowledged).
+        protocol_layer.driver.inject_received_data(&request_frame[..offset]);
+        protocol_layer.driver.inject_received_data(&good_crc_bytes(2));
+        tokio::time::timeout(core::time::Duration::from_millis(50), protocol_layer.receive_message())
+            .await
+            .expect_err("receive must keep waiting after re-serving chunk 1");
+        let ack2 = protocol_layer.driver().probe_transmitted_data();
+        let served2 = protocol_layer.driver().probe_transmitted_data();
+        assert!(matches!(
+            Header::from_bytes(&ack2[..super::MSG_HEADER_SIZE])
+                .unwrap()
+                .message_type(),
+            MessageType::Control(ControlMessageType::GoodCRC)
+        ));
+        // The re-served response is a new frame: its MessageID advances per Sec. 6.7.1.2.
+        // The chunk content itself must be identical.
+        assert_eq!(
+            served1[super::MSG_HEADER_SIZE..],
+            served2[super::MSG_HEADER_SIZE..],
+            "re-served chunk content must be identical"
+        );
     }
 
     /// A driver that always discards transmissions (wedged state machine) must not
