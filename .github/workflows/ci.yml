@@ -58,6 +58,8 @@ jobs:
             dir: examples/embassy-nucleo-g474re-sink-epr
           - name: g474re-source
             dir: examples/embassy-nucleo-g474re-source
+          - name: g474re-cc-only
+            dir: examples/embassy-nucleo-g474re-cc-only
           # The DRP example builds two role feature variants from the same
           # crate. One matrix job per variant; the binaries are copied aside
           # under distinct names (the feature flag only const-evaluates
