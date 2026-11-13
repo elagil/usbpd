@@ -7,7 +7,7 @@ use embassy_executor::Spawner;
 use embassy_stm32::exti::{self, ExtiInput};
 use embassy_stm32::gpio::{Level, Output, Pull, Speed};
 use embassy_stm32::i2c::Config as I2cConfig;
-use embassy_stm32::{bind_interrupts, i2c, interrupt, peripherals};
+use embassy_stm32::{bind_interrupts, dma, i2c, interrupt, peripherals};
 use panic_probe as _;
 use usbpd_g474re_sink::power::{self, UcpdResources};
 use usbpd_tcpp03_m20::TcppResources;
@@ -15,6 +15,8 @@ use usbpd_tcpp03_m20::TcppResources;
 bind_interrupts!(struct Irqs {
     I2C1_EV => i2c::EventInterruptHandler<peripherals::I2C1>;
     I2C1_ER => i2c::ErrorInterruptHandler<peripherals::I2C1>;
+    DMA1_CHANNEL5 => dma::InterruptHandler<peripherals::DMA1_CH5>;
+    DMA1_CHANNEL6 => dma::InterruptHandler<peripherals::DMA1_CH6>;
     EXTI9_5 => exti::InterruptHandler<interrupt::typelevel::EXTI9_5>;
 });
 
@@ -32,7 +34,8 @@ async fn main(spawner: Spawner) {
     {
         // TCPP03-M20 on the X-NUCLEO-DRP1M1: I2C1 (PB8/PB9), EN (PC8),
         // FLGn (PC5, active-low interrupt output), VBUS sense (PA0 -> ADC1).
-        let i2c = embassy_stm32::i2c::I2c::new_blocking(p.I2C1, p.PB8, p.PB9, I2cConfig::default());
+        let i2c =
+            embassy_stm32::i2c::I2c::new(p.I2C1, p.PB8, p.PB9, p.DMA1_CH5, p.DMA1_CH6, Irqs, I2cConfig::default());
         let tcpp_pwren = Output::new(p.PC8, Level::Low, Speed::Low);
         let tcpp_flgn_exti = ExtiInput::new(p.PC5, p.EXTI5, Pull::Up, Irqs);
 

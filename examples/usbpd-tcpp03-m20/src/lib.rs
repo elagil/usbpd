@@ -27,10 +27,9 @@ macro_rules! log_info {
 use embassy_stm32::adc::{self, Adc, AdcChannel as _, SampleTime};
 use embassy_stm32::exti::ExtiInput;
 use embassy_stm32::gpio::Output;
-use embassy_stm32::i2c::{self, I2c};
 use embassy_stm32::{Peri, bind_interrupts, dma};
 use embassy_time::Timer;
-use embedded_hal::i2c::I2c as _;
+use embedded_hal_async::i2c::I2c;
 
 /// Device address.
 const ADDRESS: u8 = 0x34;
@@ -59,10 +58,10 @@ pub const VBUS_5V_OK_MV: u32 = 3900;
 
 #[derive(thiserror::Error, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Error {
+pub enum Error<E> {
     /// I2c error.
     #[error("i2c error")]
-    I2c(#[from] i2c::Error),
+    I2c(#[from] E),
     /// Incorrect device type detected.
     #[error("incorrect device type")]
     DeviceType,
@@ -179,8 +178,8 @@ enum Mode {
 }
 
 /// Hardware handles for the TCPP03 on the DRP1M1 shield.
-pub struct TcppResources {
-    pub i2c: I2c<'static, embassy_stm32::mode::Blocking, i2c::mode::Master>,
+pub struct TcppResources<I2C> {
+    pub i2c: I2C,
     pub enable: Output<'static>,
     pub flgn_exti: ExtiInput<'static, embassy_stm32::mode::Async>,
     /// ADC that the VBUS sense line is routed to (ADC1 on the DRP1M1).
@@ -191,8 +190,8 @@ pub struct TcppResources {
     pub adc_dma: Peri<'static, embassy_stm32::peripherals::DMA1_CH4>,
 }
 
-pub struct Tcpp {
-    i2c: I2c<'static, embassy_stm32::mode::Blocking, i2c::mode::Master>,
+pub struct Tcpp<I2C> {
+    i2c: I2C,
     enable: Output<'static>,
     flgn: ExtiInput<'static, embassy_stm32::mode::Async>,
     adc: Adc<'static, embassy_stm32::peripherals::ADC1, embassy_stm32::mode::Async>,
@@ -201,9 +200,9 @@ pub struct Tcpp {
     state: State,
 }
 
-impl Tcpp {
+impl<I2C: I2c> Tcpp<I2C> {
     /// Create the driver, leaving the chip in reset (EN low) until [`Tcpp::init`].
-    pub fn new(resources: TcppResources) -> Self {
+    pub fn new(resources: TcppResources<I2C>) -> Self {
         let TcppResources {
             i2c,
             enable,
@@ -233,14 +232,14 @@ impl Tcpp {
         }
     }
 
-    async fn write_control(&mut self, control: u8) -> Result<(), Error> {
-        self.i2c.write(ADDRESS, &[0x00, control])?;
+    async fn write_control(&mut self, control: u8) -> Result<(), Error<I2C::Error>> {
+        self.i2c.write(ADDRESS, &[0x00, control]).await?;
         Ok(())
     }
 
-    async fn read(&mut self, reg: u8) -> Result<u8, Error> {
+    async fn read(&mut self, reg: u8) -> Result<u8, Error<I2C::Error>> {
         let mut buffer = [0u8; 1];
-        self.i2c.write_read(ADDRESS, &[reg], &mut buffer)?;
+        self.i2c.write_read(ADDRESS, &[reg], &mut buffer).await?;
         Ok(buffer[0])
     }
 
@@ -248,7 +247,7 @@ impl Tcpp {
     ///
     /// Enters [`Mode::LowPower`] mode with both gate drivers open: the MCU's `UCPD` pull is exposed on the connector,
     /// enabling attach detection, while the connector CC pull observed by the MCU comes from the peer port.
-    pub async fn init(&mut self) -> Result<(), Error> {
+    pub async fn init(&mut self) -> Result<(), Error<I2C::Error>> {
         // EN low -> high resets the device register state.
         self.enable.set_low();
         Timer::after_millis(10).await;
@@ -274,7 +273,7 @@ impl Tcpp {
     }
 
     /// Switch to Normal mode so VBUS/BMC pass switches engage. Requires [`Mode::LowPower`].
-    pub async fn attach(&mut self) -> Result<(), Error> {
+    pub async fn attach(&mut self) -> Result<(), Error<I2C::Error>> {
         if self.state.mode != Mode::LowPower {
             return Err(Error::InvalidCommand);
         }
@@ -290,7 +289,7 @@ impl Tcpp {
     }
 
     /// Return to [`Mode::LowPower`] with gate drivers open. Re-applies the default role.
-    pub async fn detach(&mut self) -> Result<(), Error> {
+    pub async fn detach(&mut self) -> Result<(), Error<I2C::Error>> {
         if self.state.mode != Mode::Normal {
             return Err(Error::InvalidCommand);
         }
@@ -307,7 +306,7 @@ impl Tcpp {
     }
 
     /// Gate the power path for the given role. Requires [`Mode::Normal`].
-    pub async fn set_pd_role(&mut self, role: PdRole) -> Result<(), Error> {
+    pub async fn set_pd_role(&mut self, role: PdRole) -> Result<(), Error<I2C::Error>> {
         if self.state.mode != Mode::Normal {
             return Err(Error::InvalidCommand);
         }
@@ -336,7 +335,7 @@ impl Tcpp {
     }
 
     /// Current VBUS level in mV, from a single ADC conversion.
-    pub async fn vbus_mv(&mut self) -> Result<u16, Error> {
+    pub async fn vbus_mv(&mut self) -> Result<u16, Error<I2C::Error>> {
         let mut buffer = [0u16; 1];
         self.adc
             .read_sequence(
@@ -354,7 +353,7 @@ impl Tcpp {
     }
 
     /// Await the next FLGn assertion and return the decoded flags.
-    pub async fn wait_flgn(&mut self) -> Result<DeviceProtectionFlags, Error> {
+    pub async fn wait_flgn(&mut self) -> Result<DeviceProtectionFlags, Error<I2C::Error>> {
         self.flgn.wait_for_low().await;
         Ok(self.read(0x02).await?.into())
     }
@@ -370,7 +369,7 @@ impl Tcpp {
     }
 
     /// Ack-to-Control write-back (ST BSP `TCPP0203_ModifyReg0` pattern).
-    async fn read_ack_then(&mut self, modify: impl FnOnce(&mut u8)) -> Result<(), Error> {
+    async fn read_ack_then(&mut self, modify: impl FnOnce(&mut u8)) -> Result<(), Error<I2C::Error>> {
         let ack = self.read(0x01).await?;
         let mut control = ack;
         modify(&mut control);

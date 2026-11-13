@@ -2,6 +2,7 @@
 use defmt::{Format, info, warn};
 use defmt_rtt as _;
 use embassy_futures::select::{Either, select};
+use embassy_stm32::i2c::{self, I2c};
 use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
 use embassy_stm32::{Peri, bind_interrupts, dma, peripherals};
 use embassy_time::{Duration, Timer, with_timeout};
@@ -22,13 +23,15 @@ bind_interrupts!(struct Irqs {
     DMA1_CHANNEL2 => dma::InterruptHandler<peripherals::DMA1_CH2>;
 });
 
+type AsyncI2c = I2c<'static, embassy_stm32::mode::Async, i2c::mode::Master>;
+
 pub struct UcpdResources {
     pub ucpd: Peri<'static, peripherals::UCPD1>,
     pub pin_cc1: Peri<'static, peripherals::PB6>,
     pub pin_cc2: Peri<'static, peripherals::PB4>,
     pub rx_dma: Peri<'static, peripherals::DMA1_CH1>,
     pub tx_dma: Peri<'static, peripherals::DMA1_CH2>,
-    pub tcpp: TcppResources,
+    pub tcpp: TcppResources<AsyncI2c>,
 }
 
 #[derive(Debug, Format)]
@@ -41,11 +44,11 @@ enum CableOrientation {
 struct UcpdSourceDriver<'d> {
     pd_phy: PdPhy<'d, peripherals::UCPD1>,
     /// The TCPP03 gate controller. Measure VBUS with ADC.
-    tcpp: &'d mut Tcpp,
+    tcpp: &'d mut Tcpp<AsyncI2c>,
 }
 
 impl<'d> UcpdSourceDriver<'d> {
-    fn new(pd_phy: PdPhy<'d, peripherals::UCPD1>, tcpp: &'d mut Tcpp) -> Self {
+    fn new(pd_phy: PdPhy<'d, peripherals::UCPD1>, tcpp: &'d mut Tcpp<AsyncI2c>) -> Self {
         Self { pd_phy, tcpp }
     }
 }
