@@ -29,7 +29,7 @@ use embassy_stm32::exti::ExtiInput;
 use embassy_stm32::gpio::Output;
 use embassy_stm32::{Peri, bind_interrupts, dma};
 use embassy_time::Timer;
-use embedded_hal_async::i2c::{self, I2c};
+use embedded_hal_async::i2c::I2c;
 
 /// Device address.
 const ADDRESS: u8 = 0x34;

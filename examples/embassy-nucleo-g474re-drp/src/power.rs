@@ -3,6 +3,7 @@
 use defmt::{Format, info, warn};
 #[allow(dead_code)]
 use defmt_rtt as _;
+use embassy_stm32::i2c::{self, I2c};
 use embassy_stm32::ucpd::{self, CcPhy, CcPull, CcSel, CcVState, PdPhy, Ucpd};
 use embassy_stm32::{Peri, bind_interrupts, dma, peripherals};
 use embassy_time::{Duration, Timer};
@@ -28,13 +29,15 @@ bind_interrupts!(struct Irqs {
     DMA1_CHANNEL2 => dma::InterruptHandler<peripherals::DMA1_CH2>;
 });
 
+type AsyncI2c = I2c<'static, embassy_stm32::mode::Async, i2c::mode::Master>;
+
 pub struct UcpdResources {
     pub ucpd: Peri<'static, peripherals::UCPD1>,
     pub pin_cc1: Peri<'static, peripherals::PB6>,
     pub pin_cc2: Peri<'static, peripherals::PB4>,
     pub rx_dma: Peri<'static, peripherals::DMA1_CH1>,
     pub tx_dma: Peri<'static, peripherals::DMA1_CH2>,
-    pub tcpp: TcppResources,
+    pub tcpp: TcppResources<AsyncI2c>,
 }
 
 #[derive(Debug, Format)]
@@ -49,11 +52,11 @@ enum CableOrientation {
 /// Owns the TCPP03 reference for VBUS observation via the shield's ADC.
 struct UcpdDrpDriver<'d> {
     pd_phy: PdPhy<'d, peripherals::UCPD1>,
-    tcpp: &'d mut Tcpp,
+    tcpp: &'d mut Tcpp<AsyncI2c>,
 }
 
 impl<'d> UcpdDrpDriver<'d> {
-    fn new(pd_phy: PdPhy<'d, peripherals::UCPD1>, tcpp: &'d mut Tcpp) -> Self {
+    fn new(pd_phy: PdPhy<'d, peripherals::UCPD1>, tcpp: &'d mut Tcpp<AsyncI2c>) -> Self {
         Self { pd_phy, tcpp }
     }
 }
@@ -119,7 +122,7 @@ impl UsbpdTimer for EmbassyTimer {
 /// Owns the CC phy (Rp/Rd swaps) and the TCPP03 reference (role gates).
 struct Device<'d> {
     cc_phy: Option<CcPhy<'d, peripherals::UCPD1>>,
-    tcpp: &'d mut Tcpp,
+    tcpp: &'d mut Tcpp<AsyncI2c>,
     /// Initiator only: whether a PR_Swap still needs to be requested.
     #[cfg_attr(not(feature = "role-initiator"), allow(dead_code))]
     request_swap: bool,
@@ -351,7 +354,7 @@ pub async fn ucpd_task(ucpd_resources: UcpdResources) {
             swapped: false,
         };
 
-        let dpm_tcpp = dpm.tcpp as *mut Tcpp;
+        let dpm_tcpp = dpm.tcpp as *mut Tcpp<AsyncI2c>;
 
         let result = {
             // The driver and DPM share the TCPP03 reference (never concurrently).
