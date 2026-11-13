@@ -6,24 +6,28 @@
 use core::future::Future;
 
 /// Error type of driver receive operations.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, thiserror::Error)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DriverRxError {
     /// Received message discarded, e.g. due to CRC errors.
+    #[error("received message discarded")]
     Discarded,
 
     /// Hard Reset received before or during reception.
+    #[error("hard reset received")]
     HardReset,
 }
 
 /// Error type of driver transmit operations.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, thiserror::Error)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DriverTxError {
     /// Concurrent receive in progress or excessive noise on the line.
+    #[error("transmission discarded")]
     Discarded,
 
     /// Hard Reset received before or during transmission.
+    #[error("hard reset received")]
     HardReset,
 }
 

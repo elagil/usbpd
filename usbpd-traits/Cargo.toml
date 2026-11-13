@@ -1,6 +1,6 @@
 [package]
 name = "usbpd-traits"
-version = "2.0.0"
+version = "2.1.0"
 description = "USB-PD library traits."
 documentation = "https://docs.rs/usbpd-traits"
 readme = "README.md"
@@ -13,6 +13,7 @@ license.workspace = true
 
 [dependencies]
 defmt = { workspace = true, optional = true }
+thiserror = { workspace = true }
 
 [features]
 default = []
