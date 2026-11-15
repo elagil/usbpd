@@ -30,7 +30,6 @@ use embassy_stm32::gpio::Output;
 use embassy_stm32::i2c::{self, I2c};
 use embassy_stm32::{Peri, bind_interrupts, dma};
 use embassy_time::Timer;
-use embedded_hal::i2c::I2c as _;
 
 /// Device address.
 const ADDRESS: u8 = 0x34;
@@ -180,7 +179,7 @@ enum Mode {
 
 /// Hardware handles for the TCPP03 on the DRP1M1 shield.
 pub struct TcppResources {
-    pub i2c: I2c<'static, embassy_stm32::mode::Blocking, i2c::mode::Master>,
+    pub i2c: I2c<'static, embassy_stm32::mode::Async, i2c::mode::Master>,
     pub enable: Output<'static>,
     pub flgn_exti: ExtiInput<'static, embassy_stm32::mode::Async>,
     /// ADC that the VBUS sense line is routed to (ADC1 on the DRP1M1).
@@ -192,7 +191,7 @@ pub struct TcppResources {
 }
 
 pub struct Tcpp {
-    i2c: I2c<'static, embassy_stm32::mode::Blocking, i2c::mode::Master>,
+    i2c: I2c<'static, embassy_stm32::mode::Async, i2c::mode::Master>,
     enable: Output<'static>,
     flgn: ExtiInput<'static, embassy_stm32::mode::Async>,
     adc: Adc<'static, embassy_stm32::peripherals::ADC1, embassy_stm32::mode::Async>,
@@ -234,13 +233,13 @@ impl Tcpp {
     }
 
     async fn write_control(&mut self, control: u8) -> Result<(), Error> {
-        self.i2c.write(ADDRESS, &[0x00, control])?;
+        self.i2c.write(ADDRESS, &[0x00, control]).await?;
         Ok(())
     }
 
     async fn read(&mut self, reg: u8) -> Result<u8, Error> {
         let mut buffer = [0u8; 1];
-        self.i2c.write_read(ADDRESS, &[reg], &mut buffer)?;
+        self.i2c.write_read(ADDRESS, &[reg], &mut buffer).await?;
         Ok(buffer[0])
     }
 
