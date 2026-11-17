@@ -156,14 +156,32 @@ impl Message {
     }
 
     /// Parse a message from a slice of bytes.
+    ///
+    /// Rejects frames shorter than a message header before parsing, so
+    /// partner-supplied lengths never panic. An extended frame needs the
+    /// extended header before its content can be validated.
     pub fn from_bytes(data: &[u8]) -> Result<Self, ParseError> {
-        let header = Header::from_bytes(&data[..2])?;
+        if data.len() < MSG_HEADER_SIZE {
+            return Err(ParseError::InvalidLength {
+                expected: MSG_HEADER_SIZE,
+                found: data.len(),
+            });
+        }
+
+        let header = Header::from_bytes(&data[..MSG_HEADER_SIZE])?;
         let message = Self::new(header);
-        let payload = &data[2..];
+        let payload = &data[MSG_HEADER_SIZE..];
 
         match message.header.message_type() {
             MessageType::Control(_) => Ok(message),
             MessageType::Extended(message_type) => {
+                if payload.len() < ExtendedHeader::SIZE {
+                    return Err(ParseError::InvalidLength {
+                        expected: ExtendedHeader::SIZE,
+                        found: payload.len(),
+                    });
+                }
+
                 let ext_header = ExtendedHeader::from_bytes(payload);
                 let data_size = ext_header.data_size() as usize;
 
@@ -208,5 +226,39 @@ impl Message {
             }
             MessageType::Data(message_type) => data::Data::parse_message(message, message_type, payload, &()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Partner-supplied frames shorter than a header shall return a parse error,
+    // not panic on slicing. Per AGENTS.md, lengths must be validated before slicing.
+    #[test]
+    fn test_from_bytes_short_frame_is_parse_error_not_panic() {
+        for len in 0..2 {
+            let data = [0u8; 3];
+            let result = Message::from_bytes(&data[..len]);
+            assert!(matches!(result, Err(ParseError::InvalidLength { .. })));
+        }
+    }
+
+    // A malformed extended frame with a truncated payload (2 bytes present, but a
+    // 4-byte data_size declared) shall return a parse error, not panic in
+    // `ExtendedHeader::from_bytes` or the payload slicing.
+    #[test]
+    fn test_from_bytes_short_extended_claim_is_parse_error_not_panic() {
+        // Header: extended=1, num_objects=1, message_type=1 (SourceCapabilitiesExtended).
+        let mut data = [0u8; 4];
+        LittleEndian::write_u16(&mut data[..2], 0x9201 | (1 << 15));
+        // Extended header claims data_size 4 (large), chunked.
+        LittleEndian::write_u16(&mut data[2..], (4 & 0x1ff) | (1 << 15));
+
+        let result = Message::from_bytes(&data[..]);
+        assert!(matches!(
+            result,
+            Err(ParseError::ChunkedExtendedMessage { .. }) | Err(ParseError::InvalidLength { .. })
+        ));
     }
 }
