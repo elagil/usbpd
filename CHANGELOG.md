@@ -82,8 +82,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - EPR cable discovery during mode entry is delegated to the DPM (`epr_cable_good`); no
   SOP'/' Discover Identity exchange is performed by the policy engine itself.
 - Planned follow-up work (Wait tri-state, VDM forwarding, EPR cable discovery, status
-  messages) is tracked with an API-evolution roadmap in `docs/spec_check.md`; additive
-  trait methods land in minor releases, breaking changes are bundled into the next major.
+  messages): additive trait methods land in minor releases, breaking changes are bundled
+  into the next major.
 
 ## [3.0.0] - `usbpd`
 

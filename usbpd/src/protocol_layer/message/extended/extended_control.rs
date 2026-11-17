@@ -6,33 +6,31 @@ use byteorder::{ByteOrder, LittleEndian};
 use proc_bitfield::bitfield;
 
 /// Types of extended control message.
+///
+/// The discriminants mirror the 8-bit Extended Control Message Type field per Sec. 6.5.14.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ExtendedControlMessageType {
     /// Get capabilities offered by a source in EPR mode.
     ///
     /// Per PD 3.2 Sec. 6.5.14.1.
-    EprGetSourceCap,
+    EprGetSourceCap = 1,
     /// Get capabilities offered by a sink in EPR mode.
     ///
     /// Per PD 3.2 Sec. 6.5.14.2.
-    EprGetSinkCap,
+    EprGetSinkCap = 2,
     /// The EPR keep-alive message may be sent by a sink operating in EPR mode to meet the requirement for periodic traffic.
     ///
     /// Per PD 3.2 Sec. 6.5.14.3.
-    EprKeepAlive,
+    EprKeepAlive = 3,
     /// The EPR keep-alive ack message shall be sent by a source operating in EPR mode in response to an [`Self::EprKeepAlive`] message.
-    EprKeepAliveAck,
+    EprKeepAliveAck = 4,
 }
 
 impl From<ExtendedControlMessageType> for u8 {
     fn from(value: ExtendedControlMessageType) -> Self {
-        match value {
-            ExtendedControlMessageType::EprGetSourceCap => 1,
-            ExtendedControlMessageType::EprGetSinkCap => 2,
-            ExtendedControlMessageType::EprKeepAlive => 3,
-            ExtendedControlMessageType::EprKeepAliveAck => 4,
-        }
+        value as u8
     }
 }
 

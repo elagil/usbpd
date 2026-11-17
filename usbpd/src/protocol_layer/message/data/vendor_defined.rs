@@ -37,22 +37,18 @@ impl From<VendorDataObject> for u32 {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VdmCommandType {
-    InitiatorREQ,
-    ResponderACK,
-    ResponderNAK,
-    ResponderBSY,
+    InitiatorREQ = 0,
+    ResponderACK = 1,
+    ResponderNAK = 2,
+    ResponderBSY = 3,
 }
 
 impl From<VdmCommandType> for u8 {
     fn from(value: VdmCommandType) -> Self {
-        match value {
-            VdmCommandType::InitiatorREQ => 0,
-            VdmCommandType::ResponderACK => 1,
-            VdmCommandType::ResponderNAK => 2,
-            VdmCommandType::ResponderBSY => 3,
-        }
+        value as u8
     }
 }
 
@@ -77,30 +73,22 @@ impl VdmHeaderStructured {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VdmCommand {
-    DiscoverIdentity,
-    DiscoverSVIDS,
-    DiscoverModes,
-    EnterMode,
-    ExitMode,
-    Attention,
-    DisplayPortStatus,
-    DisplayPortConfig,
+    DiscoverIdentity = 0x01,
+    DiscoverSVIDS = 0x02,
+    DiscoverModes = 0x03,
+    EnterMode = 0x04,
+    ExitMode = 0x05,
+    Attention = 0x06,
+    DisplayPortStatus = 0x10,
+    DisplayPortConfig = 0x11,
 }
 
 impl From<VdmCommand> for u8 {
     fn from(value: VdmCommand) -> Self {
-        match value {
-            VdmCommand::DiscoverIdentity => 0x1,
-            VdmCommand::DiscoverSVIDS => 0x2,
-            VdmCommand::DiscoverModes => 0x3,
-            VdmCommand::EnterMode => 0x4,
-            VdmCommand::ExitMode => 0x5,
-            VdmCommand::Attention => 0x6,
-            VdmCommand::DisplayPortStatus => 0x10,
-            VdmCommand::DisplayPortConfig => 0x11,
-        }
+        value as u8
     }
 }
 
@@ -241,18 +229,16 @@ impl Default for VdmHeaderStructured {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VdmVersionMajor {
-    Version10,
-    Version2x,
+    Version10 = 0b00,
+    Version2x = 0b01,
 }
 
 impl From<VdmVersionMajor> for u8 {
     fn from(value: VdmVersionMajor) -> Self {
-        match value {
-            VdmVersionMajor::Version10 => 0b00,
-            VdmVersionMajor::Version2x => 0b01,
-        }
+        value as u8
     }
 }
 
@@ -275,18 +261,16 @@ impl VdmHeaderStructured {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VdmVersionMinor {
-    Version20,
-    Version21,
+    Version20 = 0b00,
+    Version21 = 0b01,
 }
 
 impl From<VdmVersionMinor> for u8 {
     fn from(value: VdmVersionMinor) -> Self {
-        match value {
-            VdmVersionMinor::Version20 => 0b00,
-            VdmVersionMinor::Version21 => 0b01,
-        }
+        value as u8
     }
 }
 
@@ -368,22 +352,18 @@ impl VdmIdentityHeader {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SopProductTypeUfp {
-    NotUFP,
-    PdUsbHub,
-    PdUsbPeripheral,
-    Psd,
+    NotUFP = 0b000,
+    PdUsbHub = 0b001,
+    PdUsbPeripheral = 0b010,
+    Psd = 0b011,
 }
 
 impl From<SopProductTypeUfp> for u8 {
     fn from(value: SopProductTypeUfp) -> Self {
-        match value {
-            SopProductTypeUfp::NotUFP => 0b000,
-            SopProductTypeUfp::PdUsbHub => 0b001,
-            SopProductTypeUfp::PdUsbPeripheral => 0b010,
-            SopProductTypeUfp::Psd => 0b011,
-        }
+        value as u8
     }
 }
 
@@ -402,22 +382,18 @@ impl TryFrom<u8> for SopProductTypeUfp {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SopProductTypeDfp {
-    NotDFP,
-    PDUSBHub,
-    PDUSBHost,
-    PowerBrick,
+    NotDFP = 0b000,
+    PDUSBHub = 0b001,
+    PDUSBHost = 0b010,
+    PowerBrick = 0b011,
 }
 
 impl From<SopProductTypeDfp> for u8 {
     fn from(value: SopProductTypeDfp) -> Self {
-        match value {
-            SopProductTypeDfp::NotDFP => 0b000,
-            SopProductTypeDfp::PDUSBHub => 0b001,
-            SopProductTypeDfp::PDUSBHost => 0b010,
-            SopProductTypeDfp::PowerBrick => 0b011,
-        }
+        value as u8
     }
 }
 
@@ -436,18 +412,16 @@ impl TryFrom<u8> for SopProductTypeDfp {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ConnectorType {
-    USBTypeCReceptacle,
-    USBTypeCPlug,
+    USBTypeCReceptacle = 0b10,
+    USBTypeCPlug = 0b11,
 }
 
 impl From<ConnectorType> for u8 {
     fn from(value: ConnectorType) -> Self {
-        match value {
-            ConnectorType::USBTypeCReceptacle => 0b10,
-            ConnectorType::USBTypeCPlug => 0b11,
-        }
+        value as u8
     }
 }
 
@@ -529,24 +503,19 @@ impl UFPTypeVDO {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum USBHighestSpeed {
-    USB20Only,
-    USB32Gen1,
-    USB32Gen2,
-    USB40Gen3,
-    USB40Gen4,
+    USB20Only = 0b000,
+    USB32Gen1 = 0b001,
+    USB32Gen2 = 0b010,
+    USB40Gen3 = 0b011,
+    USB40Gen4 = 0b100,
 }
 
 impl From<USBHighestSpeed> for u8 {
     fn from(value: USBHighestSpeed) -> Self {
-        match value {
-            USBHighestSpeed::USB20Only => 0b000,
-            USBHighestSpeed::USB32Gen1 => 0b001,
-            USBHighestSpeed::USB32Gen2 => 0b010,
-            USBHighestSpeed::USB40Gen3 => 0b011,
-            USBHighestSpeed::USB40Gen4 => 0b100,
-        }
+        value as u8
     }
 }
 
@@ -566,28 +535,21 @@ impl TryFrom<u8> for USBHighestSpeed {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VconnPower {
-    P1W,
-    P1_5W,
-    P2W,
-    P3W,
-    P4W,
-    P5W,
-    P6W,
+    P1W = 0b000,
+    P1_5W = 0b001,
+    P2W = 0b010,
+    P3W = 0b011,
+    P4W = 0b100,
+    P5W = 0b101,
+    P6W = 0b110,
 }
 
 impl From<VconnPower> for u8 {
     fn from(value: VconnPower) -> Self {
-        match value {
-            VconnPower::P1W => 0b000,
-            VconnPower::P1_5W => 0b001,
-            VconnPower::P2W => 0b010,
-            VconnPower::P3W => 0b011,
-            VconnPower::P4W => 0b100,
-            VconnPower::P5W => 0b101,
-            VconnPower::P6W => 0b110,
-        }
+        value as u8
     }
 }
 
@@ -609,16 +571,15 @@ impl TryFrom<u8> for VconnPower {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum UFPVDOVersion {
-    Version1_3,
+    Version1_3 = 0b011,
 }
 
 impl From<UFPVDOVersion> for u8 {
     fn from(value: UFPVDOVersion) -> Self {
-        match value {
-            UFPVDOVersion::Version1_3 => 0b011,
-        }
+        value as u8
     }
 }
 
