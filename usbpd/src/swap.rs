@@ -7,8 +7,9 @@
 //! per PD 3.2, each role runs its own state machine family with different states on each side:
 //! - sink: PE_PRS_SNK_SRC, PE_FRS_SNK_SRC
 //! - source: PE_PRS_SRC_SNK, PE_FRS_SRC_SNK
-
-use crate::protocol_layer::ProtocolError;
+//!
+//! The policy engine [`crate::Error`] enum moves with the state machines and lives
+//! at the crate root.
 
 /// State during a Data Role Swap execution (for both directions),
 /// per PD 3.2 Sec. 8.3.3.19.1 and 8.3.3.19.2.
@@ -37,19 +38,4 @@ pub(crate) enum VcsState {
     // FIXME: For now, forcing a different state traversal, resulting in this being unused
     #[allow(unused)]
     ForceVconn,
-}
-
-/// Errors that can occur in a policy engine state machine.
-#[derive(Debug, thiserror::Error)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum Error {
-    /// The port partner is unresponsive.
-    #[error("port partner unresponsive")]
-    PortPartnerUnresponsive,
-    /// Entered ErrorRecovery mode. This requests a disconnect.
-    #[error("reconnection required")]
-    ReconnectionRequired,
-    /// A protocol error has occured.
-    #[error("protocol error: {0}")]
-    Protocol(#[from] ProtocolError),
 }
