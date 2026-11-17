@@ -17,6 +17,8 @@ pub enum Action {
     EnterFailed,
     /// Exit EPR mode.
     Exit,
+    /// Reserved value. Treated like any other unexpected `EPR_Mode` message.
+    Reserved(u8),
 }
 
 impl From<Action> for u8 {
@@ -27,6 +29,7 @@ impl From<Action> for u8 {
             Action::EnterSucceeded => 0x03,
             Action::EnterFailed => 0x04,
             Action::Exit => 0x05,
+            Action::Reserved(raw) => raw,
         }
     }
 }
@@ -39,7 +42,8 @@ impl From<u8> for Action {
             0x03 => Action::EnterSucceeded,
             0x04 => Action::EnterFailed,
             0x05 => Action::Exit,
-            _ => panic!("Cannot convert {} to Action", value), // Illegal values shall panic.
+            // Reserved values must not panic. Partner-supplied frames may carry them.
+            raw => Action::Reserved(raw),
         }
     }
 }
@@ -86,6 +90,14 @@ pub enum DataEnterFailed {
     EprCapableBitNotSetInPdo,
 }
 
+impl PartialEq for DataEnterFailed {
+    fn eq(&self, other: &Self) -> bool {
+        core::mem::discriminant(self) == core::mem::discriminant(other)
+    }
+}
+
+impl Eq for DataEnterFailed {}
+
 impl From<DataEnterFailed> for u8 {
     fn from(value: DataEnterFailed) -> Self {
         match value {
@@ -108,7 +120,70 @@ impl From<u8> for DataEnterFailed {
             0x03 => DataEnterFailed::EprCapableBitNotSetInRdo,
             0x04 => DataEnterFailed::SourceUnableToEnterEprMode,
             0x05 => DataEnterFailed::EprCapableBitNotSetInPdo,
-            _ => panic!("Cannot convert {} to DataEnterFailed", value), // Illegal values shall panic.
+            _ => DataEnterFailed::UnknownCause,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A partner-sent reserved EPRMDO action must map to `Action::Reserved`, not panic.
+    #[test]
+    fn reserved_action_maps_to_reserved_variant() {
+        // 0x00 and 0x06..=0xff are reserved per PD 3.2 Tab. 6.50.
+        for raw in [0x00u8].into_iter().chain(0x06..=0xff) {
+            let mdo = EprModeDataObject((raw as u32) << 24);
+            assert_eq!(mdo.action(), Action::Reserved(raw));
+        }
+    }
+
+    #[test]
+    fn valid_actions_round_trip() {
+        for (raw, action) in [
+            (0x01, Action::Enter),
+            (0x02, Action::EnterAcknowledged),
+            (0x03, Action::EnterSucceeded),
+            (0x04, Action::EnterFailed),
+            (0x05, Action::Exit),
+        ] {
+            let mdo = EprModeDataObject((raw as u32) << 24);
+            assert_eq!(mdo.action(), action);
+            assert_eq!(u8::from(action), raw);
+        }
+    }
+
+    #[test]
+    fn reserved_action_stores_raw_value() {
+        // The reserved value must survive a setter round-trip without being remapped.
+        let raw = 0x7f;
+        let mdo = EprModeDataObject::default().with_action(Action::Reserved(raw));
+        assert_eq!(mdo.action(), Action::Reserved(raw));
+    }
+
+    // Reserved EnterFailed reasons fall back to `UnknownCause` instead of panicking.
+    // Per PD 3.2 Tab. 6.50: values 0x06..=0xff are reserved. "Shall not be used" binds
+    // the sender; the receiver tolerates them.
+    #[test]
+    fn data_enter_failed_from_reserved_falls_back_to_unknown_cause() {
+        for raw in [0x06u8, 0x7f, 0xff] {
+            assert_eq!(DataEnterFailed::from(raw), DataEnterFailed::UnknownCause);
+        }
+    }
+
+    #[test]
+    fn data_enter_failed_from_valid_maps_all_defined_causes() {
+        for (raw, expected) in [
+            (0x00, DataEnterFailed::UnknownCause),
+            (0x01, DataEnterFailed::CableNotEprCapable),
+            (0x02, DataEnterFailed::SourceFailedToBecomeVconnSource),
+            (0x03, DataEnterFailed::EprCapableBitNotSetInRdo),
+            (0x04, DataEnterFailed::SourceUnableToEnterEprMode),
+            (0x05, DataEnterFailed::EprCapableBitNotSetInPdo),
+        ] {
+            assert_eq!(DataEnterFailed::from(raw), expected);
+            assert_eq!(u8::from(expected), raw);
         }
     }
 }

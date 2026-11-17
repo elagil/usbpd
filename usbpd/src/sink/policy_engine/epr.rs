@@ -91,7 +91,7 @@ pub(super) async fn execute_epr_state<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm
                 Action::Exit => State::EprMode(EprState::ExitReceived),
                 Action::EnterFailed => {
                     // Per PD 3.2 Sec. 8.3.3.26.2.1: EnterFailed -> Soft Reset
-                    // Notify DPM of the failure reason before soft reset
+                    // Notify DPM of the failure reason before soft reset.
                     let reason = epr_mode::DataEnterFailed::from(epr_mode.data());
                     sink.device_policy_manager.epr_mode_entry_failed(reason).await;
                     State::SendSoftReset
@@ -126,7 +126,7 @@ pub(super) async fn execute_epr_state<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm
                 Action::Exit => State::EprMode(EprState::ExitReceived),
                 Action::EnterFailed => {
                     // Per PD 3.2 Sec. 8.3.3.26.2.2: EnterFailed -> Soft Reset
-                    // Notify DPM of the failure reason before soft reset
+                    // Notify DPM of the failure reason before soft reset.
                     let reason = epr_mode::DataEnterFailed::from(epr_mode.data());
                     sink.device_policy_manager.epr_mode_entry_failed(reason).await;
                     State::SendSoftReset
@@ -206,7 +206,7 @@ pub(super) async fn execute_epr_state<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm
                 Ok(message) => {
                     if let Some(Payload::Extended(extended::Extended::ExtendedControl(control))) = message.payload {
                         // Per PD 3.2 Tab. 6.67, values not explicitly
-                        // defined are Reserved; answer Not_Supported.
+                        // defined are Reserved. Answer Not_Supported.
                         if control.try_message_type() == Ok(ExtendedControlMessageType::EprKeepAliveAck) {
                             sink.mode = Mode::Epr;
                             State::Ready(false)

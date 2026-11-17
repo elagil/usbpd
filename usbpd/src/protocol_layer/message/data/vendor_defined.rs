@@ -36,7 +36,7 @@ impl From<VendorDataObject> for u32 {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VdmCommandType {
     InitiatorREQ,
@@ -56,20 +56,27 @@ impl From<VdmCommandType> for u8 {
     }
 }
 
-impl From<u8> for VdmCommandType {
-    fn from(value: u8) -> Self {
+impl TryFrom<u8> for VdmCommandType {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            0 => VdmCommandType::InitiatorREQ,
-            1 => VdmCommandType::ResponderACK,
-            2 => VdmCommandType::ResponderNAK,
-            3 => VdmCommandType::ResponderBSY,
-            _ => panic!("Cannot convert {} to VdmCommandType", value), /* Illegal values shall
-                                                                        * panic. */
+            0 => Ok(VdmCommandType::InitiatorREQ),
+            1 => Ok(VdmCommandType::ResponderACK),
+            2 => Ok(VdmCommandType::ResponderNAK),
+            3 => Ok(VdmCommandType::ResponderBSY),
+            _ => Err(value),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+impl VdmHeaderStructured {
+    pub fn try_command_type(&self) -> Result<VdmCommandType, u8> {
+        VdmCommandType::try_from(self.command_type())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VdmCommand {
     DiscoverIdentity,
@@ -97,24 +104,31 @@ impl From<VdmCommand> for u8 {
     }
 }
 
-impl From<u8> for VdmCommand {
-    fn from(value: u8) -> Self {
+impl TryFrom<u8> for VdmCommand {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            0x01 => VdmCommand::DiscoverIdentity,
-            0x02 => VdmCommand::DiscoverSVIDS,
-            0x03 => VdmCommand::DiscoverModes,
-            0x04 => VdmCommand::EnterMode,
-            0x05 => VdmCommand::ExitMode,
-            0x06 => VdmCommand::Attention,
-            0x10 => VdmCommand::DisplayPortStatus,
-            0x11 => VdmCommand::DisplayPortConfig,
-            // TODO: Find document that explains what 0x12-0x1f are (DP_SID??)
-            _ => panic!("Cannot convert {} to VdmCommand", value), // Illegal values shall panic.
+            0x01 => Ok(VdmCommand::DiscoverIdentity),
+            0x02 => Ok(VdmCommand::DiscoverSVIDS),
+            0x03 => Ok(VdmCommand::DiscoverModes),
+            0x04 => Ok(VdmCommand::EnterMode),
+            0x05 => Ok(VdmCommand::ExitMode),
+            0x06 => Ok(VdmCommand::Attention),
+            0x10 => Ok(VdmCommand::DisplayPortStatus),
+            0x11 => Ok(VdmCommand::DisplayPortConfig),
+            _ => Err(value),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+impl VdmHeaderStructured {
+    pub fn try_command(&self) -> Result<VdmCommand, u8> {
+        VdmCommand::try_from(self.command())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VdmType {
     Unstructured,
@@ -139,7 +153,7 @@ impl From<bool> for VdmType {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum VdmHeader {
@@ -208,9 +222,9 @@ bitfield! {
         /// Object Position
         pub object_position: u8 @ 8..=10,
         /// Command Type
-        pub command_type: u8 [VdmCommandType] @ 6..=7,
+        pub command_type: u8 @ 6..=7,
         /// Command
-        pub command: u8 [VdmCommand] @ 0..=4,
+        pub command: u8 @ 0..=4,
     }
 }
 
@@ -226,7 +240,7 @@ impl Default for VdmHeaderStructured {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VdmVersionMajor {
     Version10,
@@ -242,17 +256,25 @@ impl From<VdmVersionMajor> for u8 {
     }
 }
 
-impl From<u8> for VdmVersionMajor {
-    fn from(value: u8) -> Self {
+impl TryFrom<u8> for VdmVersionMajor {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            0b00 => VdmVersionMajor::Version10,
-            0b01 => VdmVersionMajor::Version2x,
-            _ => panic!("Cannot convert {} to VdmVersionMajor", value), // Illegal values shall panic.
+            0b00 => Ok(VdmVersionMajor::Version10),
+            0b01 => Ok(VdmVersionMajor::Version2x),
+            _ => Err(value),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+impl VdmHeaderStructured {
+    pub fn try_vdm_version_major(&self) -> Result<VdmVersionMajor, u8> {
+        VdmVersionMajor::try_from(self.vdm_version_major())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VdmVersionMinor {
     Version20,
@@ -268,14 +290,21 @@ impl From<VdmVersionMinor> for u8 {
     }
 }
 
-impl From<u8> for VdmVersionMinor {
-    fn from(value: u8) -> Self {
+impl TryFrom<u8> for VdmVersionMinor {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            0b00 => VdmVersionMinor::Version20,
-            0b01 => VdmVersionMinor::Version21,
-            _ => panic!("Cannot convert {} to VdmVersionMinor", value), /* Illegal values shall
-                                                                         * panic. */
+            0b00 => Ok(VdmVersionMinor::Version20),
+            0b01 => Ok(VdmVersionMinor::Version21),
+            _ => Err(value),
         }
+    }
+}
+
+impl VdmHeaderStructured {
+    pub fn try_vdm_version_minor(&self) -> Result<VdmVersionMinor, u8> {
+        VdmVersionMinor::try_from(self.vdm_version_minor())
     }
 }
 
@@ -308,25 +337,37 @@ bitfield! {
         /// Device data capable
         pub device_data: bool @ 30,
         /// Product type UFP
-        pub product_type_ufp: u8 [SopProductTypeUfp] @ 27..=29,
+        pub product_type_ufp: u8 @ 27..=29,
         /// Modal Operation Supported
         pub modal_supported: bool @ 26,
         /// Product type DFP
-        pub product_type_dfp: u8 [SopProductTypeDfp] @ 23..=25,
+        pub product_type_dfp: u8 @ 23..=25,
         /// Connector type
-        pub connector_type: u8 [ConnectorType] @ 21..=22,
+        pub connector_type: u8 @ 21..=22,
         /// VID
         pub vid: u16 @ 0..=15,
     }
 }
 
 impl VdmIdentityHeader {
+    pub fn try_product_type_ufp(&self) -> Result<SopProductTypeUfp, u8> {
+        SopProductTypeUfp::try_from(self.product_type_ufp())
+    }
+
+    pub fn try_product_type_dfp(&self) -> Result<SopProductTypeDfp, u8> {
+        SopProductTypeDfp::try_from(self.product_type_dfp())
+    }
+
+    pub fn try_connector_type(&self) -> Result<ConnectorType, u8> {
+        ConnectorType::try_from(self.connector_type())
+    }
+
     pub fn to_bytes(self, buf: &mut [u8]) {
         LittleEndian::write_u32(buf, self.0);
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SopProductTypeUfp {
     NotUFP,
@@ -346,21 +387,21 @@ impl From<SopProductTypeUfp> for u8 {
     }
 }
 
-impl From<u8> for SopProductTypeUfp {
-    fn from(value: u8) -> Self {
-        match value {
-            0b000 => SopProductTypeUfp::NotUFP,
-            0b001 => SopProductTypeUfp::PdUsbHub,
-            0b010 => SopProductTypeUfp::PdUsbPeripheral,
-            0b011 => SopProductTypeUfp::Psd,
+impl TryFrom<u8> for SopProductTypeUfp {
+    type Error = u8;
 
-            _ => panic!("Cannot convert {} to SopProductTypeUfp", value), /* Illegal values
-                                                                           * shall panic. */
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0b000 => Ok(SopProductTypeUfp::NotUFP),
+            0b001 => Ok(SopProductTypeUfp::PdUsbHub),
+            0b010 => Ok(SopProductTypeUfp::PdUsbPeripheral),
+            0b011 => Ok(SopProductTypeUfp::Psd),
+            _ => Err(value),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum SopProductTypeDfp {
     NotDFP,
@@ -380,20 +421,22 @@ impl From<SopProductTypeDfp> for u8 {
     }
 }
 
-impl From<u8> for SopProductTypeDfp {
-    fn from(value: u8) -> Self {
-        match value {
-            0b000 => SopProductTypeDfp::NotDFP,
-            0b001 => SopProductTypeDfp::PDUSBHub,
-            0b010 => SopProductTypeDfp::PDUSBHost,
-            0b011 => SopProductTypeDfp::PowerBrick,
+impl TryFrom<u8> for SopProductTypeDfp {
+    type Error = u8;
 
-            _ => panic!("Cannot convert {} to SopProductTypeDfp", value), /* Illegal values
-                                                                           * shall panic. */
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0b000 => Ok(SopProductTypeDfp::NotDFP),
+            0b001 => Ok(SopProductTypeDfp::PDUSBHub),
+            0b010 => Ok(SopProductTypeDfp::PDUSBHost),
+            0b011 => Ok(SopProductTypeDfp::PowerBrick),
+            _ => Err(value),
         }
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ConnectorType {
     USBTypeCReceptacle,
     USBTypeCPlug,
@@ -408,12 +451,14 @@ impl From<ConnectorType> for u8 {
     }
 }
 
-impl From<u8> for ConnectorType {
-    fn from(value: u8) -> Self {
+impl TryFrom<u8> for ConnectorType {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            0b10 => ConnectorType::USBTypeCReceptacle,
-            0b11 => ConnectorType::USBTypeCPlug,
-            _ => panic!("Cannot convert {} to ConnectorType", value), // Illegal values shall panic.
+            0b10 => Ok(ConnectorType::USBTypeCReceptacle),
+            0b11 => Ok(ConnectorType::USBTypeCPlug),
+            _ => Err(value),
         }
     }
 }
@@ -464,12 +509,26 @@ bitfield! {
 }
 
 impl UFPTypeVDO {
+    pub fn try_vconn_power(&self) -> Result<VconnPower, u8> {
+        VconnPower::try_from(self.vconn_power())
+    }
+
+    pub fn try_usb_highest_speed(&self) -> Result<USBHighestSpeed, u8> {
+        USBHighestSpeed::try_from(self.usb_highest_speed())
+    }
+
+    pub fn try_version(&self) -> Result<UFPVDOVersion, u8> {
+        UFPVDOVersion::try_from(self.version())
+    }
+}
+
+impl UFPTypeVDO {
     pub fn to_bytes(self, buf: &mut [u8]) {
         LittleEndian::write_u32(buf, self.0);
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum USBHighestSpeed {
     USB20Only,
@@ -491,20 +550,22 @@ impl From<USBHighestSpeed> for u8 {
     }
 }
 
-impl From<u8> for USBHighestSpeed {
-    fn from(value: u8) -> Self {
+impl TryFrom<u8> for USBHighestSpeed {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            0b000 => USBHighestSpeed::USB20Only,
-            0b001 => USBHighestSpeed::USB32Gen1,
-            0b010 => USBHighestSpeed::USB32Gen2,
-            0b011 => USBHighestSpeed::USB40Gen3,
-            0b100 => USBHighestSpeed::USB40Gen4,
-            _ => panic!("Cannot convert {} to USBHighestSpeed", value), // Illegal values shall panic.
+            0b000 => Ok(USBHighestSpeed::USB20Only),
+            0b001 => Ok(USBHighestSpeed::USB32Gen1),
+            0b010 => Ok(USBHighestSpeed::USB32Gen2),
+            0b011 => Ok(USBHighestSpeed::USB40Gen3),
+            0b100 => Ok(USBHighestSpeed::USB40Gen4),
+            _ => Err(value),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VconnPower {
     P1W,
@@ -530,22 +591,24 @@ impl From<VconnPower> for u8 {
     }
 }
 
-impl From<u8> for VconnPower {
-    fn from(value: u8) -> Self {
+impl TryFrom<u8> for VconnPower {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            0b000 => VconnPower::P1W,
-            0b001 => VconnPower::P1_5W,
-            0b010 => VconnPower::P2W,
-            0b011 => VconnPower::P3W,
-            0b100 => VconnPower::P4W,
-            0b101 => VconnPower::P5W,
-            0b110 => VconnPower::P6W,
-            _ => panic!("Cannot convert {} to VconnPower", value), // Illegal values shall panic.
+            0b000 => Ok(VconnPower::P1W),
+            0b001 => Ok(VconnPower::P1_5W),
+            0b010 => Ok(VconnPower::P2W),
+            0b011 => Ok(VconnPower::P3W),
+            0b100 => Ok(VconnPower::P4W),
+            0b101 => Ok(VconnPower::P5W),
+            0b110 => Ok(VconnPower::P6W),
+            _ => Err(value),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum UFPVDOVersion {
     Version1_3,
@@ -559,11 +622,13 @@ impl From<UFPVDOVersion> for u8 {
     }
 }
 
-impl From<u8> for UFPVDOVersion {
-    fn from(value: u8) -> Self {
+impl TryFrom<u8> for UFPVDOVersion {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            0b011 => UFPVDOVersion::Version1_3,
-            _ => panic!("Cannot convert {} to UFPVDOVersion", value), // Illegal values shall panic.
+            0b011 => Ok(UFPVDOVersion::Version1_3),
+            _ => Err(value),
         }
     }
 }
@@ -590,5 +655,108 @@ bitfield! {
 impl DisplayPortCapabilities {
     pub fn to_bytes(self, buf: &mut [u8]) {
         LittleEndian::write_u32(buf, self.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Reserved VDM values shall not panic when the fields are inspected.
+    #[test]
+    fn vdm_command_reserved_is_err_not_panic() {
+        // Known commands are 0x01..=0x06 and DP-specific 0x10/0x11. The 5-bit command
+        // field holds 0..=31; everything else in that range must error (not panic).
+        let reserved = (0u8..=0x1f).filter(|raw| !matches!(raw, 0x01..=0x06 | 0x10 | 0x11));
+        for raw in reserved {
+            let header = VdmHeaderStructured(VdmHeaderStructured::default().0 | raw as u32);
+            assert_eq!(header.try_command().is_err(), true, "raw 0x{raw:02x} must error");
+            assert_eq!(header.try_command().unwrap_err(), raw);
+        }
+    }
+
+    #[test]
+    fn vdm_command_type_value_checks() {
+        // command_type is a 2-bit field @ 6..=7 with four defined encodings.
+        let header = VdmHeaderStructured::default().with_command_type(0b01);
+        assert_eq!(header.try_command_type(), Ok(VdmCommandType::ResponderACK));
+        let header = VdmHeaderStructured::default().with_command_type(0b10);
+        assert_eq!(header.try_command_type(), Ok(VdmCommandType::ResponderNAK));
+        assert_eq!(header.command_type(), 0b10);
+    }
+
+    #[test]
+    fn vdm_version_reserved_is_err_not_panic() {
+        for raw in [0b10u8, 0b11] {
+            assert_eq!(VdmVersionMajor::try_from(raw).is_err(), true);
+            assert_eq!(VdmVersionMinor::try_from(raw).is_err(), true);
+        }
+    }
+
+    #[test]
+    fn identity_header_reserved_fields_are_err_not_panic() {
+        // UFP product type: only 0b000..=0b011 defined.
+        for raw in 0b100u8..=0b111 {
+            let header = VdmIdentityHeader((raw as u32) << 27);
+            assert_eq!(header.try_product_type_ufp().is_err(), true, "ufp {raw:#04b}");
+        }
+        // DFP product type: only 0b000..=0b011 defined.
+        for raw in 0b100u8..=0b111 {
+            let header = VdmIdentityHeader((raw as u32) << 23);
+            assert_eq!(header.try_product_type_dfp().is_err(), true, "dfp {raw:#04b}");
+        }
+        // Connector type: only 0b10/0b11 defined.
+        for raw in [0b00u8, 0b01] {
+            assert_eq!(ConnectorType::try_from(raw).is_err(), true);
+        }
+    }
+
+    #[test]
+    fn ufp_vdo_reserved_values_are_err_not_panic() {
+        // version: only 0b011 defined.
+        for raw in [0b000u8, 0b001, 0b010, 0b100, 0b111] {
+            let vdo = UFPTypeVDO((raw as u32) << 29);
+            assert_eq!(vdo.try_version().is_err(), true, "version {raw:#04b}");
+        }
+        // USB highest speed: only 0b000..=0b100 defined.
+        for raw in [0b101u8, 0b110, 0b111] {
+            let vdo = UFPTypeVDO(raw as u32);
+            assert_eq!(vdo.try_usb_highest_speed().is_err(), true, "speed {raw:#04b}");
+        }
+        // Vconn power: only 0b000..=0b110 defined.
+        let vdo = UFPTypeVDO((0b111_u32) << 8);
+        assert_eq!(vdo.try_vconn_power().is_err(), true);
+    }
+
+    #[test]
+    fn valid_values_convert() {
+        assert_eq!(VdmCommand::try_from(0x01).unwrap(), VdmCommand::DiscoverIdentity);
+        for (raw, expected) in [
+            (0u8, VdmCommandType::InitiatorREQ),
+            (1, VdmCommandType::ResponderACK),
+            (2, VdmCommandType::ResponderNAK),
+            (3, VdmCommandType::ResponderBSY),
+        ] {
+            assert_eq!(VdmCommandType::try_from(raw).unwrap(), expected);
+        }
+        for (raw, expected) in [(0b00u8, VdmVersionMajor::Version10), (0b01, VdmVersionMajor::Version2x)] {
+            assert_eq!(VdmVersionMajor::try_from(raw).unwrap(), expected);
+        }
+        for (raw, expected) in [(0b00u8, VdmVersionMinor::Version20), (0b01, VdmVersionMinor::Version21)] {
+            assert_eq!(VdmVersionMinor::try_from(raw).unwrap(), expected);
+        }
+        assert_eq!(
+            ConnectorType::try_from(0b10).unwrap(),
+            ConnectorType::USBTypeCReceptacle
+        );
+        assert_eq!(ConnectorType::try_from(0b11).unwrap(), ConnectorType::USBTypeCPlug);
+        assert_eq!(USBHighestSpeed::try_from(0b100).unwrap(), USBHighestSpeed::USB40Gen4);
+        assert_eq!(VconnPower::try_from(0b110).unwrap(), VconnPower::P6W);
+        assert_eq!(UFPVDOVersion::try_from(0b011).unwrap(), UFPVDOVersion::Version1_3);
+        assert_eq!(
+            SopProductTypeUfp::try_from(0b010).unwrap(),
+            SopProductTypeUfp::PdUsbPeripheral
+        );
+        assert_eq!(SopProductTypeDfp::try_from(0b001).unwrap(), SopProductTypeDfp::PDUSBHub);
     }
 }
