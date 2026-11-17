@@ -13,7 +13,7 @@
 
 use usbpd_traits::Driver;
 
-use crate::dpm::{DrpSwapHooks, VconnSwapHooks};
+use crate::dpm::{DrpSwap, VconnSwap};
 use crate::protocol_layer::message::header::{ControlMessageType, MessageType};
 use crate::protocol_layer::{ProtocolError, ProtocolLayer, RxError};
 use crate::swap_reply::{SwapReply, await_swap_reply};
@@ -74,7 +74,7 @@ pub(crate) enum Step<STATE> {
 /// The `SendSwap` reply handling differs per role: a `Not_Supported` reply and
 /// the reply timeouts surface in `VcsOutcome`, which the caller maps onto its
 /// role-specific states.
-pub(crate) async fn execute_vconn_swap_state<DRIVER: Driver, TIMER: Timer, H: VconnSwapHooks>(
+pub(crate) async fn execute_vconn_swap_state<DRIVER: Driver, TIMER: Timer, H: VconnSwap>(
     protocol_layer: &mut ProtocolLayer<DRIVER, TIMER>,
     dpm: &mut H,
     vconn_source: bool,
@@ -188,7 +188,7 @@ pub(crate) enum VcsOutcome {
 
 /// Execute one state of the Data Role Swap state machine
 /// (PD 3.2 Sec. 8.3.3.19.1/2, `PE_DRS`), shared by sink and source.
-pub(crate) async fn execute_data_role_swap_state<DRIVER: Driver, TIMER: Timer, H: DrpSwapHooks>(
+pub(crate) async fn execute_data_role_swap_state<DRIVER: Driver, TIMER: Timer, H: DrpSwap>(
     protocol_layer: &mut ProtocolLayer<DRIVER, TIMER>,
     dpm: &mut H,
     state: DataRoleSwap,

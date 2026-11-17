@@ -1,15 +1,14 @@
-//! Device policy manager hooks shared between the sink and source roles.
+//! Device policy manager functionality that is shared between the sink and source roles.
 //!
-//! The role-specific trait bundles live in [`crate::sink::device_policy_manager`]
-//! and [`crate::source::device_policy_manager`]. The hooks here mean the same
-//! thing on both sides of the protocol, so their defaults are defined once.
+//! The role-specific traits live in [`crate::sink::device_policy_manager`]
+//! and [`crate::source::device_policy_manager`].
 
 use core::future::Future;
 
 use crate::{DataRole, SwapType};
 
-/// Hooks used while executing a Vconn Swap, per PD 3.2 Sec. 8.3.3.20.
-pub trait VconnSwapHooks {
+/// Functions used while executing a Vconn Swap, per PD 3.2 Sec. 8.3.3.20.
+pub trait VconnSwap {
     /// Evaluate whether a vconn swap can be done by the device or not.
     ///
     /// Note: Wait responses are not supported. The PE answers `Accept` (true) or `Reject` (false).
@@ -23,8 +22,8 @@ pub trait VconnSwapHooks {
     }
 }
 
-/// Hooks shared by the Data Role Swap executor, per PD 3.2 Sec. 8.3.3.19.
-pub trait DrpSwapHooks {
+/// Functions shared by the Data Role Swap executor, per PD 3.2 Sec. 8.3.3.19.
+pub trait DrpSwap {
     /// DRP Evaluate a swap request.
     ///
     /// Note: Wait responses are not supported. The PE answers `Accept` (true) or `Reject` (false).

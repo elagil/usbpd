@@ -7,7 +7,7 @@ use core::future::Future;
 // Re-exported so user implementations can name the shared supertraits.
 // Their default hooks apply to the sink side as well; the role traits
 // bring them in as supertraits.
-pub use crate::dpm::{DrpSwapHooks, VconnSwapHooks};
+pub use crate::dpm::{DrpSwap, VconnSwap};
 use crate::protocol_layer::message::data::{request, sink_capabilities, source_capabilities};
 #[cfg(feature = "epr")]
 pub use crate::sink::epr_device_policy_manager::EprDevicePolicyManager;
@@ -76,15 +76,12 @@ pub enum Info {
 /// Full implementation for the sink device policy manager.
 /// The default implementations of the traits will handle the case where a feature is unsupported.
 #[cfg(feature = "epr")]
-pub trait SinkDpm:
-    DevicePolicyManager + EprDevicePolicyManager + DrpDevicePolicyManager + VconnSwapHooks + DrpSwapHooks
-{
-}
+pub trait SinkDpm: DevicePolicyManager + EprDevicePolicyManager + DrpDevicePolicyManager + VconnSwap + DrpSwap {}
 
 /// Full implementation for the sink device policy manager.
 /// The default implementations of the traits will handle the case where a feature is unsupported.
 #[cfg(not(feature = "epr"))]
-pub trait SinkDpm: DevicePolicyManager + DrpDevicePolicyManager + VconnSwapHooks + DrpSwapHooks {}
+pub trait SinkDpm: DevicePolicyManager + DrpDevicePolicyManager + VconnSwap + DrpSwap {}
 
 /// Trait for the device policy manager.
 ///

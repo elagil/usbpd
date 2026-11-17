@@ -107,8 +107,8 @@ impl SinkDPM for DummySinkEprDevice {
 
 impl SinkDrpDPM for DummySinkEprDevice {}
 impl SinkEprDPM for DummySinkEprDevice {}
-impl crate::dpm::VconnSwapHooks for DummySinkEprDevice {}
-impl crate::dpm::DrpSwapHooks for DummySinkEprDevice {}
+impl crate::dpm::VconnSwap for DummySinkEprDevice {}
+impl crate::dpm::DrpSwap for DummySinkEprDevice {}
 impl SinkDpm for DummySinkEprDevice {}
 
 // Empty EPR DPM impls for the SPR-only dummies.
