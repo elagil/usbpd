@@ -2,7 +2,6 @@
 //!
 //! Per PD 3.2 Sec. 6.5.
 
-pub mod chunked;
 #[cfg(feature = "epr")]
 pub mod epr;
 pub mod extended_control;
@@ -13,6 +12,9 @@ use proc_bitfield::bitfield;
 
 #[cfg(feature = "epr")]
 use crate::protocol_layer::message::data;
+
+/// Maximum data bytes in a single extended message chunk, per PD 3.2 Sec. 6.2.1.2.5.2.
+pub const MAX_EXTENDED_MSG_CHUNK_LEN: usize = 26;
 
 /// Extended message payload types, per PD 3.2 Sec. 6.5.
 #[derive(Debug, Clone)]
@@ -84,6 +86,9 @@ bitfield! {
 }
 
 impl ExtendedHeader {
+    /// Size of the extended message header in bytes.
+    pub const SIZE: usize = 2;
+
     /// Create a new, unchunked extended header for a given payload size.
     pub fn new(data_size: u16) -> Self {
         Self(0).with_data_size(data_size)

@@ -206,10 +206,11 @@ pub enum PowerSource {
 }
 
 /// Errors that can occur during sink requests towards the source.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
     /// A requested (specific) voltage does not exist in the PDOs.
+    #[error("requested voltage does not match any source PDO")]
     VoltageMismatch,
 }
 
