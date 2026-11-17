@@ -125,7 +125,7 @@ fn simulate_epr_keep_alive_ack<DPM: SinkDpm>(
     result
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_negotiation() {
     // Instantiated in `Discovery` state
     let driver = DummyDriver::new();
@@ -175,7 +175,7 @@ async fn test_negotiation() {
     assert_transmitted_good_crc(&mut policy_engine);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_epr_negotiation() {
     use crate::dummy::{DUMMY_SPR_CAPS_EPR_CAPABLE, DummySinkEprDevice};
 
@@ -499,7 +499,7 @@ async fn test_epr_negotiation() {
 
 /// A successful `PR_Swap` handoff must exit the policy engine with
 /// `RunResult::SwapToSource` instead of continuing the loop.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_pr_swap_to_source_startup_exits() {
     let driver = DummyDriver::new();
     let device = DummySinkDevice {};
@@ -534,7 +534,7 @@ impl crate::sink::device_policy_manager::SinkDpm for FrsRecordingDevice {}
 
 /// Per PD 3.2 Sec. 8.3.3.19.4.3: entering `PE_PRS_SNK_SRC_Accept_Swap` must disable the
 /// Fast Role Swap receiver (`DPM::set_fr_swap_detect(false)`).
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_pr_swap_accept_disables_frs_receiver() {
     // Reset the recording atomic for test isolation.
     FRS_DETECT_LAST.store(-1, core::sync::atomic::Ordering::Relaxed);
@@ -580,7 +580,7 @@ async fn test_pr_swap_accept_disables_frs_receiver() {
 
 /// Pins the FRS `Source_on` behavior: PS_RDY on exit (PD 3.2 Sec. 8.3.3.19.6.6).
 /// Characterization test — this was already correct before the FRS fixes.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_frs_source_on_sends_ps_rdy() {
     let driver = DummyDriver::new();
     let device = DummySinkDevice {};
@@ -606,7 +606,7 @@ async fn test_frs_source_on_sends_ps_rdy() {
 }
 
 /// A malformed `EPR_Mode`-typed frame (payload length != 4 bytes) parses as `Data::Unknown` and must Soft Reset.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_epr_mode_entry_unknown_payload_soft_resets() {
     let driver = DummyDriver::new();
     let device = DummySinkDevice {};
@@ -639,7 +639,7 @@ async fn test_epr_mode_entry_unknown_payload_soft_resets() {
 }
 
 /// Per PD 3.2 Sec. 8.3.3.20.5: VCONNOnTimer timeout in `WaitForVconn` → HardReset.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_vconn_swap_wait_for_vconn_timeout_hard_resets() {
     let driver = DummyDriver::new();
     let device = DummySinkDevice {};
@@ -663,7 +663,7 @@ async fn test_vconn_swap_wait_for_vconn_timeout_hard_resets() {
 
 /// Per PD 3.2 Sec. 8.3.3.19.1.5: SenderResponseTimer timeout on a sink-initiated
 /// `Data_Role_Swap` → Ready, not an endless re-send loop.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_data_role_swap_send_timeout_to_ready() {
     let driver = DummyDriver::new();
     let device = DummySinkDevice {};
@@ -687,7 +687,7 @@ async fn test_data_role_swap_send_timeout_to_ready() {
 }
 
 /// Sending the Data Role Swap request transmits a `Data_Role_Swap` control message.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_data_role_swap_send_transmits_request() {
     let driver = DummyDriver::new();
     let device = DummySinkDevice {};

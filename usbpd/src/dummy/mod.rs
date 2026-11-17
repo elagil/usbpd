@@ -108,16 +108,15 @@ impl SinkDrpDPM for DummyDualRoleDevice {}
 impl SinkDpm for DummyDualRoleDevice {}
 
 /// A dummy timer for testing.
+///
+/// Relies on tokio's test clock. With `#[tokio::test(start_paused = true)]`, timer deadlines only advance while all
+/// tasks are idle, so a message injected before `run_step()` is always delivered before any timeout expires, and
+/// timeouts are deterministic.
 pub struct DummyTimer;
 
 impl Timer for DummyTimer {
-    async fn after_millis(_milliseconds: u64) {
-        // Should work OK since msgs should always send and arrive instantly in tests,
-        // such that timeouts never occur if a messaging sequence was pre-defined by the
-        // dummy endpoint before running `policy_engine.run_step().await.unwrap()`
-        for _ in 0..6 {
-            embassy_futures::yield_now().await;
-        }
+    async fn after_millis(milliseconds: u64) {
+        tokio::time::sleep(core::time::Duration::from_millis(milliseconds)).await;
     }
 }
 
