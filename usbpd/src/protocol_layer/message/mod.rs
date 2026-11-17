@@ -121,10 +121,9 @@ impl Message {
                 // objects padded to the 4-byte boundary, counting the Extended
                 // Message Header into the first object (see also Fig. 6.9).
                 let num_objects = (ExtendedHeader::SIZE + first_chunk_len).div_ceil(4) as u8;
-                let header = Header::from_bytes(&buffer[..MSG_HEADER_SIZE])
-                    .expect("header was just serialized")
-                    .with_num_objects(num_objects);
-                header.to_bytes(&mut buffer[..MSG_HEADER_SIZE]);
+                let mut header = self.header;
+                header.set_num_objects(num_objects);
+                header.to_bytes(buffer);
 
                 header_len + ExtendedHeader::SIZE + first_chunk_len
             }

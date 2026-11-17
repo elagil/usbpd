@@ -887,58 +887,15 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
     }
 
     async fn execute_data_role_swap_state(&mut self, state: DataRoleSwap) -> Result<State, Error> {
-        match state {
-            // PD 3.2 Sec. 8.3.3.19.2.1 (PE_DRS_DFP_UFP_Evaluate_Swap, PE_DRS_UFP_DFP_Evaluate_Swap):
-            DataRoleSwap::Evaluate => Ok(State::DrpSwap(SwapState::Data(
-                match self.device_policy_manager.evaluate_swap_request(SwapType::Data).await {
-                    true => DataRoleSwap::Accept,
-                    false => DataRoleSwap::Reject,
-                },
-            ))),
-            // PD 3.2 Sec. 8.3.3.19.1.3 (PE_DRS_DFP_UFP_Accept_Swap, PE_DRS_UFP_DFP_Accept_Swap):
-            DataRoleSwap::Accept => {
-                self.protocol_layer
-                    .transmit_control_message(ControlMessageType::Accept)
-                    .await?;
-                Ok(State::DrpSwap(SwapState::Data(DataRoleSwap::Change)))
-            }
-            // PD 3.2 Sec. 8.3.3.19.1.4 (PE_DRS_DFP_UFP_Change_to_UFP_Swap, PE_DRS_UFP_DFP_Change_to_DFP_Swap):
-            DataRoleSwap::Change => {
-                let new_role = match self.protocol_layer.header().port_data_role() {
-                    DataRole::Ufp => DataRole::Dfp,
-                    DataRole::Dfp => DataRole::Ufp,
-                };
-                self.device_policy_manager.swap_data_role(new_role).await;
-                Ok(State::Ready(false))
-            }
-            // PD 3.2 Sec. 8.3.3.19.1.5 (PE_DRS_DFP_UFP_Send_Swap, PE_DRS_UFP_DFP_Send_Swap):
-            DataRoleSwap::Send => {
-                self.protocol_layer
-                    .transmit_control_message(ControlMessageType::DrSwap)
-                    .await?;
-
-                // Per PD 3.2 Sec. 6.6.4.3: after a DR_Swap Wait, only a new DR_Swap is
-                // gated (tDRSwapWait). A power Request must not be armed, so no
-                // SinkRequestTimer. Re-initiating the DR_Swap is left to the DPM.
-                match crate::swap_reply::await_swap_reply(
-                    &mut self.protocol_layer,
-                    crate::swap_reply::SwapReply::AcceptRejectWait,
-                )
-                .await?
-                {
-                    ControlMessageType::Accept => Ok(State::DrpSwap(SwapState::Data(DataRoleSwap::Change))),
-                    _ => Ok(State::Ready(false)),
-                }
-            }
-            // PD 3.2 Sec. 8.3.3.19.1.6 (PE_DRS_DFP_UFP_Reject_Swap, PE_DRS_UFP_DFP_Reject_Swap):
-            DataRoleSwap::Reject => {
-                // Note: A `Wait` response would require a DPM tri-state decision. Not
-                // supported yet (see CHANGELOG Known limitations).
-                self.protocol_layer
-                    .transmit_control_message(ControlMessageType::Reject)
-                    .await?;
-                Ok(State::Ready(false))
-            }
+        match crate::swap::execute_data_role_swap_state(
+            &mut self.protocol_layer,
+            &mut self.device_policy_manager,
+            state,
+        )
+        .await?
+        {
+            crate::swap::Step::Continue(next) => Ok(State::DrpSwap(SwapState::Data(next))),
+            crate::swap::Step::Done(crate::swap::Exit::Ready) => Ok(State::Ready(false)),
         }
     }
 
@@ -1102,105 +1059,19 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SinkDpm> Sink<DRIVER, TIMER, DPM> {
 
     // PD 3.2 Sec. 8.3.3.20 Sink Vconn Swap
     async fn execute_vconn_swap_state(&mut self, state: VcsState) -> Result<State, Error> {
-        let new_state = match state {
-            // PD 3.2 Sec. 8.3.3.20.1 (PE_VCS_Send_Swap):
-            VcsState::SendSwap => {
-                self.protocol_layer
-                    .transmit_control_message(ControlMessageType::VconnSwap)
-                    .await?;
-
-                // Note: The DPM is not informed of the Wait. Proper Wait handling for the
-                // VCS initiating side is a known limitation (see CHANGELOG).
-                // May also transition to ForceVconn if NotSupported message and port presently not vconn source
-                match crate::swap_reply::await_swap_reply(
-                    &mut self.protocol_layer,
-                    crate::swap_reply::SwapReply::AcceptRejectWaitNotSupported,
-                )
-                .await?
-                {
-                    ControlMessageType::Accept => match self.vconn_source {
-                        true => State::VconnSwap(VcsState::WaitForVconn),
-                        false => State::VconnSwap(VcsState::TurnOnVconn),
-                    },
-                    ControlMessageType::NotSupported => State::NotSupportedReceived,
-                    _ => State::Ready(false),
-                }
-            }
-            // PD 3.2 Sec. 8.3.3.20.2 (PE_VCS_Evaluate_Swap):
-            VcsState::EvaluateSwap => {
-                let request_accepted = self.device_policy_manager.evaluate_vconn_swap_request().await;
-
-                if request_accepted {
-                    State::VconnSwap(VcsState::AcceptSwap)
-                } else {
-                    State::VconnSwap(VcsState::RejectSwap)
-                }
-            }
-            // PD 3.2 Sec. 8.3.3.20.3 (PE_VCS_Accept_Swap):
-            VcsState::AcceptSwap => {
-                self.protocol_layer
-                    .transmit_control_message(ControlMessageType::Accept)
-                    .await?;
-
-                if self.vconn_source {
-                    State::VconnSwap(VcsState::WaitForVconn)
-                } else {
-                    State::VconnSwap(VcsState::TurnOnVconn)
-                }
-            }
-            // PD 3.2 Sec. 8.3.3.20.4 (PE_VCS_Reject_Swap):
-            VcsState::RejectSwap => {
-                // Note: A `Wait` response would require a DPM tri-state decision. Not
-                // supported yet (see CHANGELOG Known limitations).
-                self.protocol_layer
-                    .transmit_control_message(ControlMessageType::Reject)
-                    .await?;
-
-                State::Ready(false)
-            }
-            // PD 3.2 Sec. 8.3.3.20.5 (PE_VCS_Wait_for_Vconn):
-            VcsState::WaitForVconn => {
-                self.protocol_layer
-                    .receive_message_type(&[MessageType::Control(ControlMessageType::PsRdy)], TimerType::VCONNOn)
-                    .await?;
-
-                State::VconnSwap(VcsState::TurnOffVconn)
-            }
-            // PD 3.2 Sec. 8.3.3.20.6 (PE_VCS_Turn_Off_Vconn):
-            VcsState::TurnOffVconn => {
-                self.device_policy_manager
-                    .drive_vconn(false)
-                    .await
-                    .map_err(|_| Error::ReconnectionRequired)?;
-
-                State::Ready(false)
-            }
-            // PD 3.2 Sec. 8.3.3.20.7 (PE_VCS_Turn_On_Vconn):
-            VcsState::TurnOnVconn => {
-                self.device_policy_manager
-                    .drive_vconn(true)
-                    .await
-                    .map_err(|_| Error::ReconnectionRequired)?;
-                State::VconnSwap(VcsState::SendPsRdy)
-            }
-            // PD 3.2 Sec. 8.3.3.20.8 (PE_VCS_Send_PS_Rdy):
-            VcsState::SendPsRdy => {
-                self.protocol_layer
-                    .transmit_control_message(ControlMessageType::PsRdy)
-                    .await?;
-                State::Ready(false)
-            }
-            // PD 3.2 Sec. 8.3.3.20.9 (PE_VCS_Force_Vconn):
-            VcsState::ForceVconn => {
-                self.device_policy_manager
-                    .drive_vconn(true)
-                    .await
-                    .map_err(|_| Error::ReconnectionRequired)?;
-                State::Ready(false)
-            }
-        };
-
-        Ok(new_state)
+        match crate::swap::execute_vconn_swap_state(
+            &mut self.protocol_layer,
+            &mut self.device_policy_manager,
+            self.vconn_source,
+            state,
+        )
+        .await?
+        {
+            crate::swap::VcsOutcome::Continue(next) => Ok(State::VconnSwap(next)),
+            crate::swap::VcsOutcome::Start(next) => Ok(State::VconnSwap(next)),
+            crate::swap::VcsOutcome::NotSupported => Ok(State::NotSupportedReceived),
+            crate::swap::VcsOutcome::Done(crate::swap::Exit::Ready) => Ok(State::Ready(false)),
+        }
     }
 
     #[cfg(feature = "epr")]

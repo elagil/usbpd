@@ -101,8 +101,12 @@ impl ExtendedHeader {
     }
 
     /// Parse an extended header from bytes.
+    ///
+    /// The caller shall validate the buffer length before calling. The receive
+    /// path checks the length before slicing (`Message::from_bytes` and the
+    /// chunk paths in the protocol layer).
     pub fn from_bytes(buf: &[u8]) -> Self {
-        assert!(buf.len() >= 2);
+        debug_assert!(buf.len() >= Self::SIZE);
         Self(LittleEndian::read_u16(buf))
     }
 }

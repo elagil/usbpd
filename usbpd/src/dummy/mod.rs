@@ -11,8 +11,7 @@ pub use epr::{
 };
 use usbpd_traits::Driver;
 
-use crate::SwapType;
-use crate::protocol_layer::message::data::request::{self, PowerSource};
+use crate::protocol_layer::message::data::request;
 use crate::protocol_layer::message::data::source_capabilities::{
     Augmented, FixedSupply, PowerDataObject, SourceCapabilities, SprProgrammablePowerSupply,
 };
@@ -34,36 +33,26 @@ pub const MAX_DATA_MESSAGE_SIZE: usize = 30;
 const MAX_SPR_OBJ_POS: u8 = 8;
 
 /// A dummy sink device that implements the sink device policy manager.
-pub struct DummySinkDevice {}
+pub struct DummySinkDevice;
+
+impl crate::dpm::VconnSwapHooks for DummySinkDevice {}
+impl crate::dpm::DrpSwapHooks for DummySinkDevice {}
 
 impl SinkDPM for DummySinkDevice {}
 impl SinkDrpDPM for DummySinkDevice {}
 impl SinkDpm for DummySinkDevice {}
 
-/// A dummy capable of sourcing non-EPR power
+/// A dummy capable of sourcing non-EPR power.
 pub struct DummySourceDevice;
 
-impl SourceDPM for DummySourceDevice {
-    async fn evaluate_request(&mut self, request: &request::PowerSource) -> SourceCapabilityResponse {
-        if request.object_position() < 8 {
-            SourceCapabilityResponse::Accept
-        } else {
-            SourceCapabilityResponse::Reject
-        }
-    }
-
-    fn source_capabilities(&mut self) -> SourceCapabilities {
-        SourceCapabilities(heapless::Vec::from_slice(get_dummy_source_capabilities().as_slice()).unwrap())
-    }
-}
-
-impl SourceDrpDPM for DummySourceDevice {}
-impl SourceDpm for DummySourceDevice {}
-
+/// A dummy dual-role device, reporting a fast role swap signal and accepting
+/// every swap request.
 pub struct DummyDualRoleDevice;
 
-impl SourceDPM for DummyDualRoleDevice {
-    async fn evaluate_request(&mut self, request: &PowerSource) -> SourceCapabilityResponse {
+// Common source device behavior: accept non-EPR object positions,
+// expose the dummy capabilities and accept every swap request.
+impl SourceDPM for DummySourceDevice {
+    async fn evaluate_request(&mut self, request: &request::PowerSource) -> SourceCapabilityResponse {
         if request.object_position() < MAX_SPR_OBJ_POS {
             SourceCapabilityResponse::Accept
         } else {
@@ -76,19 +65,41 @@ impl SourceDPM for DummyDualRoleDevice {
     }
 }
 
-impl SourceDrpDPM for DummyDualRoleDevice {
-    async fn evaluate_swap_request(&mut self, swap_request: SwapType) -> bool {
-        match swap_request {
-            SwapType::Data => true,
-            SwapType::Power => true,
+impl SourceDPM for DummyDualRoleDevice {
+    async fn evaluate_request(&mut self, request: &request::PowerSource) -> SourceCapabilityResponse {
+        if request.object_position() < MAX_SPR_OBJ_POS {
+            SourceCapabilityResponse::Accept
+        } else {
+            SourceCapabilityResponse::Reject
         }
     }
 
+    fn source_capabilities(&mut self) -> SourceCapabilities {
+        SourceCapabilities(heapless::Vec::from_slice(get_dummy_source_capabilities().as_slice()).unwrap())
+    }
+}
+
+// The dual role dummy reports a fast role swap signal and accepts every
+// swap request.
+impl SourceDrpDPM for DummyDualRoleDevice {
     async fn fr_swap_signaled(&mut self) -> bool {
         true
     }
 }
 
+impl crate::dpm::DrpSwapHooks for DummyDualRoleDevice {
+    async fn evaluate_swap_request(&mut self, _swap_request: crate::SwapType) -> bool {
+        true
+    }
+}
+
+// The hook and bundle impls default on both devices.
+impl crate::dpm::VconnSwapHooks for DummySourceDevice {}
+impl crate::dpm::DrpSwapHooks for DummySourceDevice {}
+impl SourceDrpDPM for DummySourceDevice {}
+impl SourceDpm for DummySourceDevice {}
+
+impl crate::dpm::VconnSwapHooks for DummyDualRoleDevice {}
 impl SourceDpm for DummyDualRoleDevice {}
 
 impl SinkDPM for DummyDualRoleDevice {}
@@ -96,19 +107,16 @@ impl SinkDrpDPM for DummyDualRoleDevice {}
 impl SinkDpm for DummyDualRoleDevice {}
 
 /// A dummy timer for testing.
-pub struct DummyTimer {}
+pub struct DummyTimer;
 
 impl Timer for DummyTimer {
     async fn after_millis(_milliseconds: u64) {
         // Should work OK since msgs should always send and arrive instantly in tests,
         // such that timeouts never occur if a messaging sequence was pre-defined by the
         // dummy endpoint before running `policy_engine.run_step().await.unwrap()`
-        embassy_futures::yield_now().await;
-        embassy_futures::yield_now().await;
-        embassy_futures::yield_now().await;
-        embassy_futures::yield_now().await;
-        embassy_futures::yield_now().await;
-        embassy_futures::yield_now().await;
+        for _ in 0..6 {
+            embassy_futures::yield_now().await;
+        }
     }
 }
 
@@ -143,7 +151,7 @@ impl<const N: usize> DummyDriver<N> {
 
     /// Probe data that was transmitted by the stack.
     pub fn probe_transmitted_data(&mut self) -> heapless::Vec<u8, N> {
-        eprintln!("probe_transmitted_data called, tx_vec len: {}", self.tx_vec.len());
+        debug!("probe_transmitted_data called, tx_vec len: {}", self.tx_vec.len());
         self.tx_vec.remove(0)
     }
 

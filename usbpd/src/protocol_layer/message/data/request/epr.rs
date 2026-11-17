@@ -5,11 +5,10 @@
 use byteorder::{ByteOrder, LittleEndian};
 use proc_bitfield::bitfield;
 
-use super::super::request::{Avs, CurrentRequest, Error, PowerSource};
+use super::super::request::{Avs, CurrentRequest, Error, IndexedAugmented, PowerSource};
 use super::super::source_capabilities::{Augmented, PowerDataObject, SourceCapabilities};
 use crate::_25millivolts_mod::_25millivolts;
 use crate::_50milliamperes_mod::_50milliamperes;
-use crate::protocol_layer::request::IndexedAugmented;
 use crate::units::ElectricPotential;
 
 /// EPR Request containing RDO + copy of requested PDO for source verification.

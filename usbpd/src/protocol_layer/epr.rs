@@ -24,6 +24,27 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
             .await
     }
 
+    /// Transmit an extended message carrying a PDO list payload.
+    ///
+    /// Shared by the EPR source and EPR sink capability transmissions.
+    async fn transmit_extended_payload(
+        &mut self,
+        message_type: ExtendedMessageType,
+        extended_payload: extended::Extended,
+    ) -> Result<(), ProtocolError> {
+        let header = Header::new_extended(
+            self.default_header,
+            self.counters.tx_message,
+            message_type,
+            0, // num_objects is Reserved (0) for chunked extended messages
+        );
+
+        let mut message = Message::new(header);
+        message.payload = Some(Payload::Extended(extended_payload));
+
+        self.transmit(message).await
+    }
+
     /// Transmit the device's EPR Source Capabilities
     ///
     /// Could be sent from a Source or Dual Role Device. Also accessible on
@@ -34,20 +55,12 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
     ) -> Result<(), ProtocolError> {
         debug_assert!(matches!(self.default_header.port_power_role(), PowerRole::Source));
 
-        let pdos: heapless::Vec<_, 16> = source_capabilities.0.iter().cloned().collect();
-        let extended_payload = extended::Extended::EprSourceCapabilities(pdos);
-
-        let header = Header::new_extended(
-            self.default_header,
-            self.counters.tx_message,
+        let pdos: heapless::Vec<_, 16> = source_capabilities.0.iter().copied().collect();
+        self.transmit_extended_payload(
             ExtendedMessageType::EprSourceCapabilities,
-            0, // num_objects is 0 for extended messages
-        );
-
-        let mut message = Message::new(header);
-        message.payload = Some(Payload::Extended(extended_payload));
-
-        self.transmit(message).await
+            extended::Extended::EprSourceCapabilities(pdos),
+        )
+        .await
     }
 
     /// Transmit an EPR mode data message.
@@ -74,21 +87,12 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         &mut self,
         capabilities: SinkCapabilities,
     ) -> Result<(), ProtocolError> {
-        // Convert SinkCapabilities PDOs to the extended message format
-        let pdos: heapless::Vec<_, 7> = capabilities.0.iter().cloned().collect();
-        let extended_payload = extended::Extended::EprSinkCapabilities(pdos);
-
-        let header = Header::new_extended(
-            self.default_header,
-            self.counters.tx_message,
+        let pdos: heapless::Vec<_, 7> = capabilities.0.iter().copied().collect();
+        self.transmit_extended_payload(
             ExtendedMessageType::EprSinkCapabilities,
-            0, // num_objects is Reserved (0) for unchunked extended messages per spec 6.2.1.1.2
-        );
-
-        let mut message = Message::new(header);
-        message.payload = Some(Payload::Extended(extended_payload));
-
-        self.transmit(message).await
+            extended::Extended::EprSinkCapabilities(pdos),
+        )
+        .await
     }
 }
 

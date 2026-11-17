@@ -2,4 +2,4 @@ build:
     .github/ci/build.sh
 
 test:
-    cargo test
+    bash .github/ci/host.sh

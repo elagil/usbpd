@@ -5,6 +5,25 @@ All notable changes to the `usbpd` and `usbpd-traits` crates are documented here
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Breaking
+
+- The previously duplicated DPM hooks `evaluate_swap_request`, `disable`,
+  `swap_data_role`, `evaluate_vconn_swap_request` and `drive_vconn` moved to the shared
+  supertraits `usbpd::sink::device_policy_manager::DrpSwapHooks` /
+  `VconnSwapHooks` (also re-exported from `usbpd::source::device_policy_manager`).
+  Implementations of `SinkDpm`/`SourceDpm` keep compiling unchanged.
+- `request::Battery::to_bytes` returns the written byte count (4) like the other RDO
+  serializers, instead of returning unit.
+
+### Fixed
+
+- Frames from the driver shorter than a message header are rejected as
+  `ParseError::InvalidLength` before any slicing; previously
+  `Message::from_bytes` panicked on such a frame, and the extended-header parse could
+  panic before the payload length check.
+
 ## [4.0.0] - `usbpd`
 
 ### Breaking

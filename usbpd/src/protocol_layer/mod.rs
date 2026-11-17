@@ -101,9 +101,6 @@ pub enum TxError {
 
 #[derive(Debug)]
 struct Counters {
-    _busy: Counter,
-    _caps: Counter, // Unused, optional.
-    _discover_identity: Counter,
     rx_message: Option<Counter>,
     tx_message: Counter,
     retry: Counter,
@@ -112,9 +109,6 @@ struct Counters {
 impl Default for Counters {
     fn default() -> Self {
         Counters {
-            _busy: Counter::new(CounterType::Busy),
-            _caps: Counter::new(CounterType::Caps),
-            _discover_identity: Counter::new(CounterType::DiscoverIdentity),
             rx_message: None,
             tx_message: Counter::new(CounterType::MessageId),
             retry: Counter::new(CounterType::Retry),
@@ -867,6 +861,32 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         self.transmit(message).await
     }
 
+    /// Transmit an already serialized frame and wait for its acknowledgement
+    /// when the driver does not do so itself.
+    ///
+    /// Shared by the chunk response and chunk request paths, which do not retry
+    /// on their own: a lost chunk triggers the partner's chunk error flow.
+    async fn transmit_frame(&mut self, buffer: &[u8]) -> Result<(), RxError> {
+        if DRIVER::HAS_AUTO_RETRY {
+            // Hardware handles retries and verifies GoodCRC reception.
+            match self.driver.transmit(buffer).await {
+                Ok(()) => {
+                    self.counters.retry.reset();
+                    _ = self.counters.tx_message.increment();
+                    Ok(())
+                }
+                Err(DriverTxError::HardReset) => Err(RxError::HardReset),
+                Err(DriverTxError::Discarded) => Err(RxError::ReceiveTimeout),
+            }
+        } else {
+            match self.transmit_inner(buffer).await {
+                Ok(_) => self.wait_for_good_crc().await,
+                Err(TxError::HardReset) => Err(RxError::HardReset),
+                Err(_) => Err(RxError::ReceiveTimeout),
+            }
+        }
+    }
+
     /// Answer a `Chunk Request` with the requested chunk of the retained extended
     /// payload (PD 3.2 Sec. 6.12.2.1.2.2).
     async fn transmit_chunk_response(
@@ -893,23 +913,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         buffer[offset..offset + chunk_data.len()].copy_from_slice(chunk_data);
         offset += chunk_data.len();
 
-        if DRIVER::HAS_AUTO_RETRY {
-            match self.driver.transmit(&buffer[..offset]).await {
-                Ok(()) => {
-                    self.counters.retry.reset();
-                    _ = self.counters.tx_message.increment();
-                    Ok(())
-                }
-                Err(DriverTxError::HardReset) => Err(RxError::HardReset),
-                Err(DriverTxError::Discarded) => Err(RxError::ReceiveTimeout),
-            }
-        } else {
-            match self.transmit_inner(&buffer[..offset]).await {
-                Ok(_) => self.wait_for_good_crc().await,
-                Err(TxError::HardReset) => Err(RxError::HardReset),
-                Err(_) => Err(RxError::ReceiveTimeout),
-            }
-        }
+        self.transmit_frame(&buffer[..offset]).await
     }
 
     /// Transmit a chunk request message per PD 3.2 Sec. 6.12.2.1.2.4.
@@ -943,25 +947,7 @@ impl<DRIVER: Driver, TIMER: Timer> ProtocolLayer<DRIVER, TIMER> {
         offset += 2;
 
         // Transmit and wait for GoodCRC
-        if DRIVER::HAS_AUTO_RETRY {
-            match self.driver.transmit(&buffer[..offset]).await {
-                Ok(()) => {
-                    self.counters.retry.reset();
-                    _ = self.counters.tx_message.increment();
-                    Ok(())
-                }
-                Err(DriverTxError::HardReset) => Err(RxError::HardReset),
-                Err(DriverTxError::Discarded) => Err(RxError::ReceiveTimeout),
-            }
-        } else {
-            match self.transmit_inner(&buffer[..offset]).await {
-                Ok(_) => self.wait_for_good_crc().await,
-                Err(TxError::HardReset) => Err(RxError::HardReset),
-                Err(TxError::UnchunkedExtendedMessagesNotSupported | TxError::AvsVoltageAlignmentInvalid) => {
-                    unreachable!("validation should happen before transmit_inner")
-                }
-            }
-        }
+        self.transmit_frame(&buffer[..offset]).await
     }
 
     /// Transmit sink capabilities in response to Get_Sink_Cap.

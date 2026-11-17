@@ -79,8 +79,10 @@ impl ExtendedControl {
     }
 
     /// Parse an extended control message from bytes.
+    ///
+    /// The caller shall validate the buffer length before calling.
     pub fn from_bytes(buf: &[u8]) -> Self {
-        assert!(buf.len() >= 2);
+        debug_assert!(buf.len() >= 2);
         Self(LittleEndian::read_u16(buf))
     }
 }
