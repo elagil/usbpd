@@ -1182,7 +1182,7 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                 };
 
                 // Per PD 3.2 Tab. 6.25 (B22): the RDO Shall set the EPRCapable bit.
-                let epr_capable = epr_request.epr_capable();
+                let epr_capable = epr_request.is_epr_capable();
 
                 let position = epr_request.object_position();
                 let epr_caps = self.device_policy_manager.epr_source_capabilities();

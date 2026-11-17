@@ -37,7 +37,7 @@ impl EprRequestDataObject {
     /// Check whether the RDO sets the EPRCapable bit.
     ///
     /// Per PD 3.2 Tab. 6.23 (B22).
-    pub fn epr_capable(&self) -> bool {
+    pub fn is_epr_capable(&self) -> bool {
         RawDataObject(self.rdo).epr_mode_capable()
     }
 }

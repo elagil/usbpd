@@ -136,16 +136,19 @@ impl Header {
 }
 
 /// PD specification revision (PD 3.2 Sec. 1.4 Terms and Abbreviations).
-#[derive(Debug, Clone, Copy)]
+///
+/// The discriminants mirror the 2-bit field per Sec. 6.2.1.1.3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[allow(non_camel_case_types)]
 pub enum SpecificationRevision {
     /// Version 1.0.
-    R1_0,
+    R1_0 = 0b00,
     /// Version 2.0.
-    R2_0,
+    R2_0 = 0b01,
     /// Version 3.x.
-    R3_X,
+    R3_X = 0b10,
 }
 
 impl TryFrom<u8> for SpecificationRevision {
@@ -162,11 +165,7 @@ impl TryFrom<u8> for SpecificationRevision {
 
 impl From<SpecificationRevision> for u8 {
     fn from(value: SpecificationRevision) -> Self {
-        match value {
-            SpecificationRevision::R1_0 => 0b00,
-            SpecificationRevision::R2_0 => 0b01,
-            SpecificationRevision::R3_X => 0b10,
-        }
+        value as u8
     }
 }
 
@@ -183,8 +182,11 @@ pub enum MessageType {
 }
 
 /// Types of control messages.
+///
+/// The discriminants mirror the 5-bit Message Type field per Sec. 6.2.1.1.8 / Tab. 6.6.
 #[allow(missing_docs)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ControlMessageType {
     GoodCRC = 0b0_0001,
@@ -247,7 +249,10 @@ impl From<u8> for ControlMessageType {
 }
 
 /// Types of data messages.
+///
+/// The discriminants mirror the 5-bit Message Type field per Sec. 6.2.1.1.8 / Tab. 6.7.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[allow(missing_docs)]
 pub enum DataMessageType {
@@ -316,7 +321,10 @@ impl From<u8> for ExtendedMessageType {
 }
 
 /// Types of extended messages.
+///
+/// The discriminants mirror the 5-bit Message Type field per Sec. 6.2.1.1.8 / Tab. 6.47.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[allow(missing_docs)]
 pub enum ExtendedMessageType {

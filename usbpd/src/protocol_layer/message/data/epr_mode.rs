@@ -4,7 +4,10 @@
 use proc_bitfield::bitfield;
 
 /// Possible actions, encoded in the EPR mode data object.
+///
+/// The defined values mirror the 8-bit Action field per Sec. 6.4.10 / Tab. 6.50.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Action {
     /// Enter EPR mode.
@@ -71,43 +74,31 @@ impl Default for EprModeDataObject {
 }
 
 /// Causes for failing to enter EPR mode.
-#[derive(Debug, Clone, Copy)]
+///
+/// The discriminants mirror the 8-bit Data field per Sec. 6.4.10 / Tab. 6.50.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DataEnterFailed {
     /// Unknown cause.
-    UnknownCause,
+    UnknownCause = 0x00,
     /// The cable is not EPR capable.
-    CableNotEprCapable,
+    CableNotEprCapable = 0x01,
     /// The source failed to become the Vconn source.
-    SourceFailedToBecomeVconnSource,
+    SourceFailedToBecomeVconnSource = 0x02,
     /// The "EPR capable" bit is not set in RDO.
-    EprCapableBitNotSetInRdo,
+    EprCapableBitNotSetInRdo = 0x03,
     /// The source is unable to enter EPR mode.
     ///
     /// The sink may retry entering EPR mode after receiving this [`Action::EnterFailed`] response.
-    SourceUnableToEnterEprMode,
+    SourceUnableToEnterEprMode = 0x04,
     /// The "EPR capable" bit is not set in PDO.
-    EprCapableBitNotSetInPdo,
+    EprCapableBitNotSetInPdo = 0x05,
 }
-
-impl PartialEq for DataEnterFailed {
-    fn eq(&self, other: &Self) -> bool {
-        core::mem::discriminant(self) == core::mem::discriminant(other)
-    }
-}
-
-impl Eq for DataEnterFailed {}
 
 impl From<DataEnterFailed> for u8 {
     fn from(value: DataEnterFailed) -> Self {
-        match value {
-            DataEnterFailed::UnknownCause => 0x00,
-            DataEnterFailed::CableNotEprCapable => 0x01,
-            DataEnterFailed::SourceFailedToBecomeVconnSource => 0x02,
-            DataEnterFailed::EprCapableBitNotSetInRdo => 0x03,
-            DataEnterFailed::SourceUnableToEnterEprMode => 0x04,
-            DataEnterFailed::EprCapableBitNotSetInPdo => 0x05,
-        }
+        value as u8
     }
 }
 
