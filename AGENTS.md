@@ -75,8 +75,8 @@ RUSTFLAGS="-D warnings" cargo clippy --workspace --all-targets
 cargo test --workspace
 ```
 
-Feature-sensitive work adds `cargo test -p usbpd --no-default-features` and
-`cargo build -p usbpd --features serde,log,defmt`.
+Feature-sensitive work adds `cargo test -p usbpd --no-default-features`.
+`log` and `defmt` are mutually exclusive (compile error when both enabled).
 The full CI matrix (host plus all firmware targets) is `bash .github/ci/build.sh`.
 
 ## Commit style
