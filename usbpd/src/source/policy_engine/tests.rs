@@ -88,7 +88,7 @@ async fn run_test_step<DPM: SourceDpm>(
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_negotiation() {
     let driver = DummyDriver::new();
     let device = DummySourceDevice;
@@ -225,7 +225,7 @@ async fn test_negotiation() {
     }
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_discovery() {
     const MAX_DISCOVERY_ITERS: usize = 52;
     let driver = DummyDriver::new();
@@ -294,7 +294,7 @@ async fn skip_to_ready<DPM: SourceDpm>(
     assert!(matches!(policy_engine.state, State::Ready));
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_role_swapping() {
     {
         let driver = DummyDriver::new();
@@ -527,7 +527,7 @@ async fn test_role_swapping() {
 }
 
 /// A successful PR_Swap handoff must exit the policy engine with `RunResult::SwapToSink` instead of continuing the loop.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_pr_swap_to_sink_startup_exits() {
     let driver = DummyDriver::new();
     let device = DummySourceDevice;
@@ -546,7 +546,7 @@ async fn test_pr_swap_to_sink_startup_exits() {
 
 /// Per PD 3.2 Sec. 8.3.3.2.3: the GoodCRC-acked caps send resets HardResetCounter
 /// and CapsCounter. 60 cycles of failed + successful renegotiations must never saturate.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_caps_counter_resets_on_goodcrc() {
     let driver = DummyDriver::new();
     let device = DummySourceDevice;
@@ -645,7 +645,7 @@ async fn test_caps_counter_resets_on_goodcrc() {
 
 /// With an explicit contract, repeated tx failures escalate: NoResponseTimer timeout
 /// leads to `PE_SRC_Disabled` (PD 3.2 Sec. 8.3.3.2.3), not an endless Discovery cycle.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_no_response_timer_contract_silent_partner_error_recovers() {
     let driver = DummyDriver::new();
     let device = DummySourceDevice;
@@ -687,7 +687,7 @@ async fn test_no_response_timer_contract_silent_partner_error_recovers() {
 
 /// Per PD 3.2 Sec. 6.4.10.3.3 / 6.4.9: an `EPR_Request` not pointing at an EPR PDO
 /// of the advertised EPR capabilities must not be negotiated.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_invalid_epr_request_is_not_negotiated() {
     let driver = DummyDriver::new();
     let device = DummySourceDevice;
@@ -730,7 +730,7 @@ async fn test_invalid_epr_request_is_not_negotiated() {
 
 /// In EPR mode, an `EPR_Request` for a non-existent EPR PDO (PDO copy mismatch) must
 /// not be negotiated (PD 3.2 Sec. 6.4.9 / 6.5.15.1).
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_epr_request_pdo_copy_mismatch_not_negotiated() {
     let driver = DummyDriver::new();
     let device = DummySourceDevice;
@@ -773,7 +773,7 @@ async fn test_epr_request_pdo_copy_mismatch_not_negotiated() {
 
 /// In EPR mode, an `EPR_Request` whose RDO does not set the EPRCapable bit must
 /// initiate a Hard Reset (PD 3.2 Tab. 6.25 B22).
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn test_epr_request_missing_epr_capable_bit_hard_resets() {
     use crate::protocol_layer::message::data::source_capabilities::{Augmented, PowerDataObject};
 

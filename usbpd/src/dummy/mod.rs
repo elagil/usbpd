@@ -11,6 +11,7 @@ pub use epr::{
 };
 use usbpd_traits::Driver;
 
+use crate::dpm::{DrpSwap, VconnSwap};
 use crate::protocol_layer::message::data::request;
 use crate::protocol_layer::message::data::source_capabilities::{
     Augmented, FixedSupply, PowerDataObject, SourceCapabilities, SprProgrammablePowerSupply,
@@ -35,8 +36,8 @@ const MAX_SPR_OBJ_POS: u8 = 8;
 /// A dummy sink device that implements the sink device policy manager.
 pub struct DummySinkDevice;
 
-impl crate::dpm::VconnSwap for DummySinkDevice {}
-impl crate::dpm::DrpSwap for DummySinkDevice {}
+impl VconnSwap for DummySinkDevice {}
+impl DrpSwap for DummySinkDevice {}
 
 impl SinkDPM for DummySinkDevice {}
 impl SinkDrpDPM for DummySinkDevice {}
@@ -45,12 +46,12 @@ impl SinkDpm for DummySinkDevice {}
 /// A dummy capable of sourcing non-EPR power.
 pub struct DummySourceDevice;
 
-/// A dummy dual-role device, reporting a fast role swap signal and accepting
-/// every swap request.
+/// A dummy dual-role device, reporting a fast role swap signal and accepting every swap request.
 pub struct DummyDualRoleDevice;
 
-// Common source device behavior: accept non-EPR object positions,
-// expose the dummy capabilities and accept every swap request.
+// Common source device behavior: accept only non-EPR object positions.
+//
+// Accepts every swap request.
 impl SourceDPM for DummySourceDevice {
     async fn evaluate_request(&mut self, request: &request::PowerSource) -> SourceCapabilityResponse {
         if request.object_position() < MAX_SPR_OBJ_POS {
@@ -87,19 +88,19 @@ impl SourceDrpDPM for DummyDualRoleDevice {
     }
 }
 
-impl crate::dpm::DrpSwap for DummyDualRoleDevice {
+impl DrpSwap for DummyDualRoleDevice {
     async fn evaluate_swap_request(&mut self, _swap_request: crate::SwapType) -> bool {
         true
     }
 }
 
 // The hook and bundle impls default on both devices.
-impl crate::dpm::VconnSwap for DummySourceDevice {}
-impl crate::dpm::DrpSwap for DummySourceDevice {}
+impl VconnSwap for DummySourceDevice {}
+impl DrpSwap for DummySourceDevice {}
 impl SourceDrpDPM for DummySourceDevice {}
 impl SourceDpm for DummySourceDevice {}
 
-impl crate::dpm::VconnSwap for DummyDualRoleDevice {}
+impl VconnSwap for DummyDualRoleDevice {}
 impl SourceDpm for DummyDualRoleDevice {}
 
 impl SinkDPM for DummyDualRoleDevice {}
@@ -107,16 +108,15 @@ impl SinkDrpDPM for DummyDualRoleDevice {}
 impl SinkDpm for DummyDualRoleDevice {}
 
 /// A dummy timer for testing.
+///
+/// Relies on tokio's test clock. With `#[tokio::test(start_paused = true)]`, timer deadlines only advance while all
+/// tasks are idle, so a message injected before `run_step()` is always delivered before any timeout expires, and
+/// timeouts are deterministic.
 pub struct DummyTimer;
 
 impl Timer for DummyTimer {
-    async fn after_millis(_milliseconds: u64) {
-        // Should work OK since msgs should always send and arrive instantly in tests,
-        // such that timeouts never occur if a messaging sequence was pre-defined by the
-        // dummy endpoint before running `policy_engine.run_step().await.unwrap()`
-        for _ in 0..6 {
-            embassy_futures::yield_now().await;
-        }
+    async fn after_millis(milliseconds: u64) {
+        tokio::time::sleep(core::time::Duration::from_millis(milliseconds)).await;
     }
 }
 
@@ -279,7 +279,7 @@ mod tests {
 
     use crate::dummy::{DummyDriver, MAX_DATA_MESSAGE_SIZE};
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_receive() {
         let mut driver: DummyDriver<MAX_DATA_MESSAGE_SIZE> = DummyDriver::new();
 

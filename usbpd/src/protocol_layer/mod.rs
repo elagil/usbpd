@@ -1137,7 +1137,7 @@ mod tests {
         )
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_it() {
         let mut protocol_layer = get_protocol_layer(DummyDriver::new());
 
@@ -1217,7 +1217,7 @@ mod tests {
         buffer
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_non_goodcrc_during_goodcrc_wait_is_parked_and_acked() {
         let mut protocol_layer = get_protocol_layer(DummyDriver::new());
 
@@ -1257,7 +1257,7 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_extended_message_during_goodcrc_wait_is_parked_and_acked() {
         let mut protocol_layer = get_protocol_layer(DummyDriver::new());
 
@@ -1298,7 +1298,7 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_mismatched_goodcrc_retries() {
         let mut protocol_layer = get_protocol_layer(DummyDriver::new());
 
@@ -1318,7 +1318,7 @@ mod tests {
         assert!(!protocol_layer.driver.has_transmitted_data());
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_two_messages_parked_in_order() {
         let mut protocol_layer = get_protocol_layer(DummyDriver::new());
 
@@ -1382,7 +1382,7 @@ mod tests {
 
     /// A >26-byte extended payload must be transmitted as a correct partial chunk-0
     /// frame (26 payload bytes), not the whole payload (the pre-fix bug).
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_oversized_extended_tx_is_chunked() {
         let mut protocol_layer = get_protocol_layer_with_source_role();
 
@@ -1447,7 +1447,7 @@ mod tests {
     /// with the requested chunk (26 payload bytes) from the retained payload
     /// (PD 3.2 Sec. 6.12.2.1.2.2).
     #[cfg(feature = "epr")]
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_chunk_request_is_served_from_retained_payload() {
         use super::message::header::{ControlMessageType, ExtendedMessageType, MessageType};
 
@@ -1543,7 +1543,7 @@ mod tests {
     /// silently ignored: no response, no panic. The partner's chunk timer runs its own
     /// error flow. Pre-fix, the layer panicked slicing `buffer[start..end]`.
     #[cfg(feature = "epr")]
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_chunk_request_out_of_range_is_silently_ignored() {
         use super::message::header::{ControlMessageType, ExtendedMessageType, MessageType};
 
@@ -1600,7 +1600,7 @@ mod tests {
     /// re-served: the re-served response is the correct retry for a lost response
     /// (idempotent, bytes come from the retained payload).
     #[cfg(feature = "epr")]
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_duplicate_chunk_request_is_reacked_and_reserved() {
         use super::message::header::{ControlMessageType, ExtendedMessageType, MessageType};
 
@@ -1678,6 +1678,11 @@ mod tests {
 
     /// A driver that always discards transmissions (wedged state machine) must not
     /// make `hard_reset()` loop forever: the loop is bounded by `HardResetCompleteTimer`.
+    ///
+    /// Note: not `start_paused`. The retry loop here never pends (it self-wakes via
+    /// `yield_now()`), so the paused-clock auto-advance "all tasks idle" condition is
+    /// never reached and the timer deadline would never fire. Real (unpaused) time
+    /// bounds the loop instead.
     #[tokio::test]
     async fn test_hard_reset_bounded_when_driver_discards() {
         use usbpd_traits::{DriverRxError, DriverTxError};

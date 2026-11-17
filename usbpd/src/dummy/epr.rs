@@ -5,6 +5,7 @@
 use uom::si::power::watt;
 
 use super::DummyDualRoleDevice;
+use crate::dpm::{DrpSwap, VconnSwap};
 use crate::protocol_layer::message::data::request::{EprRequestDataObject, PowerSource};
 use crate::protocol_layer::message::data::source_capabilities::{PowerDataObject, SourceCapabilities};
 use crate::sink::device_policy_manager::{
@@ -107,11 +108,9 @@ impl SinkDPM for DummySinkEprDevice {
 
 impl SinkDrpDPM for DummySinkEprDevice {}
 impl SinkEprDPM for DummySinkEprDevice {}
-impl crate::dpm::VconnSwap for DummySinkEprDevice {}
-impl crate::dpm::DrpSwap for DummySinkEprDevice {}
+impl VconnSwap for DummySinkEprDevice {}
+impl DrpSwap for DummySinkEprDevice {}
 impl SinkDpm for DummySinkEprDevice {}
-
-// Empty EPR DPM impls for the SPR-only dummies.
 impl SinkEprDPM for super::DummySinkDevice {}
 impl SourceEprDPM for super::DummySourceDevice {}
 impl SinkEprDPM for DummyDualRoleDevice {}
