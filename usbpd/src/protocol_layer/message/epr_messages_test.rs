@@ -8,9 +8,8 @@ use crate::protocol_layer::message::data::Data;
 use crate::protocol_layer::message::data::epr_mode::Action;
 use crate::protocol_layer::message::data::request::PowerSource;
 use crate::protocol_layer::message::extended::Extended;
-use crate::protocol_layer::message::extended::chunked::{ChunkResult, ChunkedMessageAssembler};
 use crate::protocol_layer::message::header::{DataMessageType, ExtendedMessageType, MessageType};
-use crate::protocol_layer::message::{Message, Payload};
+use crate::protocol_layer::message::{ExtendedHeader, MSG_HEADER_SIZE, Message, Payload};
 
 // ============================================================================
 // Test Fixtures - Real EPR Messages
@@ -65,60 +64,42 @@ fn test_epr_mode_messages() {
 
 #[test]
 fn test_chunked_epr_source_caps_assembly() {
-    let mut assembler = ChunkedMessageAssembler::new();
-
-    // Process chunk 0
-    let (header_0, ext_header_0, chunk_data_0) =
-        Message::parse_extended_chunk(&DUMMY_EPR_SOURCE_CAPS_CHUNK_0).expect("Failed to parse chunk 0");
-
-    match assembler
-        .process_chunk(header_0, ext_header_0, chunk_data_0)
-        .expect("Failed to process chunk 0")
-    {
-        ChunkResult::NeedMoreChunks(next) => {
-            assert_eq!(next, 1, "Should request chunk 1 next");
-        }
-        _ => panic!("Expected NeedMoreChunks after first chunk"),
+    // Concatenate the chunk payloads of both captured chunk frames.
+    let chunks: [&[u8]; 2] = [&DUMMY_EPR_SOURCE_CAPS_CHUNK_0, &DUMMY_EPR_SOURCE_CAPS_CHUNK_1];
+    let mut assembled_data = heapless::Vec::<u8, 64>::new();
+    for chunk in chunks {
+        let ext_header = ExtendedHeader::from_bytes(&chunk[MSG_HEADER_SIZE..MSG_HEADER_SIZE + ExtendedHeader::SIZE]);
+        let chunk_payload = &chunk[MSG_HEADER_SIZE + ExtendedHeader::SIZE..];
+        assert!(ext_header.chunked());
+        assert_eq!(
+            usize::from(ext_header.data_size()),
+            40,
+            "chunk frames must carry the total data size"
+        );
+        assembled_data.extend_from_slice(chunk_payload).unwrap();
     }
 
-    // Process chunk 1
-    let (header_1, ext_header_1, chunk_data_1) =
-        Message::parse_extended_chunk(&DUMMY_EPR_SOURCE_CAPS_CHUNK_1).expect("Failed to parse chunk 1");
+    let ext = Message::parse_extended_payload(ExtendedMessageType::EprSourceCapabilities, &assembled_data);
 
-    match assembler
-        .process_chunk(header_1, ext_header_1, chunk_data_1)
-        .expect("Failed to process chunk 1")
-    {
-        ChunkResult::Complete(assembled_data) => {
-            // Parse the assembled EPR Source Capabilities
-            let ext = Message::parse_extended_payload(ExtendedMessageType::EprSourceCapabilities, &assembled_data);
+    if let Extended::EprSourceCapabilities(pdos) = ext {
+        assert_eq!(pdos.len(), 10, "Expected 10 PDOs (6 SPR + 1 separator + 3 EPR)");
 
-            if let Extended::EprSourceCapabilities(pdos) = ext {
-                assert_eq!(pdos.len(), 10, "Expected 10 PDOs (6 SPR + 1 separator + 3 EPR)");
-
-                // Verify separator at PDO[6]
-                if let crate::protocol_layer::message::data::source_capabilities::PowerDataObject::FixedSupply(pdo) =
-                    &pdos[6]
-                {
-                    assert_eq!(pdo.0, 0, "PDO[6] should be separator (0x00000000)");
-                } else {
-                    panic!("PDO[6] should be separator");
-                }
-
-                // Verify EPR PDO exists at position 7 (28V)
-                use uom::si::electric_potential::volt;
-                if let crate::protocol_layer::message::data::source_capabilities::PowerDataObject::FixedSupply(pdo) =
-                    &pdos[7]
-                {
-                    assert_eq!(pdo.voltage().get::<volt>() as f64, 28.0);
-                } else {
-                    panic!("PDO[7] should be 28V EPR FixedSupply");
-                }
-            } else {
-                panic!("Expected EprSourceCapabilities payload");
-            }
+        // Verify separator at PDO[6]
+        if let crate::protocol_layer::message::data::source_capabilities::PowerDataObject::FixedSupply(pdo) = &pdos[6] {
+            assert_eq!(pdo.0, 0, "PDO[6] should be separator (0x00000000)");
+        } else {
+            panic!("PDO[6] should be separator");
         }
-        _ => panic!("Expected Complete after second chunk"),
+
+        // Verify EPR PDO exists at position 7 (28V)
+        use uom::si::electric_potential::volt;
+        if let crate::protocol_layer::message::data::source_capabilities::PowerDataObject::FixedSupply(pdo) = &pdos[7] {
+            assert_eq!(pdo.voltage().get::<volt>() as f64, 28.0);
+        } else {
+            panic!("PDO[7] should be 28V EPR FixedSupply");
+        }
+    } else {
+        panic!("Expected EprSourceCapabilities payload");
     }
 }
 

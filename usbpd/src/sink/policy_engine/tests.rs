@@ -2,7 +2,7 @@
 
 use uom::si::power::watt;
 
-use super::{EprState, Sink};
+use super::{EprState, FastPowerRoleSwap, PowerRoleSwap, Sink, SwapState};
 use crate::counters::{Counter, CounterType};
 use crate::dummy::{DUMMY_CAPABILITIES, DummyDriver, DummySinkDevice, DummyTimer, MAX_DATA_MESSAGE_SIZE};
 use crate::protocol_layer::message::data::Data;
@@ -12,7 +12,7 @@ use crate::protocol_layer::message::data::source_capabilities::PowerDataObject;
 use crate::protocol_layer::message::header::{
     ControlMessageType, DataMessageType, ExtendedMessageType, Header, MessageType,
 };
-use crate::protocol_layer::message::{Message, Payload};
+use crate::protocol_layer::message::{ExtendedHeader, MSG_HEADER_SIZE, Message, Payload};
 use crate::sink::device_policy_manager::SinkDpm;
 use crate::sink::policy_engine::State;
 
@@ -31,6 +31,24 @@ fn simulate_source_control_message<DPM: SinkDpm>(
     ))
     .to_bytes(&mut buf);
     policy_engine.protocol_layer.driver().inject_received_data(&buf);
+}
+
+/// Drain one transmitted frame and assert it is a `GoodCRC` (per PD 3.2 Sec. 6.3.1).
+///
+/// Returns the parsed frame for optional further checks.
+fn assert_transmitted_good_crc<DPM: SinkDpm>(
+    policy_engine: &mut Sink<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DPM>,
+) -> Message {
+    let frame = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
+    assert!(
+        matches!(
+            frame.header.message_type(),
+            MessageType::Control(ControlMessageType::GoodCRC)
+        ),
+        "expected transmitted GoodCRC, got {:?}",
+        frame.header.message_type()
+    );
+    frame
 }
 
 /// Get a header template for simulating source messages (Source/Dfp roles).
@@ -126,11 +144,7 @@ async fn test_negotiation() {
     // `WaitForCapabilities` -> `EvaluateCapabilities`
     policy_engine.run_step().await.unwrap();
 
-    let good_crc = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
-    assert!(matches!(
-        good_crc.header.message_type(),
-        MessageType::Control(ControlMessageType::GoodCRC)
-    ));
+    assert_transmitted_good_crc(&mut policy_engine);
 
     // Simulate `GoodCrc` with ID 0.
     simulate_source_control_message(&mut policy_engine, ControlMessageType::GoodCRC, 0);
@@ -158,11 +172,7 @@ async fn test_negotiation() {
     policy_engine.run_step().await.unwrap();
     assert!(matches!(policy_engine.state, State::Ready(..)));
 
-    let good_crc = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
-    assert!(matches!(
-        good_crc.header.message_type(),
-        MessageType::Control(ControlMessageType::GoodCRC)
-    ));
+    assert_transmitted_good_crc(&mut policy_engine);
 }
 
 #[tokio::test]
@@ -177,7 +187,6 @@ async fn test_epr_negotiation() {
 
     // === Phase 1: Initial SPR Negotiation ===
     // Using same flow as test_negotiation
-    eprintln!("Starting test");
 
     policy_engine
         .protocol_layer
@@ -185,20 +194,11 @@ async fn test_epr_negotiation() {
         .inject_received_data(&DUMMY_SPR_CAPS_EPR_CAPABLE);
 
     // Discovery -> WaitForCapabilities
-    eprintln!("run_step 1");
     policy_engine.run_step().await.unwrap();
 
     // WaitForCapabilities -> EvaluateCapabilities
-    eprintln!("run_step 2");
     policy_engine.run_step().await.unwrap();
-
-    eprintln!("Probing first GoodCRC");
-    let good_crc = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
-    eprintln!("Got first GoodCRC");
-    assert!(matches!(
-        good_crc.header.message_type(),
-        MessageType::Control(ControlMessageType::GoodCRC)
-    ));
+    assert_transmitted_good_crc(&mut policy_engine);
 
     // Simulate GoodCRC with ID 0
     simulate_source_control_message(&mut policy_engine, ControlMessageType::GoodCRC, 0);
@@ -224,27 +224,14 @@ async fn test_epr_negotiation() {
 
     // TransitionSink -> Ready
     policy_engine.run_step().await.unwrap();
-    eprintln!("State after last run_step: {:?}", policy_engine.state);
     assert!(matches!(policy_engine.state, State::Ready(..)));
 
-    eprintln!(
-        "Has transmitted data: {}",
-        policy_engine.protocol_layer.driver().has_transmitted_data()
-    );
-    let good_crc = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
-    eprintln!("Got first GoodCRC: {:?}", good_crc.header.message_type());
-    assert!(matches!(
-        good_crc.header.message_type(),
-        MessageType::Control(ControlMessageType::GoodCRC)
-    ));
+    assert_transmitted_good_crc(&mut policy_engine);
 
     // Probe any remaining messages from Phase 1
     while policy_engine.protocol_layer.driver().has_transmitted_data() {
-        let msg = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
-        eprintln!("Draining leftover message: {:?}", msg.header.message_type());
+        _ = policy_engine.protocol_layer.driver().probe_transmitted_data();
     }
-
-    eprintln!("\n=== Phase 1 Complete: SPR negotiation at 20V ===\n");
 
     // === Phase 2: EPR Mode Entry ===
     // Per PD 3.2 Sec. 8.3.3.26.2, EPR mode entry flow:
@@ -252,11 +239,9 @@ async fn test_epr_negotiation() {
     // 2. Source sends EnterAcknowledged
     // 3. Source performs cable discovery (we skip this in test)
     // 4. Source sends EnterSucceeded
-    eprintln!("=== Phase 2: EPR Mode Entry ===");
 
     // Ready -> EprModeEntry (DPM triggers EnterEprMode event)
     policy_engine.run_step().await.unwrap();
-    eprintln!("State after DPM event: {:?}", policy_engine.state);
 
     // Inject GoodCRC for EPR_Mode (Enter) that will be transmitted
     simulate_source_control_message(&mut policy_engine, ControlMessageType::GoodCRC, 1);
@@ -276,16 +261,11 @@ async fn test_epr_negotiation() {
     );
 
     // EprModeEntry: sends EPR_Mode (Enter), receives EnterAcknowledged -> EprEntryWaitForResponse
-    match policy_engine.run_step().await {
-        Ok(_) => eprintln!("EprModeEntry run_step succeeded"),
-        Err(e) => eprintln!("EprModeEntry run_step failed: {:?}", e),
-    }
-    eprintln!("State after EprModeEntry: {:?}", policy_engine.state);
+    policy_engine.run_step().await.unwrap();
 
     // Probe EPR_Mode (Enter) message
     let epr_enter_bytes = policy_engine.protocol_layer.driver().probe_transmitted_data();
     let epr_enter = Message::from_bytes(&epr_enter_bytes).unwrap();
-    eprintln!("Probed message type: {:?}", epr_enter.header.message_type());
     assert!(matches!(
         epr_enter.header.message_type(),
         MessageType::Data(DataMessageType::EprMode)
@@ -297,15 +277,9 @@ async fn test_epr_negotiation() {
     }
     // Assert EPR_Mode Enter bytes match capture line 71-74: RAW[6]: 8A 14 00 00 00 01
     // Note: Our test starts from different state so message_id may differ
-    eprintln!("EPR_Mode Enter bytes: {:02X?}", &epr_enter_bytes[..]);
 
     // Probe GoodCRC for EnterAcknowledged
-    let good_crc = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
-    eprintln!("Probed GoodCRC for EnterAck: {:?}", good_crc.header.message_type());
-    assert!(matches!(
-        good_crc.header.message_type(),
-        MessageType::Control(ControlMessageType::GoodCRC)
-    ));
+    assert_transmitted_good_crc(&mut policy_engine);
 
     // Inject EPR_Mode (EnterSucceeded) using proper API
     // From capture line 85-88: RAW[6]: AA 1B 00 00 00 03 (Source, msg_id=5)
@@ -323,16 +297,9 @@ async fn test_epr_negotiation() {
 
     // EprEntryWaitForResponse receives EnterSucceeded -> EprWaitForCapabilities
     policy_engine.run_step().await.unwrap();
-    eprintln!("State after EnterSucceeded: {:?}", policy_engine.state);
 
     // Probe GoodCRC for EnterSucceeded
-    let good_crc = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
-    assert!(matches!(
-        good_crc.header.message_type(),
-        MessageType::Control(ControlMessageType::GoodCRC)
-    ));
-
-    eprintln!("=== Phase 2 Complete: EPR mode entry succeeded ===\n");
+    assert_transmitted_good_crc(&mut policy_engine);
 
     // === Phase 3: Chunked EPR Source Capabilities ===
     // This follows the real-world capture flow per PD 3.2 Sec. 6.12.2.1.2:
@@ -340,8 +307,6 @@ async fn test_epr_negotiation() {
     // 2. Sink sends Chunk Request (chunk=1) -> Source sends GoodCRC
     // 3. Source sends chunk 1 -> Sink sends GoodCRC
     use crate::dummy::{DUMMY_EPR_SOURCE_CAPS_CHUNK_0, DUMMY_EPR_SOURCE_CAPS_CHUNK_1};
-
-    eprintln!("=== Phase 3: Chunked EPR Source Capabilities ===");
 
     // Source sends EPR_Source_Capabilities chunk 0
     policy_engine
@@ -367,23 +332,13 @@ async fn test_epr_negotiation() {
     policy_engine.run_step().await.unwrap();
 
     // Probe GoodCRC for chunk 0
-    let good_crc_0 = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
-    eprintln!("Chunk 0 GoodCRC: {:?}", good_crc_0.header.message_type());
-    assert!(matches!(
-        good_crc_0.header.message_type(),
-        MessageType::Control(ControlMessageType::GoodCRC)
-    ));
+    assert_transmitted_good_crc(&mut policy_engine);
 
     // Probe the Chunk Request message (per PD 3.2 Sec. 6.12.2.1.2.4)
-    // Chunk requests are parsed as ChunkedExtendedMessage error, so we use parse_extended_chunk
     let chunk_req_data = policy_engine.protocol_layer.driver().probe_transmitted_data();
-    let (chunk_req_header, chunk_req_ext_header, _chunk_data) = Message::parse_extended_chunk(&chunk_req_data).unwrap();
-    eprintln!(
-        "Chunk Request: type={:?}, chunk_number={}, request_chunk={}",
-        chunk_req_header.message_type(),
-        chunk_req_ext_header.chunk_number(),
-        chunk_req_ext_header.request_chunk()
-    );
+    let chunk_req_header = Header::from_bytes(&chunk_req_data[..MSG_HEADER_SIZE]).unwrap();
+    let chunk_req_ext_header =
+        ExtendedHeader::from_bytes(&chunk_req_data[MSG_HEADER_SIZE..MSG_HEADER_SIZE + ExtendedHeader::SIZE]);
     assert!(
         chunk_req_header.extended(),
         "Chunk request should be an extended message"
@@ -396,22 +351,13 @@ async fn test_epr_negotiation() {
     assert_eq!(chunk_req_ext_header.chunk_number(), 1, "Should request chunk 1");
 
     // Probe GoodCRC for chunk 1
-    let good_crc_1 = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
-    eprintln!("Chunk 1 GoodCRC: {:?}", good_crc_1.header.message_type());
-    assert!(matches!(
-        good_crc_1.header.message_type(),
-        MessageType::Control(ControlMessageType::GoodCRC)
-    ));
-
-    eprintln!("=== Phase 3 Complete: EPR caps assembled (with chunk request per spec) ===\n");
+    assert_transmitted_good_crc(&mut policy_engine);
 
     // === Phase 4: EPR Power Negotiation ===
     // Selects PDO#8 (28V @ 5A = 140W)
-    eprintln!("=== Phase 4: EPR Power Negotiation ===");
 
     // EvaluateCapabilities -> DPM.request() selects EPR PDO#8 (28V) -> SelectCapability
     policy_engine.run_step().await.unwrap();
-    eprintln!("State after evaluate: {:?}", policy_engine.state);
 
     // Inject GoodCRC for the EprRequest that will be transmitted
     // Note: TX message counter is now 3 (after chunk request in Phase 3 incremented it from 2 to 3)
@@ -425,11 +371,6 @@ async fn test_epr_negotiation() {
 
     // Probe the EPR Request
     let epr_request = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
-    eprintln!(
-        "EPR Request: {:?} (message_id={})",
-        epr_request.header.message_type(),
-        epr_request.header.message_id()
-    );
     assert!(matches!(
         epr_request.header.message_type(),
         MessageType::Data(DataMessageType::EprRequest)
@@ -438,7 +379,6 @@ async fn test_epr_negotiation() {
     // Verify EPR Request selects PDO#8 (28V)
     if let Some(Payload::Data(Data::Request(PowerSource::EprRequest(epr)))) = &epr_request.payload {
         let object_pos = epr.object_position();
-        eprintln!("EPR Request: PDO#{} (RDO=0x{:08X})", object_pos, epr.rdo);
         assert_eq!(object_pos, 8, "Should request PDO#8 (28V) to match real capture");
 
         // Verify it's the 28V PDO
@@ -451,18 +391,9 @@ async fn test_epr_negotiation() {
     }
 
     // Drain any leftover messages
-    eprintln!(
-        "Has transmitted data before drain: {}",
-        policy_engine.protocol_layer.driver().has_transmitted_data()
-    );
     while policy_engine.protocol_layer.driver().has_transmitted_data() {
-        let msg = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
-        eprintln!("Draining: {:?}", msg.header.message_type());
+        _ = policy_engine.protocol_layer.driver().probe_transmitted_data();
     }
-    eprintln!(
-        "Has transmitted data after drain: {}",
-        policy_engine.protocol_layer.driver().has_transmitted_data()
-    );
 
     // Inject PsRdy that TransitionSink will wait for
     simulate_source_control_message(&mut policy_engine, ControlMessageType::PsRdy, 1);
@@ -472,26 +403,17 @@ async fn test_epr_negotiation() {
 
     // Probe any GoodCRCs we transmitted (for Accept and PsRdy messages we received)
     while policy_engine.protocol_layer.driver().has_transmitted_data() {
-        let msg = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
-        eprintln!("Phase 4 transmitted: {:?}", msg.header.message_type());
-        assert!(matches!(
-            msg.header.message_type(),
-            MessageType::Control(ControlMessageType::GoodCRC)
-        ));
+        assert_transmitted_good_crc(&mut policy_engine);
     }
 
     // Verify we're in Ready state with EPR power
     assert!(matches!(policy_engine.state, State::Ready(..)));
-    eprintln!("Final state: {:?}", policy_engine.state);
-
-    eprintln!("=== Phase 4 Complete: EPR power negotiation at 28V/5A (140W) ===\n");
 
     // === Phase 5: EPR Keep-Alive ===
     // Per PD 3.2 Sec. 8.3.3.3.11, sink must send EprKeepAlive periodically in EPR mode.
     // Real capture shows multiple keep-alive exchanges after EPR contract (lines 145-214).
     // We manually transition to EprKeepAlive state to test this flow, simulating multiple
     // keep-alive cycles to verify the sink continues sending them.
-    eprintln!("=== Phase 5: EPR Keep-Alive (multiple cycles) ===");
 
     // Test multiple keep-alive cycles to verify the sink keeps sending them
     // Real capture shows 7 keep-alive exchanges - we'll test 3 to verify the pattern
@@ -506,8 +428,6 @@ async fn test_epr_negotiation() {
     // Note: Header changes based on msg_id, but extended header (02 80) and payload (04 00) stay same
 
     for cycle in 1..=3 {
-        eprintln!("--- Keep-Alive cycle {} ---", cycle);
-
         // Manually set state to EprKeepAlive (normally triggered by SinkEPRKeepAliveTimer in Ready state)
         if let State::Ready(_) = policy_engine.state.clone() {
             policy_engine.state = State::EprMode(crate::sink::policy_engine::EprState::KeepAlive);
@@ -521,7 +441,6 @@ async fn test_epr_negotiation() {
 
         // Inject EprKeepAliveAck response from source with correct message ID
         let keep_alive_ack_bytes = simulate_epr_keep_alive_ack(&mut policy_engine, source_tx_counter);
-        eprintln!("  EprKeepAliveAck bytes: {:02X?}", &keep_alive_ack_bytes[..]);
         // Verify payload matches capture pattern
         // The extended header data_size=2 (low byte 0x02), and the chunked bit may or may not be set
         // (spec allows both). Real capture shows chunked=true (0x80), but our impl uses chunked=false (0x00)
@@ -540,7 +459,6 @@ async fn test_epr_negotiation() {
         // Probe the EprKeepAlive message
         let keep_alive_bytes = policy_engine.protocol_layer.driver().probe_transmitted_data();
         let keep_alive = Message::from_bytes(&keep_alive_bytes).unwrap();
-        eprintln!("  EprKeepAlive sent: {:?}", keep_alive.header.message_type());
         assert!(matches!(
             keep_alive.header.message_type(),
             MessageType::Extended(ExtendedMessageType::ExtendedControl)
@@ -572,19 +490,11 @@ async fn test_epr_negotiation() {
         );
 
         // Probe GoodCRC for EprKeepAliveAck
-        let good_crc = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
-        assert!(matches!(
-            good_crc.header.message_type(),
-            MessageType::Control(ControlMessageType::GoodCRC)
-        ));
+        assert_transmitted_good_crc(&mut policy_engine);
 
         // Verify we're back in Ready state (ready for next keep-alive cycle)
         assert!(matches!(policy_engine.state, State::Ready(..)));
-        eprintln!("  Returned to Ready state");
     }
-
-    eprintln!("=== Phase 5 Complete: {} EPR keep-alive cycles succeeded ===\n", 3);
-    eprintln!("=== Full EPR negotiation test PASSED ===");
 }
 
 /// A successful `PR_Swap` handoff must exit the policy engine with
@@ -603,6 +513,93 @@ async fn test_pr_swap_to_source_startup_exits() {
         matches!(result, crate::PolicyEngineResult::Exit(crate::RunResult::SwapToSource)),
         "run_step from PrSwapToSourceStartup must yield Exit(SwapToSource), got {:?}",
         result
+    );
+}
+
+/// Instrumented DPM recording `set_fr_swap_detect` invocations.
+struct FrsRecordingDevice;
+
+static FRS_DETECT_LAST: core::sync::atomic::AtomicI8 = core::sync::atomic::AtomicI8::new(-1);
+
+impl crate::sink::device_policy_manager::DrpDevicePolicyManager for FrsRecordingDevice {
+    async fn set_fr_swap_detect(enable: bool) {
+        FRS_DETECT_LAST.store(if enable { 1 } else { 0 }, core::sync::atomic::Ordering::Relaxed);
+    }
+}
+impl crate::sink::device_policy_manager::DevicePolicyManager for FrsRecordingDevice {}
+impl crate::sink::device_policy_manager::EprDevicePolicyManager for FrsRecordingDevice {}
+impl crate::sink::device_policy_manager::SinkDpm for FrsRecordingDevice {}
+
+/// Per PD 3.2 Sec. 8.3.3.19.4.3: entering `PE_PRS_SNK_SRC_Accept_Swap` must disable the
+/// Fast Role Swap receiver (`DPM::set_fr_swap_detect(false)`).
+#[tokio::test]
+async fn test_pr_swap_accept_disables_frs_receiver() {
+    // Reset the recording atomic for test isolation.
+    FRS_DETECT_LAST.store(-1, core::sync::atomic::Ordering::Relaxed);
+
+    let driver = DummyDriver::new();
+    let device = FrsRecordingDevice;
+    let mut policy_engine =
+        Sink::<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, FrsRecordingDevice>::new(driver, device);
+
+    policy_engine.state = State::DrpSwap(SwapState::Power(PowerRoleSwap::Accept));
+
+    // Partner GoodCRC for the outgoing Accept (tx id 0).
+    simulate_source_control_message(&mut policy_engine, ControlMessageType::GoodCRC, 0);
+
+    policy_engine.run_step().await.unwrap();
+
+    // The Accept must be transmitted and the state must progress to TransitionToOff.
+    let sent = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
+    assert!(
+        matches!(
+            sent.header.message_type(),
+            MessageType::Control(ControlMessageType::Accept)
+        ),
+        "expected transmitted Accept, got {:?}",
+        sent.header.message_type()
+    );
+    assert!(
+        matches!(
+            policy_engine.state,
+            State::DrpSwap(SwapState::Power(PowerRoleSwap::TransitionToOff))
+        ),
+        "after Accept transmission the state must be TransitionToOff; got {:?}",
+        policy_engine.state
+    );
+
+    // The FRS receiver must have been disabled while accepting.
+    assert_eq!(
+        FRS_DETECT_LAST.load(core::sync::atomic::Ordering::Relaxed),
+        0,
+        "Accept must disable the FRS receiver via set_fr_swap_detect(false)"
+    );
+}
+
+/// Pins the FRS `Source_on` behavior: PS_RDY on exit (PD 3.2 Sec. 8.3.3.19.6.6).
+/// Characterization test — this was already correct before the FRS fixes.
+#[tokio::test]
+async fn test_frs_source_on_sends_ps_rdy() {
+    let driver = DummyDriver::new();
+    let device = DummySinkDevice {};
+    let mut policy_engine =
+        Sink::<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DummySinkDevice>::new(driver, device);
+
+    policy_engine.state = State::DrpSwap(SwapState::FastPower(FastPowerRoleSwap::SourceOn));
+
+    // Partner GoodCRC for the PS_RDY that this state sends on exit.
+    simulate_source_control_message(&mut policy_engine, ControlMessageType::GoodCRC, 0);
+
+    policy_engine.run_step().await.unwrap();
+
+    let sent = Message::from_bytes(&policy_engine.protocol_layer.driver().probe_transmitted_data()).unwrap();
+    assert!(
+        matches!(
+            sent.header.message_type(),
+            MessageType::Control(ControlMessageType::PsRdy)
+        ),
+        "FRS Source-on must send PS_RDY on exit; sent {:?}",
+        sent.header.message_type()
     );
 }
 
@@ -636,5 +633,89 @@ async fn test_epr_mode_entry_unknown_payload_soft_resets() {
         matches!(policy_engine.state, State::SendSoftReset),
         "malformed EPR_Mode payload must transition to SendSoftReset, got {:?}",
         policy_engine.state
+    );
+}
+
+/// Per PD 3.2 Sec. 8.3.3.20.5: VCONNOnTimer timeout in `WaitForVconn` → HardReset.
+#[tokio::test]
+async fn test_vconn_swap_wait_for_vconn_timeout_hard_resets() {
+    let driver = DummyDriver::new();
+    let device = DummySinkDevice {};
+    let mut policy_engine =
+        Sink::<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DummySinkDevice>::new(driver, device);
+
+    // We are the Vconn source, waiting for the partner to turn Vconn off (PS_RDY).
+    policy_engine.state = State::VconnSwap(super::VcsState::WaitForVconn);
+    policy_engine.vconn_source = true;
+
+    // No PS_RDY is injected: the VCONNOn timer (DummyTimer yields immediately) times out.
+    let result = policy_engine.run_step().await.unwrap();
+    assert!(matches!(result, crate::PolicyEngineResult::Continue));
+
+    assert!(
+        matches!(policy_engine.state, State::HardReset),
+        "VCONNOnTimer timeout in WaitForVconn must transition to HardReset, got {:?}",
+        policy_engine.state
+    );
+}
+
+/// Per PD 3.2 Sec. 8.3.3.19.1.5: SenderResponseTimer timeout on a sink-initiated
+/// `Data_Role_Swap` → Ready, not an endless re-send loop.
+#[tokio::test]
+async fn test_data_role_swap_send_timeout_to_ready() {
+    let driver = DummyDriver::new();
+    let device = DummySinkDevice {};
+    let mut policy_engine =
+        Sink::<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DummySinkDevice>::new(driver, device);
+
+    policy_engine.state = State::DrpSwap(super::SwapState::Data(super::DataRoleSwap::Send));
+
+    // The partner acks the Data_Role_Swap request (GoodCRC on ID 0) but never answers
+    // with Accept/Reject/Wait, so the SenderResponseTimer times out.
+    simulate_source_control_message(&mut policy_engine, ControlMessageType::GoodCRC, 0);
+
+    let result = policy_engine.run_step().await.unwrap();
+    assert!(matches!(result, crate::PolicyEngineResult::Continue));
+
+    assert!(
+        matches!(policy_engine.state, State::Ready(false)),
+        "SenderResponseTimer timeout in DataRoleSwap::Send must transition to Ready(false), got {:?}",
+        policy_engine.state
+    );
+}
+
+/// Sending the Data Role Swap request transmits a `Data_Role_Swap` control message.
+#[tokio::test]
+async fn test_data_role_swap_send_transmits_request() {
+    let driver = DummyDriver::new();
+    let device = DummySinkDevice {};
+    let mut policy_engine =
+        Sink::<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DummySinkDevice>::new(driver, device);
+
+    policy_engine.state = State::DrpSwap(super::SwapState::Data(super::DataRoleSwap::Send));
+
+    // Partner accepts. The timer never fires because a response arrives first.
+    let source_header = get_source_header_template();
+    let mut buf = [0u8; MAX_DATA_MESSAGE_SIZE];
+    let header = Header::new_control(
+        source_header,
+        Counter::new_from_value(CounterType::MessageId, 0),
+        ControlMessageType::Accept,
+    );
+    Message::new(header).to_bytes(&mut buf);
+    policy_engine.protocol_layer.driver().inject_received_data(&buf);
+
+    policy_engine.run_step().await.unwrap();
+
+    // The transmitted frame must be a Data_Role_Swap request (or its GoodCRC).
+    let bytes = policy_engine.protocol_layer.driver().probe_transmitted_data();
+    let sent = Message::from_bytes(&bytes).unwrap();
+    assert!(
+        matches!(
+            sent.header.message_type(),
+            MessageType::Control(ControlMessageType::DrSwap)
+        ),
+        "expected transmitted Data_Role_Swap, got {:?}",
+        sent.header.message_type()
     );
 }

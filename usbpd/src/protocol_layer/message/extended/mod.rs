@@ -2,7 +2,6 @@
 //!
 //! Per PD 3.2 Sec. 6.5.
 
-pub mod chunked;
 #[cfg(feature = "epr")]
 pub mod epr;
 pub mod extended_control;
