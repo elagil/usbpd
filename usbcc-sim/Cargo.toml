@@ -1,0 +1,17 @@
+[package]
+name = "usbcc-sim"
+version = "0.1.0"
+description = "Test simulator for the `usbcc` USB Type-C state machine."
+readme = "README.md"
+publish = false
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+usbcc.workspace = true
+usbcc-traits.workspace = true
+
+tokio = { workspace = true, features = ["rt", "macros", "time", "test-util", "sync"] }
