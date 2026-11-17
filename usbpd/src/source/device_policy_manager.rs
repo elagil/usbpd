@@ -7,7 +7,7 @@ use core::future::Future;
 // Re-exported so user implementations can name the shared supertraits.
 // Their default hooks apply to the source side as well; the role traits
 // bring them in as supertraits.
-pub use crate::dpm::{DrpSwapHooks, VconnSwapHooks};
+pub use crate::dpm::{DrpSwap, VconnSwap};
 use crate::protocol_layer::message::data::request;
 use crate::protocol_layer::message::data::sink_capabilities::SinkCapabilities;
 use crate::protocol_layer::message::data::source_capabilities::SourceCapabilities;
@@ -73,14 +73,14 @@ pub use crate::source::epr_device_policy_manager::EprDevicePolicyManager;
 /// The default implementations of the traits will handle the case where a feature is unsupported.
 #[cfg(feature = "epr")]
 pub trait SourceDpm:
-    DevicePolicyManager + EprDevicePolicyManager + DrpDevicePolicyManager + VconnSwapHooks + DrpSwapHooks
+    DevicePolicyManager + EprDevicePolicyManager + DrpDevicePolicyManager + VconnSwap + DrpSwap
 {
 }
 
 /// Full implementation for the source device policy manager.
 /// The default implementations of the traits will handle the case where a feature is unsupported.
 #[cfg(not(feature = "epr"))]
-pub trait SourceDpm: DevicePolicyManager + DrpDevicePolicyManager + VconnSwapHooks + DrpSwapHooks {}
+pub trait SourceDpm: DevicePolicyManager + DrpDevicePolicyManager + VconnSwap + DrpSwap {}
 
 /// Trait for the device policy manager.
 ///

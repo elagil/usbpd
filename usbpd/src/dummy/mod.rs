@@ -35,8 +35,8 @@ const MAX_SPR_OBJ_POS: u8 = 8;
 /// A dummy sink device that implements the sink device policy manager.
 pub struct DummySinkDevice;
 
-impl crate::dpm::VconnSwapHooks for DummySinkDevice {}
-impl crate::dpm::DrpSwapHooks for DummySinkDevice {}
+impl crate::dpm::VconnSwap for DummySinkDevice {}
+impl crate::dpm::DrpSwap for DummySinkDevice {}
 
 impl SinkDPM for DummySinkDevice {}
 impl SinkDrpDPM for DummySinkDevice {}
@@ -87,19 +87,19 @@ impl SourceDrpDPM for DummyDualRoleDevice {
     }
 }
 
-impl crate::dpm::DrpSwapHooks for DummyDualRoleDevice {
+impl crate::dpm::DrpSwap for DummyDualRoleDevice {
     async fn evaluate_swap_request(&mut self, _swap_request: crate::SwapType) -> bool {
         true
     }
 }
 
 // The hook and bundle impls default on both devices.
-impl crate::dpm::VconnSwapHooks for DummySourceDevice {}
-impl crate::dpm::DrpSwapHooks for DummySourceDevice {}
+impl crate::dpm::VconnSwap for DummySourceDevice {}
+impl crate::dpm::DrpSwap for DummySourceDevice {}
 impl SourceDrpDPM for DummySourceDevice {}
 impl SourceDpm for DummySourceDevice {}
 
-impl crate::dpm::VconnSwapHooks for DummyDualRoleDevice {}
+impl crate::dpm::VconnSwap for DummyDualRoleDevice {}
 impl SourceDpm for DummyDualRoleDevice {}
 
 impl SinkDPM for DummyDualRoleDevice {}
