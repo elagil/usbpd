@@ -13,7 +13,7 @@ use crate::protocol_layer::message::data::request::{
 };
 use crate::protocol_layer::message::data::source_capabilities::SourceCapabilities;
 use crate::protocol_layer::message::header::{ControlMessageType, DataMessageType, Header, MessageType};
-use crate::source::device_policy_manager::{CapabilityResponse, SourceDpm};
+use crate::source::device_policy_manager::{CapabilityResponse, EprDevicePolicyManager as _, SourceDpm};
 use crate::source::policy_engine::{DataRoleSwap, FastPowerRoleSwap, PowerRoleSwap, State, SwapState};
 
 fn simulate_sink_control_message<DPM: SourceDpm>(
@@ -694,8 +694,8 @@ async fn test_invalid_epr_request_is_not_negotiated() {
     let mut policy_engine =
         Source::<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, DummySourceDevice>::new(driver, device, false);
 
-    // Receive an EPR_Request while in SPR mode: per Sec. 6.5.15.1, EPR_Request is
-    // only valid in EPR mode -> protocol error (must not be negotiated as power demand).
+    // Receive an EPR_Request while in SPR mode: per Sec. 6.4.9, an EPR Source in SPR
+    // mode that receives EPR_Request Shall initiate a Hard Reset.
     policy_engine.state = State::Ready;
 
     // Invalid: object position 3 (SPR positions 1..=7 are invalid in EPR mode,
@@ -720,13 +720,10 @@ async fn test_invalid_epr_request_is_not_negotiated() {
 
     policy_engine.run_step().await.unwrap();
 
-    // The request must NOT reach a negotiation transition.
+    // The source must initiate a Hard Reset, never negotiate.
     assert!(
-        !matches!(
-            policy_engine.state,
-            State::NegotiateCapability(_) | State::TransitionSupply(_)
-        ),
-        "EPR_Request outside EPR mode must not be negotiated; got {:?}",
+        matches!(policy_engine.state, State::HardReset),
+        "EPR_Request outside EPR mode must initiate Hard Reset; got {:?}",
         policy_engine.state
     );
 }
@@ -765,11 +762,81 @@ async fn test_epr_request_pdo_copy_mismatch_not_negotiated() {
 
     policy_engine.run_step().await.unwrap();
 
-    // The validation failure path answers Not_Supported (Sec. 6.4.9); the request
+    // Per Sec. 6.4.10.3.3: a PDO copy mismatch Shall result in Hard Reset. The request
     // must land exactly there, never in negotiation.
     assert!(
-        matches!(policy_engine.state, State::SendNotSupported),
-        "EPR_Request referencing a non-existent EPR PDO must be answered with Not_Supported; got {:?}",
+        matches!(policy_engine.state, State::HardReset),
+        "EPR_Request referencing a non-existent EPR PDO must Hard Reset; got {:?}",
+        policy_engine.state
+    );
+}
+
+/// In EPR mode, an `EPR_Request` whose RDO does not set the EPRCapable bit must
+/// initiate a Hard Reset (PD 3.2 Tab. 6.25 B22).
+#[tokio::test]
+async fn test_epr_request_missing_epr_capable_bit_hard_resets() {
+    use crate::protocol_layer::message::data::source_capabilities::{Augmented, PowerDataObject};
+
+    // Test-local DPM advertising one EPR AVS PDO, so position and PDO copy are valid
+    // and only the absent EPRCapable bit makes the request invalid.
+    struct EprCapableDpm;
+
+    impl crate::source::device_policy_manager::DevicePolicyManager for EprCapableDpm {}
+    impl crate::source::device_policy_manager::DrpDevicePolicyManager for EprCapableDpm {}
+    impl crate::source::device_policy_manager::EprDevicePolicyManager for EprCapableDpm {
+        fn epr_source_capabilities(
+            &mut self,
+        ) -> crate::protocol_layer::message::data::source_capabilities::SourceCapabilities {
+            use crate::protocol_layer::message::data::source_capabilities::{self, SourceCapabilities};
+            // Seven SPR PDOs plus one EPR AVS PDO at position 8: 5..=48 V.
+            let mut caps = crate::dummy::get_dummy_source_capabilities();
+            caps.truncate(7);
+            caps.push(source_capabilities::parse_raw_pdo(
+                // EPR AVS APDO: kind 11b, supply 01b, max 48 V, min 5 V, PDP 150 W.
+                (0b11u32 << 30) | (0b01 << 28) | (480 << 17) | (50 << 8) | 150,
+            ));
+            SourceCapabilities(heapless::Vec::from_slice(caps.as_slice()).unwrap())
+        }
+    }
+    impl crate::source::device_policy_manager::SourceDpm for EprCapableDpm {}
+
+    let driver = DummyDriver::new();
+    let mut policy_engine =
+        Source::<DummyDriver<MAX_DATA_MESSAGE_SIZE>, DummyTimer, EprCapableDpm>::new(driver, EprCapableDpm, false);
+
+    policy_engine.state = State::Ready;
+    policy_engine.mode = super::Mode::Epr;
+
+    let epr_caps = EprCapableDpm.epr_source_capabilities();
+    let first_epr = epr_caps
+        .epr_pdos()
+        .find(|(_, pdo)| matches!(pdo, PowerDataObject::Augmented(Augmented::Epr(_))))
+        .expect("test DPM must expose an EPR AVS PDO");
+    let position = first_epr.0;
+    let pdo = first_epr.1;
+
+    // RDO without the EPRCapable bit (bit 22 clear).
+    let epr_request = PowerSource::EprRequest(EprRequestDataObject {
+        rdo: (u32::from(position) << 28) | 150,
+        pdo: *pdo,
+    });
+
+    let header = Header::new_data(
+        get_sink_header_template(),
+        Counter::new_from_value(CounterType::MessageId, 0),
+        DataMessageType::EprRequest,
+        2,
+    );
+    let message = Message::new_with_data(header, Data::Request(epr_request));
+    let mut buf = [0u8; MAX_DATA_MESSAGE_SIZE];
+    let len = message.to_bytes(&mut buf);
+    policy_engine.protocol_layer.driver().inject_received_data(&buf[..len]);
+
+    policy_engine.run_step().await.unwrap();
+
+    assert!(
+        matches!(policy_engine.state, State::HardReset),
+        "EPR_Request without the EPRCapable bit must Hard Reset; got {:?}",
         policy_engine.state
     );
 }

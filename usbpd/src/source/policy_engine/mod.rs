@@ -10,6 +10,9 @@ use crate::counters::Counter;
 pub(crate) mod epr;
 #[cfg(feature = "epr")]
 use self::epr::EprState;
+// Stabilized re-export: the source policy engine error type lives at the crate root.
+// Kept at the pre-unification path for downstream compatibility.
+pub use crate::Error;
 #[cfg(feature = "epr")]
 use crate::protocol_layer::message::data::epr_mode;
 use crate::protocol_layer::message::data::request::PowerSource;
@@ -25,7 +28,6 @@ use crate::protocol_layer::message::header::{
 };
 use crate::protocol_layer::message::{Message, Payload};
 use crate::protocol_layer::{ProtocolError, RxError, SourceProtocolLayer, TxError};
-pub use crate::swap::Error;
 use crate::swap::{DataRoleSwap, VcsState};
 use crate::timers::{Timer, TimerType};
 use crate::{Contract, DataRole, PolicyEngineResult, PowerRole, RunResult, SwapType};
@@ -1152,8 +1154,10 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
     async fn match_message_to_state(&mut self, message: Message) -> Result<State, Error> {
         let state = match message.header.message_type() {
             MessageType::Data(DataMessageType::Request) => {
+                // Per PD 3.2 Sec. 6.4.2: a Source operating in EPR Mode that receives a
+                // Request Message Shall initiate a Hard Reset.
                 if self.mode != Mode::Spr {
-                    return Err(Error::Protocol(ProtocolError::RxError(RxError::HardReset)));
+                    return Ok(State::HardReset);
                 }
 
                 match message.payload {
@@ -1164,16 +1168,21 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
 
             #[cfg(feature = "epr")]
             MessageType::Data(DataMessageType::EprRequest) => {
+                // Per PD 3.2 Sec. 6.4.9: an EPR Source operating in SPR Mode that receives
+                // an EPR_Request Message Shall initiate a Hard Reset.
                 if self.mode != Mode::Epr {
-                    return Err(Error::Protocol(ProtocolError::RxError(RxError::HardReset)));
+                    return Ok(State::HardReset);
                 }
 
                 // Per PD 3.2 Sec. 6.4.9 / 6.5.15.1: the RDO's object position must point at
                 // an EPR PDO (object positions 8..=14) of the currently advertised
                 // EPR_Source_Capabilities, and the message's PDO copy must match it.
                 let Some(Payload::Data(Data::Request(PowerSource::EprRequest(epr_request)))) = &message.payload else {
-                    return Ok(State::SendNotSupported);
+                    return Ok(State::HardReset);
                 };
+
+                // Per PD 3.2 Tab. 6.25 (B22): the RDO Shall set the EPRCapable bit.
+                let epr_capable = epr_request.epr_capable();
 
                 let position = epr_request.object_position();
                 let epr_caps = self.device_policy_manager.epr_source_capabilities();
@@ -1183,9 +1192,11 @@ impl<DRIVER: Driver, TIMER: Timer, DPM: SourceDpm> Source<DRIVER, TIMER, DPM> {
                     .map(|(_, pdo)| pdo.to_raw() == epr_request.pdo.to_raw())
                     .unwrap_or(false);
 
-                if !valid {
+                // Per PD 3.2 Sec. 6.4.10.3.3: a mismatch between the PDO copy and the
+                // advertised PDO Shall result in Hard Reset.
+                if !valid || !epr_capable {
                     trace!("EPR_Request validation failed for position {}", position);
-                    return Ok(State::SendNotSupported);
+                    return Ok(State::HardReset);
                 }
 
                 match message.payload {

@@ -114,7 +114,19 @@ impl Message {
                 let extended_header = ExtendedHeader::new(extended.data_size())
                     .with_chunked(true)
                     .with_chunk_number(0);
-                header_len + extended_header.to_bytes(&mut buffer[header_len..]) + first_chunk_len
+                extended_header.to_bytes(&mut buffer[header_len..]);
+
+                // Per PD 3.2 Sec. 6.2.1.1.2: when Extended and Chunked are set,
+                // the Number of Data Objects field Shall indicate the number of
+                // objects padded to the 4-byte boundary, counting the Extended
+                // Message Header into the first object (see also Fig. 6.9).
+                let num_objects = (ExtendedHeader::SIZE + first_chunk_len).div_ceil(4) as u8;
+                let header = Header::from_bytes(&buffer[..MSG_HEADER_SIZE])
+                    .expect("header was just serialized")
+                    .with_num_objects(num_objects);
+                header.to_bytes(&mut buffer[..MSG_HEADER_SIZE]);
+
+                header_len + ExtendedHeader::SIZE + first_chunk_len
             }
             None => header_len,
         }
