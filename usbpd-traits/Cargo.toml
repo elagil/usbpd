@@ -16,5 +16,4 @@ defmt = { workspace = true, optional = true }
 thiserror = { workspace = true }
 
 [features]
-default = []
 defmt = ["dep:defmt"]

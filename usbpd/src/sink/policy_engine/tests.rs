@@ -528,6 +528,8 @@ impl crate::sink::device_policy_manager::DrpDevicePolicyManager for FrsRecording
 }
 impl crate::sink::device_policy_manager::DevicePolicyManager for FrsRecordingDevice {}
 impl crate::sink::device_policy_manager::EprDevicePolicyManager for FrsRecordingDevice {}
+impl crate::dpm::VconnSwapHooks for FrsRecordingDevice {}
+impl crate::dpm::DrpSwapHooks for FrsRecordingDevice {}
 impl crate::sink::device_policy_manager::SinkDpm for FrsRecordingDevice {}
 
 /// Per PD 3.2 Sec. 8.3.3.19.4.3: entering `PE_PRS_SNK_SRC_Accept_Swap` must disable the

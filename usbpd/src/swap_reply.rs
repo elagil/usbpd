@@ -21,19 +21,18 @@ pub(crate) enum SwapReply {
 }
 
 impl SwapReply {
-    fn message_types(self) -> [Option<MessageType>; 4] {
+    fn message_types(self) -> &'static [MessageType] {
         match self {
-            Self::AcceptRejectWait => [
-                Some(MessageType::Control(ControlMessageType::Accept)),
-                Some(MessageType::Control(ControlMessageType::Reject)),
-                Some(MessageType::Control(ControlMessageType::Wait)),
-                None,
+            Self::AcceptRejectWait => &[
+                MessageType::Control(ControlMessageType::Accept),
+                MessageType::Control(ControlMessageType::Reject),
+                MessageType::Control(ControlMessageType::Wait),
             ],
-            Self::AcceptRejectWaitNotSupported => [
-                Some(MessageType::Control(ControlMessageType::Accept)),
-                Some(MessageType::Control(ControlMessageType::Reject)),
-                Some(MessageType::Control(ControlMessageType::Wait)),
-                Some(MessageType::Control(ControlMessageType::NotSupported)),
+            Self::AcceptRejectWaitNotSupported => &[
+                MessageType::Control(ControlMessageType::Accept),
+                MessageType::Control(ControlMessageType::Reject),
+                MessageType::Control(ControlMessageType::Wait),
+                MessageType::Control(ControlMessageType::NotSupported),
             ],
         }
     }
@@ -41,17 +40,16 @@ impl SwapReply {
 
 /// Await the reply to a transmitted swap request.
 ///
-/// Rejects any reply containing a `Wait` when `accepted` is [`SwapReply::AcceptReject`],
+/// Rejects any reply containing a `Wait` when `accepted` is [`SwapReply::AcceptRejectWait`],
 /// by mapping it to [`ProtocolError::UnexpectedMessage`].
 pub(crate) async fn await_swap_reply<DRIVER: Driver, TIMER: Timer>(
     protocol_layer: &mut ProtocolLayer<DRIVER, TIMER>,
     accepted: SwapReply,
 ) -> Result<ControlMessageType, ProtocolError> {
-    let message_types = &accepted.message_types();
-    let expected: heapless::Vec<MessageType, 4> = message_types.iter().filter_map(|ty| *ty).collect();
+    let message_types = accepted.message_types();
 
     let message = protocol_layer
-        .receive_message_type(expected.as_slice(), TimerType::SenderResponse)
+        .receive_message_type(message_types, TimerType::SenderResponse)
         .await?;
 
     match message.header.message_type() {

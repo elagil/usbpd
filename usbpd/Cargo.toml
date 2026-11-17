@@ -19,7 +19,7 @@ heapless.workspace = true
 uom = { workspace = true, features = ["si", "u32"] }
 embassy-futures.workspace = true
 
-thiserror = { workspace = true }
+thiserror.workspace = true
 defmt = { workspace = true, optional = true }
 log = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
@@ -31,6 +31,6 @@ tokio = { workspace = true, features = ["rt", "macros", "time"] }
 default = ["epr"]
 
 log = ["dep:log"]
-defmt = ["dep:defmt", "heapless/defmt"]
+defmt = ["dep:defmt", "heapless/defmt", "usbpd-traits/defmt"]
 serde = ["dep:serde", "heapless/serde"]
 epr = []

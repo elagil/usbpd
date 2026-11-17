@@ -92,8 +92,9 @@ bitfield! {
 }
 
 impl Battery {
-    pub fn to_bytes(self, buf: &mut [u8]) {
+    pub fn to_bytes(self, buf: &mut [u8]) -> usize {
         LittleEndian::write_u32(buf, self.0);
+        4
     }
 
     pub fn operating_power(&self) -> si::u32::Power {
@@ -256,7 +257,7 @@ impl PowerSource {
     /// Determine the data message type to use for this request.
     pub fn message_type(&self) -> crate::protocol_layer::message::header::DataMessageType {
         #[cfg(feature = "epr")]
-        if let PowerSource::EprRequest { .. } = self {
+        if matches!(self, PowerSource::EprRequest(_)) {
             return crate::protocol_layer::message::header::DataMessageType::EprRequest;
         }
         crate::protocol_layer::message::header::DataMessageType::Request
@@ -265,7 +266,7 @@ impl PowerSource {
     /// Number of data objects required to encode this request.
     pub fn num_objects(&self) -> u8 {
         #[cfg(feature = "epr")]
-        if let PowerSource::EprRequest { .. } = self {
+        if matches!(self, PowerSource::EprRequest(_)) {
             return 2;
         }
         1
@@ -277,24 +278,20 @@ impl PowerSource {
     pub fn find_highest_fixed_voltage(
         source_capabilities: &source_capabilities::SourceCapabilities,
     ) -> Option<IndexedFixedSupply<'_>> {
-        let mut selected_pdo = None;
-
-        for (index, cap) in source_capabilities.pdos().iter().enumerate() {
-            if let source_capabilities::PowerDataObject::FixedSupply(fixed_supply) = cap {
-                selected_pdo = match selected_pdo {
-                    None => Some(IndexedFixedSupply(fixed_supply, index)),
-                    Some(ref x) => {
-                        if fixed_supply.voltage() > x.0.voltage() {
-                            Some(IndexedFixedSupply(fixed_supply, index))
-                        } else {
-                            selected_pdo
-                        }
-                    }
-                };
-            }
-        }
-
-        selected_pdo
+        source_capabilities
+            .pdos()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, cap)| match cap {
+                source_capabilities::PowerDataObject::FixedSupply(fixed_supply) => {
+                    Some(IndexedFixedSupply(fixed_supply, index))
+                }
+                _ => None,
+            })
+            .max_by_key(|indexed| {
+                let IndexedFixedSupply(fixed_supply, _) = indexed;
+                fixed_supply.voltage()
+            })
     }
 
     /// Find a specific fixed voltage within the source capabilities.
@@ -406,11 +403,8 @@ impl PowerSource {
             VoltageRequest::Specific(x) => Self::find_specific_fixed_voltage(source_capabilities, x),
         };
 
-        if selected.is_none() {
-            return Err(Error::VoltageMismatch);
-        }
-
-        Self::new_fixed_specific(selected.unwrap(), current_request)
+        let selected = selected.ok_or(Error::VoltageMismatch)?;
+        Self::new_fixed_specific(selected, current_request)
     }
 
     /// Create a new power source request for a programmable power supply (PPS).
@@ -422,13 +416,9 @@ impl PowerSource {
         voltage: ElectricPotential,
         source_capabilities: &source_capabilities::SourceCapabilities,
     ) -> Result<Self, Error> {
-        let selected = Self::find_augmented_pdo(source_capabilities, voltage);
+        let IndexedAugmented(pdo, index) =
+            Self::find_augmented_pdo(source_capabilities, voltage).ok_or(Error::VoltageMismatch)?;
 
-        if selected.is_none() {
-            return Err(Error::VoltageMismatch);
-        }
-
-        let IndexedAugmented(pdo, index) = selected.unwrap();
         let max_current = match pdo {
             source_capabilities::Augmented::Spr(spr) => spr.max_current(),
             _ => return Err(Error::VoltageMismatch),

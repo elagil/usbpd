@@ -114,7 +114,6 @@ impl Data {
                 if num_objects == 2 && len >= 2 * PDO_SIZE {
                     let rdo = LittleEndian::read_u32(&payload[..PDO_SIZE]);
                     let raw_pdo = LittleEndian::read_u32(&payload[PDO_SIZE..2 * PDO_SIZE]);
-                    trace!("EprRequest: rdo=0x{:08X}, pdo=0x{:08X}", rdo, raw_pdo);
 
                     // Parse the PDO (second object) using the standard PDO parser
                     let pdo = source_capabilities::parse_raw_pdo(raw_pdo);
@@ -137,12 +136,10 @@ impl Data {
                 }
             }
             DataMessageType::VendorDefined => {
-                // Keep for now...
                 if len < PDO_SIZE {
                     Data::Unknown
                 } else {
                     let num_obj = message.header.num_objects();
-                    trace!("VENDOR: {:?}, {:?}, {:?}", len, num_obj, payload);
 
                     let header = {
                         let raw = vendor_defined::VdmHeaderRaw(LittleEndian::read_u32(&payload[..PDO_SIZE]));
@@ -164,14 +161,7 @@ impl Data {
                         .map(|buf| LittleEndian::read_u32(buf))
                         .collect::<Vec<u32, 7>>();
 
-                    trace!("VDM RX: {:?} {:?}", header, data);
-
-                    // Keep for now...
-                    // let pkt = payload
-                    //     .chunks_exact(1)
-                    //     .take(8)
-                    //     .map(|i| i[0])
-                    //     .collect::<Vec<u8, 8>>();
+                    trace!("VENDOR: {:?}, {:?}, {:?}, {:?}", len, num_obj, header, data);
 
                     Data::VendorDefined((header, data))
                 }
@@ -192,6 +182,10 @@ impl Data {
             Self::SourceCapabilities(caps) => caps.to_bytes(payload),
             Self::SinkCapabilities(caps) => caps.to_bytes(payload),
             Self::Request(request::PowerSource::FixedVariableSupply(data_object)) => data_object.to_bytes(payload),
+            Self::Request(request::PowerSource::Battery(data_object)) => {
+                LittleEndian::write_u32(payload, data_object.0);
+                PDO_SIZE
+            }
             Self::Request(request::PowerSource::Pps(data_object)) => data_object.to_bytes(payload),
             Self::Request(request::PowerSource::Avs(data_object)) => data_object.to_bytes(payload),
             #[cfg(feature = "epr")]

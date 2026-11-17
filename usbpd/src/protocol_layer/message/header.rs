@@ -107,8 +107,12 @@ impl Header {
     }
 
     /// Parse a header from its binary representation.
+    ///
+    /// The caller shall validate the buffer length before calling: a shorter
+    /// buffer would panic on slicing. `Message::from_bytes` does this for the
+    /// receive path.
     pub fn from_bytes(buf: &[u8]) -> Result<Self, ParseError> {
-        assert!(buf.len() == 2);
+        debug_assert!(buf.len() == Self::SIZE);
 
         let header = Header(LittleEndian::read_u16(buf));
         // Validate spec_revision

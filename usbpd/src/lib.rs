@@ -37,6 +37,7 @@ extern crate uom;
 pub(crate) mod fmt;
 
 pub(crate) mod counters;
+pub(crate) mod dpm;
 pub mod dual_role;
 pub mod protocol_layer;
 pub mod sink;
@@ -130,8 +131,6 @@ pub mod _250milliwatts_mod {
     }
 }
 
-use core::fmt::Debug;
-
 /// The power role of the port.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -196,7 +195,9 @@ enum Contract {
     TransitionToExplicit,
     Explicit(crate::protocol_layer::message::data::request::PowerSource),
 
-    // FIXME: EPR support may use this enum
+    // Unused today. The EPR exit flow may match this variant once EPR
+    // capability responses are modeled (see Contract usage in
+    // source/policy_engine CapabilityResponse state).
     #[allow(unused)]
     _Invalid,
 }

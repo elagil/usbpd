@@ -798,6 +798,8 @@ async fn test_epr_request_missing_epr_capable_bit_hard_resets() {
             SourceCapabilities(heapless::Vec::from_slice(caps.as_slice()).unwrap())
         }
     }
+    impl crate::dpm::VconnSwapHooks for EprCapableDpm {}
+    impl crate::dpm::DrpSwapHooks for EprCapableDpm {}
     impl crate::source::device_policy_manager::SourceDpm for EprCapableDpm {}
 
     let driver = DummyDriver::new();

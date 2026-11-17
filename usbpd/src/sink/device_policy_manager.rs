@@ -4,12 +4,15 @@
 //! or renegotiate the power contract.
 use core::future::Future;
 
+// Re-exported so user implementations can name the shared supertraits.
+// Their default hooks apply to the sink side as well; the role traits
+// bring them in as supertraits.
+pub use crate::dpm::{DrpSwapHooks, VconnSwapHooks};
 use crate::protocol_layer::message::data::{request, sink_capabilities, source_capabilities};
 #[cfg(feature = "epr")]
 pub use crate::sink::epr_device_policy_manager::EprDevicePolicyManager;
 #[cfg(feature = "epr")]
 use crate::units::Power;
-use crate::{DataRole, SwapType};
 
 /// Events that the device policy manager can send to the policy engine.
 #[derive(Debug)]
@@ -73,12 +76,15 @@ pub enum Info {
 /// Full implementation for the sink device policy manager.
 /// The default implementations of the traits will handle the case where a feature is unsupported.
 #[cfg(feature = "epr")]
-pub trait SinkDpm: DevicePolicyManager + EprDevicePolicyManager + DrpDevicePolicyManager {}
+pub trait SinkDpm:
+    DevicePolicyManager + EprDevicePolicyManager + DrpDevicePolicyManager + VconnSwapHooks + DrpSwapHooks
+{
+}
 
 /// Full implementation for the sink device policy manager.
 /// The default implementations of the traits will handle the case where a feature is unsupported.
 #[cfg(not(feature = "epr"))]
-pub trait SinkDpm: DevicePolicyManager + DrpDevicePolicyManager {}
+pub trait SinkDpm: DevicePolicyManager + DrpDevicePolicyManager + VconnSwapHooks + DrpSwapHooks {}
 
 /// Trait for the device policy manager.
 ///
@@ -143,18 +149,6 @@ pub trait DevicePolicyManager {
         sink_capabilities::SinkCapabilities::new_vsafe5v_only(100)
     }
 
-    /// Evaluate whether a vconn swap can be done by the device or not.
-    ///
-    /// Note: Wait responses are not supported. The PE answers `Accept` (true) or `Reject` (false).
-    fn evaluate_vconn_swap_request(&mut self) -> impl Future<Output = bool> {
-        async { false }
-    }
-
-    /// Set port to drive VCONN to 5 V (true) or not (false)
-    fn drive_vconn(&mut self, _on: bool) -> impl Future<Output = Result<(), ()>> {
-        async { Ok(()) }
-    }
-
     /// The policy engine gets and evaluates device policy events when ready.
     ///
     /// By default, this is a future that never resolves.
@@ -176,14 +170,10 @@ pub trait DevicePolicyManager {
 /// DRP Dual Role Sink Port device implementations
 ///
 /// Leave blank if the device is not a DRP.
+///
+/// The swap evaluation, port disable and data role hooks are shared with the
+/// source side in [`crate::dpm::DrpSwapHooks`].
 pub trait DrpDevicePolicyManager {
-    /// DRP Evaluate a swap request
-    ///
-    /// Note: Wait responses are not supported. The PE answers `Accept` (true) or `Reject` (false).
-    fn evaluate_swap_request(&mut self, _swap_request: SwapType) -> impl Future<Output = bool> {
-        async { false }
-    }
-
     /// DRP Disable/Enable Fast Role Swap Receiver
     ///
     /// A DRP Sink is expected to detect when the CC line indicates a
@@ -194,13 +184,6 @@ pub trait DrpDevicePolicyManager {
     /// external Type-C layer arms/disarms its detector. The PE calls it when
     /// entering a PR_Swap Accept state (Sec. 8.3.3.19.4.3).
     fn set_fr_swap_detect(_enable: bool) -> impl Future<Output = ()> {
-        async {}
-    }
-
-    /// DRP Turn the Sink off.
-    ///
-    /// This will be requested during a Power Role Swap to Source.
-    fn disable(&mut self) -> impl Future<Output = ()> {
         async {}
     }
 
@@ -215,11 +198,6 @@ pub trait DrpDevicePolicyManager {
     ///
     /// This will be requested during a Power Role Swap to Source.
     fn source_on(&mut self) -> impl Future<Output = ()> {
-        async {}
-    }
-
-    /// DRP Swap data role.
-    fn swap_data_role(&mut self, _role: DataRole) -> impl Future<Output = ()> {
         async {}
     }
 }
