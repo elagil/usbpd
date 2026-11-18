@@ -109,6 +109,8 @@ pub trait DevicePolicyManager {
     }
 
     /// Evaluate whether a vconn swap can be done by the device or not.
+    ///
+    /// Note: Wait responses are not supported. The PE answers `Accept` (true) or `Reject` (false).
     fn evaluate_vconn_swap_request(&mut self) -> impl Future<Output = bool> {
         async { false }
     }
@@ -152,6 +154,8 @@ pub trait DrpDevicePolicyManager {
     }
 
     /// DRP Evaluate a swap request
+    ///
+    /// Note: Wait responses are not supported. The PE answers `Accept` (true) or `Reject` (false).
     fn evaluate_swap_request(&mut self, _swap_request: SwapType) -> impl Future<Output = bool> {
         async { false }
     }
@@ -163,6 +167,9 @@ pub trait DrpDevicePolicyManager {
     /// An indication from an Initial Source to the Initial Sink that a
     /// Fast Role Swap is needed. The Fast Role Swap Request is indicated by
     /// driving the CC line to ground for a short period.
+    ///
+    /// Note: CC detection is out of the crate's scope. This hook is how an
+    /// external Type-C layer reports a detected FRS signal (Sec. 8.3.3.19.5.2).
     fn fr_swap_signaled(&mut self) -> impl Future<Output = bool> {
         async { false }
     }

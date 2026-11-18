@@ -63,9 +63,8 @@ const VBUS_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 const VBUS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 impl Driver for UcpdDrpDriver<'_> {
+    /// Observe VBUS by means of ADC reading.
     async fn wait_for_vbus(&mut self) {
-        // VBUS observation is mode-independent only via the ADC; the device's
-        // VBUS_OK flag does not assert in Normal mode.
         let deadline = embassy_time::Instant::now() + VBUS_WAIT_TIMEOUT;
         loop {
             match self.tcpp.vbus_mv().await {

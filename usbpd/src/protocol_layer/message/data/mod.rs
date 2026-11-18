@@ -165,9 +165,6 @@ impl Data {
                         .collect::<Vec<u32, 7>>();
 
                     trace!("VDM RX: {:?} {:?}", header, data);
-                    // trace!("HEADER: VDM:: TYPE: {:?}, VERS: {:?}", header.vdm_type(),
-                    // header.vdm_version()); trace!("HEADER: CMD:: TYPE: {:?}, CMD:
-                    // {:?}", header.command_type(), header.command());
 
                     // Keep for now...
                     // let pkt = payload
