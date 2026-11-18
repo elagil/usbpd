@@ -227,15 +227,6 @@ pub const DUMMY_CAPABILITIES: [u8; 30] = [
     0xC9, // +
 ];
 
-pub fn get_source_capability_request() -> PowerSource {
-    PowerSource::new_fixed(
-        request::CurrentRequest::Highest,
-        request::VoltageRequest::Safe5V,
-        &SourceCapabilities(heapless::Vec::from_slice(&get_dummy_source_capabilities()).unwrap()),
-    )
-    .unwrap()
-}
-
 /// Get dummy source capabilities for testing.
 ///
 /// Corresponds to the `DUMMY_CAPABILITIES` above.

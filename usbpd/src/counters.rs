@@ -2,10 +2,11 @@
 
 /// Error variants for counter operations.
 #[non_exhaustive]
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum Error {
     /// The counter wrapped around its maximum allowed value and was reset.
+    #[error("counter exceeded")]
     Exceeded,
 }
 

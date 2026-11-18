@@ -13,17 +13,17 @@ license = "MIT"
 exclude = ["/.gitignore", "/.github/"]
 
 [workspace.dependencies]
-usbpd-traits = { version = "2.0.0", path = "./usbpd-traits" }
+usbpd-traits = { version = "2.1.0", path = "./usbpd-traits" }
 proc-bitfield = "0.5.3"
 byteorder = { version = "1.5.0", default-features = false }
-heapless = "0.9.2"
+heapless = "0.9.4"
 uom = { package = "uom-ng", version = "0.39.0", default-features = false }
 embassy-futures = "0.1.1"
 
 
-thiserror = { version = "2.0.18", default-features = false }
-defmt = "1.0.1"
-log = "0.4.29"
+thiserror = { version = "2.0.21", default-features = false }
+defmt = "1.2.0"
+log = "0.4.35"
 serde = { version = "1.0.228", default-features = false }
 
-tokio = "1.49.0"
+tokio = "1.54.1"
