@@ -34,7 +34,7 @@ embedded-hal = "1"
 panic-probe = { version = "1.0.0", features = ["print-defmt"] }
 heapless = { version = "0.9.1", default-features = false }
 
-uom = { version = "0.39.0", default-features = false, features = ["si"], package = "uom-ng" }
+uom = { version = "0.40.0", default-features = false, features = ["si"], package = "uom-ng" }
 usbpd = { path = "../../usbpd", features = ["defmt"] }
 usbpd-traits = { path = "../../usbpd-traits", features = ["defmt"] }
 usbpd-tcpp03-m20 = { path = "../usbpd-tcpp03-m20", features = ["defmt"] }

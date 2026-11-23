@@ -36,7 +36,7 @@ conversion factors at compile time. Applications defining units or exchanging qu
 `usbpd` should use the same package under the `uom` dependency name:
 
 ```sh
-cargo add uom-ng@0.39 --rename uom --no-default-features --features si,u32
+cargo add uom-ng@0.40 --rename uom --no-default-features --features si,u32
 ```
 
 Rust imports remain `uom::`. Quantities from the original `uom` package are distinct types.
